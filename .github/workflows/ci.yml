@@ -99,10 +99,12 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
 
   build-client:
-    name: Build client wheel
+    name: Build & release client wheel
     needs: [test]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -111,13 +113,29 @@ jobs:
           cache: pip
       - name: Stamp build ref
         run: |
-          REF="${GITHUB_REF_NAME}"
-          if [ "$REF" = "main" ]; then REF="sha-$(echo $GITHUB_SHA | head -c 7)"; fi
+          REF="sha-$(echo $GITHUB_SHA | head -c 7)"
+          echo "BUILD_REF=$REF" >> "$GITHUB_ENV"
           printf 'from __future__ import annotations\n\nBUILD_REF = "%s"\n' "$REF" \
             > client/src/agentic_primitives_gateway_client/_build_info.py
       - run: pip install build
       - run: python -m build ./client
-      - uses: actions/upload-artifact@v4
+      - name: Read client version
+        id: version
+        run: |
+          VERSION=$(python -c "import tomllib; print(tomllib.load(open('client/pyproject.toml','rb'))['project']['version'])")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=client-v${VERSION}-${BUILD_REF}" >> "$GITHUB_OUTPUT"
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
         with:
-          name: client-wheel
-          path: client/dist/*
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: "Client ${{ steps.version.outputs.version }} (${{ env.BUILD_REF }})"
+          body: |
+            Client wheel for commit ${{ github.sha }}.
+
+            Install with:
+            ```
+            pip install 'agentic-primitives-gateway-client @ https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.tag }}/agentic_primitives_gateway_client-${{ steps.version.outputs.version }}-py3-none-any.whl'
+            ```
+          files: client/dist/*.whl
+          make_latest: true
