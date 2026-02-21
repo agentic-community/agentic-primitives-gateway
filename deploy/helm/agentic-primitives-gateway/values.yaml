@@ -1,0 +1,115 @@
+replicaCount: 1
+
+image:
+  repository: agentic-primitives-gateway
+  tag: latest
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8000
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+# Allow the server to use its own credentials (env vars, IRSA, Pod Identity)
+# when clients don't provide credentials in request headers.
+# Default: false — clients must pass their own credentials.
+allow_server_credentials: false
+
+# Provider configuration — rendered into a ConfigMap.
+# Each primitive supports multiple named backends with a default.
+# Agents select a backend at request time via X-Provider-* headers.
+providers:
+  memory:
+    default: "mem0"
+    backends:
+      mem0:
+        backend: "agentic_primitives_gateway.primitives.memory.mem0_provider.Mem0MemoryProvider"
+        config:
+          vector_store:
+            provider: milvus
+            config:
+              collection_name: agentic_memories
+              url: "http://milvus:19530"
+          llm:
+            provider: aws_bedrock
+            config:
+              model: us.anthropic.claude-sonnet-4-20250514-v1:0
+          embedder:
+            provider: aws_bedrock
+            config:
+              model: amazon.titan-embed-text-v2:0
+      in_memory:
+        backend: "agentic_primitives_gateway.primitives.memory.in_memory.InMemoryProvider"
+        config: {}
+      # agentcore:
+      #   backend: "agentic_primitives_gateway.primitives.memory.agentcore.AgentCoreMemoryProvider"
+      #   config:
+      #     region: "us-east-1"
+
+  observability:
+    default: "noop"
+    backends:
+      noop:
+        backend: "agentic_primitives_gateway.primitives.observability.noop.NoopObservabilityProvider"
+        config: {}
+      # langfuse:
+      #   backend: "agentic_primitives_gateway.primitives.observability.langfuse.LangfuseObservabilityProvider"
+      #   config: {}
+      # agentcore:
+      #   backend: "agentic_primitives_gateway.primitives.observability.agentcore.AgentCoreObservabilityProvider"
+      #   config:
+      #     region: "us-east-1"
+
+  identity:
+    default: "noop"
+    backends:
+      noop:
+        backend: "agentic_primitives_gateway.primitives.identity.noop.NoopIdentityProvider"
+        config: {}
+      # agentcore:
+      #   backend: "agentic_primitives_gateway.primitives.identity.agentcore.AgentCoreIdentityProvider"
+      #   config:
+      #     region: "us-east-1"
+
+  code_interpreter:
+    default: "noop"
+    backends:
+      noop:
+        backend: "agentic_primitives_gateway.primitives.code_interpreter.noop.NoopCodeInterpreterProvider"
+        config: {}
+      # agentcore:
+      #   backend: "agentic_primitives_gateway.primitives.code_interpreter.agentcore.AgentCoreCodeInterpreterProvider"
+      #   config:
+      #     region: "us-east-1"
+
+  browser:
+    default: "noop"
+    backends:
+      noop:
+        backend: "agentic_primitives_gateway.primitives.browser.noop.NoopBrowserProvider"
+        config: {}
+      # agentcore:
+      #   backend: "agentic_primitives_gateway.primitives.browser.agentcore.AgentCoreBrowserProvider"
+      #   config:
+      #     region: "us-east-1"
+
+  gateway:
+    default: "noop"
+    backends:
+      noop:
+        backend: "agentic_primitives_gateway.primitives.gateway.noop.NoopGatewayProvider"
+        config: {}
+
+  tools:
+    default: "noop"
+    backends:
+      noop:
+        backend: "agentic_primitives_gateway.primitives.tools.noop.NoopToolsProvider"
+        config: {}

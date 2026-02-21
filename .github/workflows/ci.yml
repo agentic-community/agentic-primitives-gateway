@@ -1,0 +1,123 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    name: Lint (pre-commit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ hashFiles('.pre-commit-config.yaml') }}
+      - run: pip install pre-commit
+      - run: pre-commit run --all-files
+
+  typecheck:
+    name: Typecheck (mypy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -e ".[dev,agentcore,langfuse,mem0]"
+      - run: cd client && pip install -e ".[dev]"
+      - run: mypy
+
+  test:
+    name: Test (pytest + coverage)
+    needs: [lint, typecheck]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -e ".[dev,agentcore,langfuse,mem0]" pytest-cov
+      - run: cd client && pip install -e ".[dev]"
+      - name: Server tests
+        run: >
+          pytest tests/ -v
+          --cov=agentic_primitives_gateway
+          --cov-report=term-missing
+          --cov-fail-under=90
+      - name: Client tests
+        run: cd client && pytest tests/ -v
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-report
+          path: .coverage
+
+  build-server:
+    name: Build server image
+    needs: [test]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Stamp build ref
+        run: |
+          REF="${GITHUB_REF_NAME}"
+          if [ "$REF" = "main" ]; then REF="sha-$(echo $GITHUB_SHA | head -c 7)"; fi
+          echo "BUILD_REF=$REF" >> "$GITHUB_ENV"
+          printf 'from __future__ import annotations\n\nBUILD_REF = "%s"\n' "$REF" \
+            > src/agentic_primitives_gateway/_build_info.py
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=raw,value=latest
+            type=sha,prefix=sha-,format=short
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+  build-client:
+    name: Build client wheel
+    needs: [test]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Stamp build ref
+        run: |
+          REF="${GITHUB_REF_NAME}"
+          if [ "$REF" = "main" ]; then REF="sha-$(echo $GITHUB_SHA | head -c 7)"; fi
+          printf 'from __future__ import annotations\n\nBUILD_REF = "%s"\n' "$REF" \
+            > client/src/agentic_primitives_gateway_client/_build_info.py
+      - run: pip install build
+      - run: python -m build ./client
+      - uses: actions/upload-artifact@v4
+        with:
+          name: client-wheel
+          path: client/dist/*

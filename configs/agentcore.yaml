@@ -1,0 +1,69 @@
+## All primitives backed by AWS Bedrock AgentCore.
+## AWS credentials are passed through from the client per-request.
+##
+## Required:
+##   pip install -e ".[agentcore]"
+##
+## Usage:
+##   ./run.sh agentcore
+##
+## Requires:
+##   - AWS credentials on the client side (Pod Identity, IRSA, env vars, etc.)
+##   - Clients provide their own memory_id via X-Cred-Agentcore-Memory-Id header
+##     (create a memory resource in the AgentCore console first)
+
+providers:
+  memory:
+    default: "agentcore"
+    backends:
+      agentcore:
+        backend: "agentic_primitives_gateway.primitives.memory.agentcore.AgentCoreMemoryProvider"
+        config:
+          region: "${AWS_REGION:=us-east-1}"
+
+  identity:
+    default: "agentcore"
+    backends:
+      agentcore:
+        backend: "agentic_primitives_gateway.primitives.identity.agentcore.AgentCoreIdentityProvider"
+        config:
+          region: "${AWS_REGION:=us-east-1}"
+
+  code_interpreter:
+    default: "agentcore"
+    backends:
+      agentcore:
+        backend: "agentic_primitives_gateway.primitives.code_interpreter.agentcore.AgentCoreCodeInterpreterProvider"
+        config:
+          region: "${AWS_REGION:=us-east-1}"
+
+  browser:
+    default: "agentcore"
+    backends:
+      agentcore:
+        backend: "agentic_primitives_gateway.primitives.browser.agentcore.AgentCoreBrowserProvider"
+        config:
+          region: "${AWS_REGION:=us-east-1}"
+
+  observability:
+    default: "agentcore"
+    backends:
+      agentcore:
+        backend: "agentic_primitives_gateway.primitives.observability.agentcore.AgentCoreObservabilityProvider"
+        config:
+          region: "${AWS_REGION:=us-east-1}"
+          service_name: "agentic-primitives-gateway"
+
+  gateway:
+    default: "noop"
+    backends:
+      noop:
+        backend: "agentic_primitives_gateway.primitives.gateway.noop.NoopGatewayProvider"
+        config: {}
+
+  tools:
+    default: "noop"
+    backends:
+      noop:
+        backend: "agentic_primitives_gateway.primitives.tools.noop.NoopToolsProvider"
+        config: {}

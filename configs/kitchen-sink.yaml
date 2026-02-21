@@ -1,0 +1,108 @@
+## All providers registered simultaneously. Agents select at request time
+## via X-Provider-* headers. Useful for testing provider routing.
+##
+## Required:
+##   pip install -e ".[mem0,agentcore,langfuse]"
+##
+## Usage:
+##   ./run.sh kitchen-sink
+##
+## Then test routing:
+##   curl -H "X-Provider-Memory: in_memory" localhost:8000/api/v1/memory/test
+##   curl -H "X-Provider-Memory: mem0"      localhost:8000/api/v1/memory/test
+
+providers:
+  memory:
+    default: "in_memory"
+    backends:
+      in_memory:
+        backend: "agentic_primitives_gateway.primitives.memory.in_memory.InMemoryProvider"
+        config: {}
+      mem0:
+        backend: "agentic_primitives_gateway.primitives.memory.mem0_provider.Mem0MemoryProvider"
+        config:
+          vector_store:
+            provider: milvus
+            config:
+              collection_name: agentic_memories
+              url: "http://${MILVUS_HOST:=localhost}:${MILVUS_PORT:=19530}"
+              token: ""
+              embedding_model_dims: 1024
+          llm:
+            provider: aws_bedrock
+            config:
+              model: us.anthropic.claude-sonnet-4-20250514-v1:0
+          embedder:
+            provider: aws_bedrock
+            config:
+              model: amazon.titan-embed-text-v2:0
+      agentcore:
+        backend: "agentic_primitives_gateway.primitives.memory.agentcore.AgentCoreMemoryProvider"
+        config:
+          region: "${AWS_REGION:=us-east-1}"
+
+  observability:
+    default: "noop"
+    backends:
+      noop:
+        backend: "agentic_primitives_gateway.primitives.observability.noop.NoopObservabilityProvider"
+        config: {}
+      langfuse:
+        backend: "agentic_primitives_gateway.primitives.observability.langfuse.LangfuseObservabilityProvider"
+        config: {}
+      agentcore:
+        backend: "agentic_primitives_gateway.primitives.observability.agentcore.AgentCoreObservabilityProvider"
+        config:
+          region: "${AWS_REGION:=us-east-1}"
+
+  identity:
+    default: "noop"
+    backends:
+      noop:
+        backend: "agentic_primitives_gateway.primitives.identity.noop.NoopIdentityProvider"
+        config: {}
+      agentcore:
+        backend: "agentic_primitives_gateway.primitives.identity.agentcore.AgentCoreIdentityProvider"
+        config:
+          region: "${AWS_REGION:=us-east-1}"
+
+  code_interpreter:
+    default: "noop"
+    backends:
+      noop:
+        backend: "agentic_primitives_gateway.primitives.code_interpreter.noop.NoopCodeInterpreterProvider"
+        config: {}
+      agentcore:
+        backend: "agentic_primitives_gateway.primitives.code_interpreter.agentcore.AgentCoreCodeInterpreterProvider"
+        config:
+          region: "${AWS_REGION:=us-east-1}"
+
+  browser:
+    default: "noop"
+    backends:
+      noop:
+        backend: "agentic_primitives_gateway.primitives.browser.noop.NoopBrowserProvider"
+        config: {}
+      agentcore:
+        backend: "agentic_primitives_gateway.primitives.browser.agentcore.AgentCoreBrowserProvider"
+        config:
+          region: "${AWS_REGION:=us-east-1}"
+
+  gateway:
+    default: "noop"
+    backends:
+      noop:
+        backend: "agentic_primitives_gateway.primitives.gateway.noop.NoopGatewayProvider"
+        config: {}
+
+  tools:
+    default: "noop"
+    backends:
+      noop:
+        backend: "agentic_primitives_gateway.primitives.tools.noop.NoopToolsProvider"
+        config: {}
+      mcp_registry:
+        backend: "agentic_primitives_gateway.primitives.tools.mcp_registry.MCPRegistryProvider"
+        config:
+          base_url: "${MCP_REGISTRY_URL:=http://localhost:8080}"
+          verify_ssl: false

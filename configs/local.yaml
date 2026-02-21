@@ -1,0 +1,60 @@
+## All in-memory/noop providers. No external dependencies.
+## Good for local development and testing.
+##
+## Usage:
+##   ./run.sh local
+##   ./run.sh          (default)
+
+# Allow the server to use its own credentials when clients don't provide any.
+# Default: false (clients must pass their own credentials).
+# allow_server_credentials: true
+
+providers:
+  memory:
+    default: "in_memory"
+    backends:
+      in_memory:
+        backend: "agentic_primitives_gateway.primitives.memory.in_memory.InMemoryProvider"
+        config: {}
+
+  observability:
+    default: "noop"
+    backends:
+      noop:
+        backend: "agentic_primitives_gateway.primitives.observability.noop.NoopObservabilityProvider"
+        config: {}
+
+  identity:
+    default: "noop"
+    backends:
+      noop:
+        backend: "agentic_primitives_gateway.primitives.identity.noop.NoopIdentityProvider"
+        config: {}
+
+  code_interpreter:
+    default: "noop"
+    backends:
+      noop:
+        backend: "agentic_primitives_gateway.primitives.code_interpreter.noop.NoopCodeInterpreterProvider"
+        config: {}
+
+  browser:
+    default: "noop"
+    backends:
+      noop:
+        backend: "agentic_primitives_gateway.primitives.browser.noop.NoopBrowserProvider"
+        config: {}
+
+  gateway:
+    default: "noop"
+    backends:
+      noop:
+        backend: "agentic_primitives_gateway.primitives.gateway.noop.NoopGatewayProvider"
+        config: {}
+
+  tools:
+    default: "noop"
+    backends:
+      noop:
+        backend: "agentic_primitives_gateway.primitives.tools.noop.NoopToolsProvider"
+        config: {}

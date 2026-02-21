@@ -1,0 +1,38 @@
+from enum import StrEnum
+
+
+class Primitive(StrEnum):
+    MEMORY = "memory"
+    OBSERVABILITY = "observability"
+    GATEWAY = "gateway"
+    TOOLS = "tools"
+    IDENTITY = "identity"
+    CODE_INTERPRETER = "code_interpreter"
+    BROWSER = "browser"
+
+
+class LogLevel(StrEnum):
+    DEBUG = "debug"
+    INFO = "info"
+    WARNING = "warning"
+    ERROR = "error"
+
+
+class SessionStatus(StrEnum):
+    ACTIVE = "active"
+    STOPPED = "stopped"
+
+
+class TokenType(StrEnum):
+    BEARER = "Bearer"
+
+
+class CodeLanguage(StrEnum):
+    PYTHON = "python"
+
+
+class HealthStatus(StrEnum):
+    OK = "ok"
+    ERROR = "error"
+    DEGRADED = "degraded"
+    ACCEPTED = "accepted"
