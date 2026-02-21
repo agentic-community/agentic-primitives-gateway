@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
+from agentic_primitives_gateway.models.enums import Primitive
 from agentic_primitives_gateway.models.gateway import (
     CompletionRequest,
     CompletionResponse,
@@ -10,7 +11,7 @@ from agentic_primitives_gateway.models.gateway import (
 )
 from agentic_primitives_gateway.registry import registry
 
-router = APIRouter(prefix="/api/v1/gateway", tags=["gateway"])
+router = APIRouter(prefix="/api/v1/gateway", tags=[Primitive.GATEWAY])
 
 
 @router.post("/completions", response_model=CompletionResponse)

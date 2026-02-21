@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Query
 
+from agentic_primitives_gateway.models.enums import Primitive
 from agentic_primitives_gateway.models.tools import (
     InvokeToolRequest,
     ListToolsResponse,
@@ -11,7 +12,7 @@ from agentic_primitives_gateway.models.tools import (
 )
 from agentic_primitives_gateway.registry import registry
 
-router = APIRouter(prefix="/api/v1/tools", tags=["tools"])
+router = APIRouter(prefix="/api/v1/tools", tags=[Primitive.TOOLS])
 
 
 @router.post("", response_model=ToolInfo, status_code=201)
@@ -26,12 +27,6 @@ async def list_tools() -> ListToolsResponse:
     return ListToolsResponse(tools=[ToolInfo(**t) for t in tools])
 
 
-@router.post("/{name:path}/invoke", response_model=ToolResult)
-async def invoke_tool(name: str, request: InvokeToolRequest) -> ToolResult:
-    result = await registry.tools.invoke_tool(tool_name=name, params=request.params)
-    return ToolResult(tool_name=name, **result)
-
-
 @router.get("/search", response_model=ListToolsResponse)
 async def search_tools(
     query: str = Query(..., description="Search query"),
@@ -39,3 +34,9 @@ async def search_tools(
 ) -> ListToolsResponse:
     tools = await registry.tools.search_tools(query, max_results)
     return ListToolsResponse(tools=[ToolInfo(**t) for t in tools])
+
+
+@router.post("/{name:path}/invoke", response_model=ToolResult)
+async def invoke_tool(name: str, request: InvokeToolRequest) -> ToolResult:
+    result = await registry.tools.invoke_tool(tool_name=name, params=request.params)
+    return ToolResult(tool_name=name, **result)

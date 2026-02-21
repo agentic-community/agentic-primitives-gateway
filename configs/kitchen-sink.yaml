@@ -101,6 +101,10 @@ providers:
       noop:
         backend: "agentic_primitives_gateway.primitives.tools.noop.NoopToolsProvider"
         config: {}
+      agentcore:
+        backend: "agentic_primitives_gateway.primitives.tools.agentcore.AgentCoreGatewayProvider"
+        config:
+          region: "${AWS_REGION:=us-east-1}"
       mcp_registry:
         backend: "agentic_primitives_gateway.primitives.tools.mcp_registry.MCPRegistryProvider"
         config:

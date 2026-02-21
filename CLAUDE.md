@@ -43,7 +43,7 @@ python -m pytest tests/ -v
 ## Test Commands
 
 ```bash
-# All server tests (55 tests)
+# All server tests (282 tests)
 python -m pytest tests/ -v
 
 # All client tests (30 tests)

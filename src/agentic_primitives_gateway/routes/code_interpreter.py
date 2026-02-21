@@ -10,9 +10,10 @@ from agentic_primitives_gateway.models.code_interpreter import (
     SessionInfo,
     StartSessionRequest,
 )
+from agentic_primitives_gateway.models.enums import Primitive
 from agentic_primitives_gateway.registry import registry
 
-router = APIRouter(prefix="/api/v1/code-interpreter", tags=["code-interpreter"])
+router = APIRouter(prefix="/api/v1/code-interpreter", tags=[Primitive.CODE_INTERPRETER])
 
 
 @router.post("/sessions", response_model=SessionInfo, status_code=201)
@@ -33,7 +34,7 @@ async def stop_session(session_id: str) -> Response:
 @router.get("/sessions", response_model=ListSessionsResponse)
 async def list_sessions(status: str | None = None) -> ListSessionsResponse:
     sessions = await registry.code_interpreter.list_sessions(status=status)
-    return ListSessionsResponse(sessions=sessions)  # type: ignore[arg-type]
+    return ListSessionsResponse(sessions=[SessionInfo(**s) for s in sessions])
 
 
 @router.post("/sessions/{session_id}/execute", response_model=ExecutionResult)

@@ -4,7 +4,7 @@ from typing import Any
 
 from fastapi import APIRouter, Query
 
-from agentic_primitives_gateway.models.enums import HealthStatus
+from agentic_primitives_gateway.models.enums import HealthStatus, Primitive
 from agentic_primitives_gateway.models.observability import (
     IngestLogRequest,
     IngestTraceRequest,
@@ -13,7 +13,7 @@ from agentic_primitives_gateway.models.observability import (
 )
 from agentic_primitives_gateway.registry import registry
 
-router = APIRouter(prefix="/api/v1/observability", tags=["observability"])
+router = APIRouter(prefix="/api/v1/observability", tags=[Primitive.OBSERVABILITY])
 
 
 @router.post("/traces", status_code=202)

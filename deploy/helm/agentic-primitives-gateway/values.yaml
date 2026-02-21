@@ -113,3 +113,12 @@ providers:
       noop:
         backend: "agentic_primitives_gateway.primitives.tools.noop.NoopToolsProvider"
         config: {}
+      # agentcore:
+      #   backend: "agentic_primitives_gateway.primitives.tools.agentcore.AgentCoreGatewayProvider"
+      #   config:
+      #     region: "us-east-1"
+      # mcp_registry:
+      #   backend: "agentic_primitives_gateway.primitives.tools.mcp_registry.MCPRegistryProvider"
+      #   config:
+      #     base_url: "http://mcp-registry:8080"
+      #     verify_ssl: false

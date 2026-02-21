@@ -62,8 +62,9 @@ providers:
         config: {}
 
   tools:
-    default: "noop"
+    default: "agentcore"
     backends:
-      noop:
-        backend: "agentic_primitives_gateway.primitives.tools.noop.NoopToolsProvider"
-        config: {}
+      agentcore:
+        backend: "agentic_primitives_gateway.primitives.tools.agentcore.AgentCoreGatewayProvider"
+        config:
+          region: "${AWS_REGION:=us-east-1}"

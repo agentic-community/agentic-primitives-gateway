@@ -27,3 +27,20 @@ class LiveViewResponse(BaseModel):
 
 class ListBrowserSessionsResponse(BaseModel):
     sessions: list[BrowserSessionInfo]
+
+
+class NavigateRequest(BaseModel):
+    url: str
+
+
+class ClickRequest(BaseModel):
+    selector: str
+
+
+class TypeRequest(BaseModel):
+    selector: str
+    text: str
+
+
+class EvaluateRequest(BaseModel):
+    expression: str

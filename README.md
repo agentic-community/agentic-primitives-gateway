@@ -531,7 +531,7 @@ pip install -e ".[dev]"
 pytest tests/ -v
 ```
 
-The test suite contains 54 tests covering all primitives, provider routing, and AWS credential pass-through.
+The test suite contains 282 tests covering all primitives, provider routing, and AWS credential pass-through.
 
 ---
 
@@ -818,6 +818,7 @@ agentic-primitives-gateway/
 │   └── primitives/
 │       ├── base.py                 # Abstract base classes for all 7 providers
 │       ├── memory/
+│       │   ├── noop.py             # No-op (logs only)
 │       │   ├── in_memory.py        # Dict-based (dev/test)
 │       │   ├── mem0_provider.py    # mem0 + Milvus
 │       │   └── agentcore.py        # AWS Bedrock AgentCore
@@ -835,9 +836,12 @@ agentic-primitives-gateway/
 │       │   ├── langfuse.py         # Langfuse
 │       │   └── agentcore.py        # AWS AgentCore via OpenTelemetry
 │       ├── gateway/noop.py
-│       └── tools/noop.py
+│       └── tools/
+│           ├── noop.py
+│           ├── agentcore.py        # AWS AgentCore Gateway (MCP-compatible)
+│           └── mcp_registry.py     # MCP Registry
 ├── client/                         # Standalone Python client (separate package: agentic-primitives-gateway-client)
-├── tests/                          # Server tests (54 tests)
+├── tests/                          # Server tests (282 tests)
 ├── deploy/helm/agentic-primitives-gateway/   # Helm chart
 ├── Dockerfile                      # Multi-stage build
 └── pyproject.toml

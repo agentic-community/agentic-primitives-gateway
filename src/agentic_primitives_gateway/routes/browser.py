@@ -3,17 +3,21 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Response
-from pydantic import BaseModel
 
 from agentic_primitives_gateway.models.browser import (
     BrowserSessionInfo,
+    ClickRequest,
+    EvaluateRequest,
     ListBrowserSessionsResponse,
     LiveViewResponse,
+    NavigateRequest,
     StartBrowserSessionRequest,
+    TypeRequest,
 )
+from agentic_primitives_gateway.models.enums import Primitive
 from agentic_primitives_gateway.registry import registry
 
-router = APIRouter(prefix="/api/v1/browser", tags=["browser"])
+router = APIRouter(prefix="/api/v1/browser", tags=[Primitive.BROWSER])
 
 
 @router.post("/sessions", response_model=BrowserSessionInfo, status_code=201)
@@ -50,7 +54,7 @@ async def list_sessions(
     status: str | None = None,
 ) -> ListBrowserSessionsResponse:
     sessions = await registry.browser.list_sessions(status=status)
-    return ListBrowserSessionsResponse(sessions=sessions)  # type: ignore[arg-type]
+    return ListBrowserSessionsResponse(sessions=[BrowserSessionInfo(**s) for s in sessions])
 
 
 @router.get("/sessions/{session_id}/live-view", response_model=LiveViewResponse)
@@ -66,23 +70,6 @@ async def get_live_view_url(
 
 
 # ── Browser interaction endpoints ───────────────────────────────────
-
-
-class NavigateRequest(BaseModel):
-    url: str
-
-
-class ClickRequest(BaseModel):
-    selector: str
-
-
-class TypeRequest(BaseModel):
-    selector: str
-    text: str
-
-
-class EvaluateRequest(BaseModel):
-    expression: str
 
 
 @router.post("/sessions/{session_id}/navigate")

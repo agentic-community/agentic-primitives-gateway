@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Query, Response
 
+from agentic_primitives_gateway.models.enums import Primitive
 from agentic_primitives_gateway.models.memory import (
     ListMemoryResponse,
     MemoryRecord,
@@ -11,7 +12,7 @@ from agentic_primitives_gateway.models.memory import (
 )
 from agentic_primitives_gateway.registry import registry
 
-router = APIRouter(prefix="/api/v1/memory", tags=["memory"])
+router = APIRouter(prefix="/api/v1/memory", tags=[Primitive.MEMORY])
 
 
 @router.post("/{namespace}", response_model=MemoryRecord, status_code=201)
