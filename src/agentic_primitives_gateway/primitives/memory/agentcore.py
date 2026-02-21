@@ -166,12 +166,12 @@ class AgentCoreMemoryProvider(MemoryProvider):
                 record = MemoryRecord(
                     namespace=namespace,
                     key=record_key,
-                    content=entry_dict.get("memory", entry_dict.get("content", "")),
+                    content=str(entry_dict.get("memory") or entry_dict.get("content") or ""),
                     metadata=meta,
                     created_at=datetime.now(UTC),
                     updated_at=datetime.now(UTC),
                 )
-                score = entry_dict.get("score", entry_dict.get("relevance_score", 0.0))
+                score = float(entry_dict.get("score") or entry_dict.get("relevance_score") or 0.0)
                 search_results.append(SearchResult(record=record, score=score))
         except Exception:
             logger.debug("Long-term memory search failed", exc_info=True)
@@ -277,7 +277,7 @@ class AgentCoreMemoryProvider(MemoryProvider):
                     MemoryRecord(
                         namespace=namespace,
                         key=record_key,
-                        content=entry_dict.get("memory", entry_dict.get("content", "")),
+                        content=str(entry_dict.get("memory") or entry_dict.get("content") or ""),
                         metadata=meta,
                         created_at=datetime.now(UTC),
                         updated_at=datetime.now(UTC),
