@@ -12,7 +12,7 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 from starlette.responses import Response
 
 from agentic_primitives_gateway._build_info import BUILD_REF
-from agentic_primitives_gateway.config import settings
+from agentic_primitives_gateway.config import Settings, settings
 from agentic_primitives_gateway.context import (
     AWSCredentials,
     get_request_id,
@@ -32,6 +32,7 @@ from agentic_primitives_gateway.routes import (
     observability,
     tools,
 )
+from agentic_primitives_gateway.watcher import ConfigWatcher
 
 
 class RequestIdFilter(logging.Filter):
@@ -125,7 +126,17 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logger.info("agentic-primitives-gateway build=%s", BUILD_REF)
     registry.initialize()
+
+    watcher: ConfigWatcher | None = None
+    config_path = Settings.config_file_path()
+    if config_path:
+        watcher = ConfigWatcher(config_path, registry)
+        await watcher.start()
+
     yield
+
+    if watcher is not None:
+        await watcher.stop()
 
 
 app = FastAPI(

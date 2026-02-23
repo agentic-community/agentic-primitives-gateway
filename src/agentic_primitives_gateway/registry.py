@@ -106,6 +106,65 @@ class ProviderRegistry:
 
         logger.info("All providers initialized")
 
+    async def reload(self, new_settings: Settings) -> None:
+        """Hot-reload providers from new settings.
+
+        Three-phase approach:
+        1. Build all new providers (if any fails, old providers stay).
+        2. Swap ``self._primitives`` atomically (safe under GIL).
+        3. Close old providers that expose a ``close()`` method.
+        """
+        cfg = new_settings.providers
+        new_primitives: dict[str, _PrimitiveProviders] = {}
+
+        for primitive in PRIMITIVES:
+            prim_cfg: PrimitiveProvidersConfig = getattr(cfg, primitive)
+            expected_type = _EXPECTED_TYPES[primitive]
+
+            providers: dict[str, Any] = {}
+            for name, backend_cfg in prim_cfg.backends.items():
+                logger.info(
+                    "Reload: loading %s provider '%s': %s",
+                    primitive,
+                    name,
+                    backend_cfg.backend,
+                )
+                cls = _load_class(backend_cfg.backend)
+                instance = cls(**backend_cfg.config)
+                if not isinstance(instance, expected_type):
+                    raise TypeError(f"Provider {backend_cfg.backend} is not an instance of {expected_type.__name__}")
+                providers[name] = MetricsProxy(instance, primitive, name)
+
+            new_primitives[primitive] = _PrimitiveProviders(
+                primitive=primitive,
+                default_name=prim_cfg.default,
+                providers=providers,
+            )
+
+        old_primitives = self._primitives
+        self._primitives = new_primitives
+        logger.info("Provider swap complete")
+
+        await self._close_primitives(old_primitives)
+
+    @staticmethod
+    async def _close_primitives(primitives: dict[str, _PrimitiveProviders]) -> None:
+        """Best-effort close on old providers that expose a ``close()`` method."""
+        for prim_providers in primitives.values():
+            for name in prim_providers.names:
+                provider = prim_providers.get(name)
+                # MetricsProxy delegates attribute access to the underlying provider
+                close_fn = getattr(provider, "close", None)
+                if close_fn is not None and callable(close_fn):
+                    try:
+                        result = close_fn()
+                        # Support both sync and async close()
+                        if hasattr(result, "__await__"):
+                            await result
+                        logger.info("Closed old provider: %s/%s", prim_providers._primitive, name)
+                    except Exception:
+                        logger.exception("Error closing provider %s/%s", prim_providers._primitive, name)
+
     def get_primitive(self, primitive: str) -> _PrimitiveProviders:
         if primitive not in self._primitives:
             raise RuntimeError(f"Provider registry not initialized or unknown primitive: {primitive}")

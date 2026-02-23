@@ -3,9 +3,16 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
+from agentic_primitives_gateway import watcher as _watcher_module
 from agentic_primitives_gateway.config import Settings
 from agentic_primitives_gateway.main import app
 from agentic_primitives_gateway.registry import registry
+
+
+@pytest.fixture(autouse=True)
+def _reset_reload_error() -> None:
+    """Clear any stale reload error between tests."""
+    _watcher_module._last_reload_error = None
 
 
 @pytest.fixture(autouse=True)

@@ -180,6 +180,11 @@ class Settings(BaseSettings):
     cors_origins: list[str] = ["*"]
     providers: ProvidersConfig = ProvidersConfig()
 
+    @staticmethod
+    def config_file_path() -> str | None:
+        """Return the config file path from the environment, or None."""
+        return os.environ.get("AGENTIC_PRIMITIVES_GATEWAY_CONFIG_FILE")
+
     @classmethod
     def load(cls) -> Settings:
         """Load settings, merging config file values with env overrides."""

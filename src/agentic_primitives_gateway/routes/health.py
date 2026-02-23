@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 from agentic_primitives_gateway.metrics import PROVIDER_HEALTH
 from agentic_primitives_gateway.models.enums import HealthStatus
 from agentic_primitives_gateway.registry import PRIMITIVES, registry
+from agentic_primitives_gateway.watcher import get_last_reload_error
 
 router = APIRouter(tags=["health"])
 logger = logging.getLogger(__name__)
@@ -41,6 +42,18 @@ async def readiness() -> JSONResponse:
         )
 
     all_healthy = all(checks.values())
+
+    reload_error = get_last_reload_error()
+    if reload_error:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": HealthStatus.DEGRADED,
+                "checks": checks,
+                "config_reload_error": reload_error,
+            },
+        )
+
     return JSONResponse(
         status_code=200 if all_healthy else 503,
         content={"status": HealthStatus.OK if all_healthy else HealthStatus.DEGRADED, "checks": checks},

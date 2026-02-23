@@ -94,6 +94,7 @@ class AgentCoreObservabilityProvider(ObservabilityProvider):
             pass
 
         tracer_provider = TracerProvider(**provider_kwargs)
+        self._tracer_provider = tracer_provider
 
         # Use the ADOT OTLPAwsSpanExporter which handles SigV4 and the correct endpoint
         try:
@@ -119,6 +120,15 @@ class AgentCoreObservabilityProvider(ObservabilityProvider):
         tracer_provider.add_span_processor(BatchSpanProcessor(exporter))
         trace.set_tracer_provider(tracer_provider)
         return trace.get_tracer(self._service_name)
+
+    def close(self) -> None:
+        """Flush pending spans and shut down the tracer provider."""
+        try:
+            self._tracer_provider.force_flush()
+            self._tracer_provider.shutdown()
+            logger.info("AgentCore observability provider closed")
+        except Exception:
+            logger.exception("Error closing AgentCore observability provider")
 
     async def _run_sync(self, func: Any, *args: Any, **kwargs: Any) -> Any:
         loop = asyncio.get_event_loop()
