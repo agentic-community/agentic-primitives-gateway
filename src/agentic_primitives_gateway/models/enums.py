@@ -27,6 +27,16 @@ class TokenType(StrEnum):
     BEARER = "Bearer"
 
 
+class AuthFlow(StrEnum):
+    M2M = "M2M"
+    USER_FEDERATION = "USER_FEDERATION"
+
+
+class CredentialProviderType(StrEnum):
+    OAUTH2 = "oauth2"
+    API_KEY = "api_key"
+
+
 class CodeLanguage(StrEnum):
     PYTHON = "python"
 

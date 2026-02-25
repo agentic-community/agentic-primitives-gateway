@@ -26,28 +26,31 @@ Agentic Primitives Gateway is a Kubernetes-deployed REST API service that abstra
 |  +-----v------------v-------------v-------v----------v------------+ |
 |  |                    Provider Registry                           | |
 |  |  (loads named backends from config; resolves per-request)      | |
-|  +-----+------+-----+------+-----+------+------+-----+-----------+ |
-|        |      |     |      |     |      |      |     |             |
-+--------+------+-----+------+-----+------+------+-----+-------------+
-         |      |     |      |     |      |      |     |
-    +----v--+ +-v---+ +v---+ +v---+ +v---+ +v---+ +v---+
-    | mem0 +| |Agnt | |Agnt| |Agnt| |Agnt| |Noop| |Noop|
-    |Milvus | |Core | |Core| |Core| |Core| |Gwy | |Obs |
-    |InMem  | |Ident| |Code| |Brws| |Mem | |    | |    |
-    +-------+ +-----+ +----+ +----+ +----+ +----+ +----+
+|  +--+-------+-------+-------+-------+--------+------+------------+ |
+|     |       |       |       |       |        |      |              |
++-----+-------+-------+-------+-------+--------+------+--------------+
+      |       |       |       |       |        |      |
+ +----v----+ +v----+ +v----+ +v----+ +v------+ +v--+ +v-----------+
+ | Memory  | |Idnty| |Code | |Brwsr| |Obsrvb.| |Gwy| |  Tools    |
+ |---------| |-----| |Intrp| |-----| |-------| |---| |-----------|
+ | Noop    | |Noop | |Noop | |Noop | |Noop   | |Nop| | Noop      |
+ | InMem   | |Agnt | |Agnt | |Agnt | |Lang   | |   | | AgntCore  |
+ | Mem0    | |Core | |Core | |Core | | fuse  | |   | | MCP       |
+ | AgntCore| |     | |     | |     | |AgntCre| |   | |  Registry |
+ +---------+ +-----+ +-----+ +-----+ +-------+ +---+ +-----------+
 ```
 
 ## Primitives
 
 | Primitive | Description | Available Backends |
 |-----------|-------------|--------------------|
-| **Memory** | Store, retrieve, and search agent memories | `InMemoryProvider`, `Mem0MemoryProvider` (Milvus), `AgentCoreMemoryProvider` |
-| **Identity** | Token exchange and API key management | `NoopIdentityProvider`, `AgentCoreIdentityProvider` |
+| **Memory** | Store, retrieve, and search agent memories | `NoopMemoryProvider`, `InMemoryProvider`, `Mem0MemoryProvider` (Milvus), `AgentCoreMemoryProvider` |
+| **Identity** | Workload identity tokens, OAuth2 token exchange (M2M + 3LO), API key retrieval, credential provider and workload identity management | `NoopIdentityProvider`, `AgentCoreIdentityProvider` |
 | **Code Interpreter** | Sandboxed code execution sessions | `NoopCodeInterpreterProvider`, `AgentCoreCodeInterpreterProvider` |
 | **Browser** | Cloud-based browser automation | `NoopBrowserProvider`, `AgentCoreBrowserProvider` |
 | **Observability** | Trace and log ingestion/querying | `NoopObservabilityProvider`, `LangfuseObservabilityProvider`, `AgentCoreObservabilityProvider` |
 | **Gateway** | LLM request routing | `NoopGatewayProvider` |
-| **Tools** | Tool registration and invocation | `NoopToolsProvider` |
+| **Tools** | Tool registration and invocation | `NoopToolsProvider`, `AgentCoreGatewayProvider`, `MCPRegistryProvider` |
 
 All seven primitives are fully implemented and wired to their respective providers.
 
@@ -94,11 +97,36 @@ Namespace conventions: `agent:<agent-id>`, `user:<user-id>`, `session:<session-i
 
 ### Identity (`/api/v1/identity`)
 
+**Token operations (data plane):**
+
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/token` | Exchange credentials for an access token. |
-| `POST` | `/api-key` | Retrieve an API key for a configured provider. |
-| `GET` | `/providers` | List configured identity providers. |
+| `POST` | `/token` | Exchange a workload token for an external service OAuth2 token. Supports M2M and 3-legged (USER_FEDERATION) flows. |
+| `POST` | `/api-key` | Retrieve a stored API key for a credential provider. |
+| `POST` | `/workload-token` | Obtain a workload identity token for the agent, optionally scoped to a user. |
+| `POST` | `/auth/complete` | Confirm user authorization for a 3-legged OAuth flow. Returns 204. |
+
+**Credential provider management (control plane):**
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/credential-providers` | List registered credential providers (OAuth2 and API key). |
+| `POST` | `/credential-providers` | Register a new credential provider. Returns 201. |
+| `GET` | `/credential-providers/{name}` | Get credential provider details. |
+| `PUT` | `/credential-providers/{name}` | Update a credential provider. |
+| `DELETE` | `/credential-providers/{name}` | Delete a credential provider. Returns 204. |
+
+**Workload identity management (control plane):**
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/workload-identities` | Register a new workload (agent) identity. Returns 201. |
+| `GET` | `/workload-identities` | List workload identities. |
+| `GET` | `/workload-identities/{name}` | Get workload identity details. |
+| `PUT` | `/workload-identities/{name}` | Update a workload identity. |
+| `DELETE` | `/workload-identities/{name}` | Delete a workload identity. Returns 204. |
+
+Control plane endpoints return 501 if not supported by the configured provider.
 
 ### Code Interpreter (`/api/v1/code-interpreter`)
 
@@ -263,6 +291,14 @@ providers:
       noop:
         backend: "agentic_primitives_gateway.primitives.observability.noop.NoopObservabilityProvider"
         config: {}
+      langfuse:
+        backend: "agentic_primitives_gateway.primitives.observability.langfuse.LangfuseObservabilityProvider"
+        config: {}
+      agentcore:
+        backend: "agentic_primitives_gateway.primitives.observability.agentcore.AgentCoreObservabilityProvider"
+        config:
+          region: "us-east-1"
+          service_name: "agentic-primitives-gateway"
 
   gateway:
     default: "noop"
@@ -276,6 +312,12 @@ providers:
     backends:
       noop:
         backend: "agentic_primitives_gateway.primitives.tools.noop.NoopToolsProvider"
+        config: {}
+      agentcore:
+        backend: "agentic_primitives_gateway.primitives.tools.agentcore.AgentCoreGatewayProvider"
+        config: {}
+      mcp_registry:
+        backend: "agentic_primitives_gateway.primitives.tools.mcp_registry.MCPRegistryProvider"
         config: {}
 ```
 
@@ -531,7 +573,7 @@ pip install -e ".[dev]"
 pytest tests/ -v
 ```
 
-The test suite contains 282 tests covering all primitives, provider routing, and AWS credential pass-through.
+The test suite contains 322 tests covering all primitives, provider routing, and AWS credential pass-through.
 
 ---
 
@@ -841,7 +883,7 @@ agentic-primitives-gateway/
 │           ├── agentcore.py        # AWS AgentCore Gateway (MCP-compatible)
 │           └── mcp_registry.py     # MCP Registry
 ├── client/                         # Standalone Python client (separate package: agentic-primitives-gateway-client)
-├── tests/                          # Server tests (282 tests)
+├── tests/                          # Server tests (322 tests)
 ├── deploy/helm/agentic-primitives-gateway/   # Helm chart
 ├── Dockerfile                      # Multi-stage build
 └── pyproject.toml

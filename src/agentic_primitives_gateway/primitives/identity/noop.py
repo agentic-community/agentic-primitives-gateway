@@ -17,11 +17,18 @@ class NoopIdentityProvider(IdentityProvider):
 
     async def get_token(
         self,
-        provider_name: str,
+        credential_provider: str,
+        workload_token: str,
+        *,
+        auth_flow: str = "M2M",
         scopes: list[str] | None = None,
-        context: dict[str, Any] | None = None,
+        callback_url: str | None = None,
+        force_auth: bool = False,
+        session_uri: str | None = None,
+        custom_state: str | None = None,
+        custom_parameters: dict[str, str] | None = None,
     ) -> dict[str, Any]:
-        logger.debug("noop get_token: %s", provider_name)
+        logger.debug("noop get_token: %s", credential_provider)
         return {
             "access_token": "",
             "token_type": TokenType.BEARER,
@@ -30,12 +37,22 @@ class NoopIdentityProvider(IdentityProvider):
 
     async def get_api_key(
         self,
-        provider_name: str,
-        context: dict[str, Any] | None = None,
+        credential_provider: str,
+        workload_token: str,
     ) -> dict[str, Any]:
-        logger.debug("noop get_api_key: %s", provider_name)
-        return {"api_key": "", "provider_name": provider_name}
+        logger.debug("noop get_api_key: %s", credential_provider)
+        return {"api_key": "", "credential_provider": credential_provider}
 
-    async def list_providers(self) -> list[dict[str, Any]]:
-        logger.debug("noop list_providers")
+    async def get_workload_token(
+        self,
+        workload_name: str,
+        *,
+        user_token: str | None = None,
+        user_id: str | None = None,
+    ) -> dict[str, Any]:
+        logger.debug("noop get_workload_token: %s", workload_name)
+        return {"workload_token": "", "workload_name": workload_name}
+
+    async def list_credential_providers(self) -> list[dict[str, Any]]:
+        logger.debug("noop list_credential_providers")
         return []
