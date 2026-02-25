@@ -30,14 +30,15 @@ Agentic Primitives Gateway is a Kubernetes-deployed REST API service that abstra
 |     |       |       |       |       |        |      |              |
 +-----+-------+-------+-------+-------+--------+------+--------------+
       |       |       |       |       |        |      |
- +----v----+ +v------+ +v----+ +v----+ +v------+ +v--+ +v-----------+
- | Memory  | |Identity| |Code | |Brwsr| |Obsrvb.| |Gwy| |  Tools    |
- |---------| |--------| |Intrp| |-----| |-------| |---| |-----------|
- | Noop    | |Noop    | |Noop | |Noop | |Noop   | |Nop| | Noop      |
- | InMem   | |AgntCore| |Agnt | |Agnt | |Lang   | |   | | AgntCore  |
- | Mem0    | |Keycloak| |Core | |Core | | fuse  | |   | | MCP       |
- | AgntCore| |Entra   | |     | |     | |AgntCre| |   | |  Registry |
- +---------+ +--------+ +-----+ +-----+ +-------+ +---+ +-----------+
+ +----v----+ +v--------+ +v----+ +v----+ +v------+ +v--+ +v-----------+
+ | Memory  | |Identity  | |Code | |Brwsr| |Obsrvb.| |Gwy| |  Tools    |
+ |---------| |----------| |Intrp| |-----| |-------| |---| |-----------|
+ | Noop    | |Noop      | |Noop | |Noop | |Noop   | |Nop| | Noop      |
+ | InMem   | |AgntCore  | |Agnt | |Agnt | |Lang   | |   | | AgntCore  |
+ | Mem0    | |Keycloak  | |Core | |Core | | fuse  | |   | | MCP       |
+ | AgntCore| |Entra     | |     | |     | |AgntCre| |   | |  Registry |
+ |         | |Okta      | |     | |     | |       | |   | |           |
+ +---------+ +----------+ +-----+ +-----+ +-------+ +---+ +-----------+
 ```
 
 ## Primitives
@@ -45,7 +46,7 @@ Agentic Primitives Gateway is a Kubernetes-deployed REST API service that abstra
 | Primitive | Description | Available Backends |
 |-----------|-------------|--------------------|
 | **Memory** | Store, retrieve, and search agent memories | `NoopMemoryProvider`, `InMemoryProvider`, `Mem0MemoryProvider` (Milvus), `AgentCoreMemoryProvider` |
-| **Identity** | Workload identity tokens, OAuth2 token exchange (M2M + 3LO), API key retrieval, credential provider and workload identity management | `NoopIdentityProvider`, `AgentCoreIdentityProvider`, `KeycloakIdentityProvider`, `EntraIdentityProvider` |
+| **Identity** | Workload identity tokens, OAuth2 token exchange (M2M + 3LO), API key retrieval, credential provider and workload identity management | `NoopIdentityProvider`, `AgentCoreIdentityProvider`, `KeycloakIdentityProvider`, `EntraIdentityProvider`, `OktaIdentityProvider` |
 | **Code Interpreter** | Sandboxed code execution sessions | `NoopCodeInterpreterProvider`, `AgentCoreCodeInterpreterProvider` |
 | **Browser** | Cloud-based browser automation | `NoopBrowserProvider`, `AgentCoreBrowserProvider` |
 | **Observability** | Trace and log ingestion/querying | `NoopObservabilityProvider`, `LangfuseObservabilityProvider`, `AgentCoreObservabilityProvider` |
@@ -272,6 +273,13 @@ providers:
           tenant_id: "${AZURE_TENANT_ID}"
           client_id: "${AZURE_CLIENT_ID}"
           client_secret: "${AZURE_CLIENT_SECRET}"
+      okta:
+        backend: "agentic_primitives_gateway.primitives.identity.okta.OktaIdentityProvider"
+        config:
+          domain: "${OKTA_DOMAIN}"
+          client_id: "${OKTA_CLIENT_ID}"
+          client_secret: "${OKTA_CLIENT_SECRET}"
+          api_token: "${OKTA_API_TOKEN}"
       noop:
         backend: "agentic_primitives_gateway.primitives.identity.noop.NoopIdentityProvider"
         config: {}
