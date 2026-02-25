@@ -390,35 +390,156 @@ class AgenticPlatformClient:
 
     async def get_token(
         self,
-        provider_name: str,
+        credential_provider: str,
+        workload_token: str,
+        *,
+        auth_flow: str = "M2M",
         scopes: list[str] | None = None,
-        context: dict[str, Any] | None = None,
+        callback_url: str | None = None,
+        force_auth: bool = False,
+        session_uri: str | None = None,
+        custom_state: str | None = None,
+        custom_parameters: dict[str, str] | None = None,
     ) -> dict[str, Any]:
-        resp = await self._post(
-            "/api/v1/identity/token",
-            json={
-                "provider_name": provider_name,
-                "scopes": scopes or [],
-                "context": context or {},
-            },
-        )
+        body: dict[str, Any] = {
+            "credential_provider": credential_provider,
+            "workload_token": workload_token,
+            "auth_flow": auth_flow,
+            "scopes": scopes or [],
+        }
+        if callback_url is not None:
+            body["callback_url"] = callback_url
+        if force_auth:
+            body["force_auth"] = force_auth
+        if session_uri is not None:
+            body["session_uri"] = session_uri
+        if custom_state is not None:
+            body["custom_state"] = custom_state
+        if custom_parameters is not None:
+            body["custom_parameters"] = custom_parameters
+        resp = await self._post("/api/v1/identity/token", json=body)
         self._raise_for_status(resp)
         return self._json_dict(resp)
 
     async def get_api_key(
         self,
-        provider_name: str,
-        context: dict[str, Any] | None = None,
+        credential_provider: str,
+        workload_token: str,
     ) -> dict[str, Any]:
         resp = await self._post(
             "/api/v1/identity/api-key",
-            json={"provider_name": provider_name, "context": context or {}},
+            json={"credential_provider": credential_provider, "workload_token": workload_token},
         )
         self._raise_for_status(resp)
         return self._json_dict(resp)
 
-    async def list_identity_providers(self) -> dict[str, Any]:
-        resp = await self._get("/api/v1/identity/providers")
+    async def get_workload_token(
+        self,
+        workload_name: str,
+        *,
+        user_token: str | None = None,
+        user_id: str | None = None,
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {"workload_name": workload_name}
+        if user_token is not None:
+            body["user_token"] = user_token
+        if user_id is not None:
+            body["user_id"] = user_id
+        resp = await self._post("/api/v1/identity/workload-token", json=body)
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def complete_auth(
+        self,
+        session_uri: str,
+        *,
+        user_token: str | None = None,
+        user_id: str | None = None,
+    ) -> None:
+        body: dict[str, Any] = {"session_uri": session_uri}
+        if user_token is not None:
+            body["user_token"] = user_token
+        if user_id is not None:
+            body["user_id"] = user_id
+        resp = await self._post("/api/v1/identity/auth/complete", json=body)
+        if resp.status_code == 204:
+            return
+        self._raise_for_status(resp)
+
+    async def list_credential_providers(self) -> dict[str, Any]:
+        resp = await self._get("/api/v1/identity/credential-providers")
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def create_credential_provider(
+        self,
+        name: str,
+        provider_type: str,
+        config: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        resp = await self._post(
+            "/api/v1/identity/credential-providers",
+            json={"name": name, "provider_type": provider_type, "config": config or {}},
+        )
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def get_credential_provider(self, name: str) -> dict[str, Any]:
+        resp = await self._get(f"/api/v1/identity/credential-providers/{name}")
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def update_credential_provider(self, name: str, config: dict[str, Any]) -> dict[str, Any]:
+        resp = await self._request("PUT", f"/api/v1/identity/credential-providers/{name}", json={"config": config})
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def delete_credential_provider(self, name: str) -> None:
+        resp = await self._delete(f"/api/v1/identity/credential-providers/{name}")
+        if resp.status_code == 204:
+            return
+        self._raise_for_status(resp)
+
+    async def create_workload_identity(
+        self,
+        name: str,
+        *,
+        allowed_return_urls: list[str] | None = None,
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {"name": name}
+        if allowed_return_urls is not None:
+            body["allowed_return_urls"] = allowed_return_urls
+        resp = await self._post("/api/v1/identity/workload-identities", json=body)
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def get_workload_identity(self, name: str) -> dict[str, Any]:
+        resp = await self._get(f"/api/v1/identity/workload-identities/{name}")
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def update_workload_identity(
+        self,
+        name: str,
+        *,
+        allowed_return_urls: list[str] | None = None,
+    ) -> dict[str, Any]:
+        resp = await self._request(
+            "PUT",
+            f"/api/v1/identity/workload-identities/{name}",
+            json={"allowed_return_urls": allowed_return_urls or []},
+        )
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def delete_workload_identity(self, name: str) -> None:
+        resp = await self._delete(f"/api/v1/identity/workload-identities/{name}")
+        if resp.status_code == 204:
+            return
+        self._raise_for_status(resp)
+
+    async def list_workload_identities(self) -> dict[str, Any]:
+        resp = await self._get("/api/v1/identity/workload-identities")
         self._raise_for_status(resp)
         return self._json_dict(resp)
 

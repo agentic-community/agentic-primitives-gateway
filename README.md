@@ -45,7 +45,7 @@ Agentic Primitives Gateway is a Kubernetes-deployed REST API service that abstra
 | Primitive | Description | Available Backends |
 |-----------|-------------|--------------------|
 | **Memory** | Store, retrieve, and search agent memories | `NoopMemoryProvider`, `InMemoryProvider`, `Mem0MemoryProvider` (Milvus), `AgentCoreMemoryProvider` |
-| **Identity** | Workload identity tokens, OAuth2 token exchange (M2M + 3LO), API key retrieval, credential provider and workload identity management | `NoopIdentityProvider`, `AgentCoreIdentityProvider` |
+| **Identity** | Workload identity tokens, OAuth2 token exchange (M2M + 3LO), API key retrieval, credential provider and workload identity management | `NoopIdentityProvider`, `AgentCoreIdentityProvider`, `KeycloakIdentityProvider` |
 | **Code Interpreter** | Sandboxed code execution sessions | `NoopCodeInterpreterProvider`, `AgentCoreCodeInterpreterProvider` |
 | **Browser** | Cloud-based browser automation | `NoopBrowserProvider`, `AgentCoreBrowserProvider` |
 | **Observability** | Trace and log ingestion/querying | `NoopObservabilityProvider`, `LangfuseObservabilityProvider`, `AgentCoreObservabilityProvider` |
@@ -259,6 +259,13 @@ providers:
         backend: "agentic_primitives_gateway.primitives.identity.agentcore.AgentCoreIdentityProvider"
         config:
           region: "us-east-1"
+      keycloak:
+        backend: "agentic_primitives_gateway.primitives.identity.keycloak.KeycloakIdentityProvider"
+        config:
+          server_url: "http://keycloak:8080"
+          realm: "agents"
+          client_id: "agentic-gateway"
+          client_secret: "${KEYCLOAK_CLIENT_SECRET}"
       noop:
         backend: "agentic_primitives_gateway.primitives.identity.noop.NoopIdentityProvider"
         config: {}

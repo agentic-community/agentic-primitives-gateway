@@ -88,10 +88,10 @@ class TestClientStubs:
     """Verify the client raises AgenticPlatformError for 501 stub endpoints."""
 
     @pytest.mark.asyncio
-    async def test_identity_stub(self, make_client) -> None:
+    async def test_identity_control_plane_stub(self, make_client) -> None:
         async with make_client() as client:
             with pytest.raises(AgenticPlatformError) as exc_info:
-                await client.get_token("some-provider")
+                await client.create_credential_provider("test", "oauth2")
             assert exc_info.value.status_code == 501
 
     @pytest.mark.asyncio
@@ -128,6 +128,37 @@ class TestClientStubs:
             with pytest.raises(AgenticPlatformError) as exc_info:
                 await client.list_tools()
             assert exc_info.value.status_code == 501
+
+
+class TestClientIdentity:
+    """Tests for the identity data plane methods."""
+
+    @pytest.mark.asyncio
+    async def test_get_token(self, make_client) -> None:
+        async with make_client() as client:
+            result = await client.get_token("github", "wt-123", scopes=["repo"])
+            assert result["access_token"] == "mock-token"
+            assert result["token_type"] == "Bearer"
+
+    @pytest.mark.asyncio
+    async def test_get_api_key(self, make_client) -> None:
+        async with make_client() as client:
+            result = await client.get_api_key("openai", "wt-123")
+            assert result["api_key"] == "mock-api-key"
+            assert result["credential_provider"] == "openai"
+
+    @pytest.mark.asyncio
+    async def test_get_workload_token(self, make_client) -> None:
+        async with make_client() as client:
+            result = await client.get_workload_token("my-agent")
+            assert result["workload_token"] == "mock-workload-token"
+            assert result["workload_name"] == "my-agent"
+
+    @pytest.mark.asyncio
+    async def test_list_credential_providers(self, make_client) -> None:
+        async with make_client() as client:
+            result = await client.list_credential_providers()
+            assert result["credential_providers"] == []
 
 
 class TestClientContextManager:

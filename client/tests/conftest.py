@@ -22,12 +22,15 @@ def _mock_handler(request: httpx.Request) -> httpx.Response:
     if path == "/readyz":
         return httpx.Response(200, json={"status": "ok", "checks": {"memory": True}})
 
+    # Identity data plane endpoints
+    if path.startswith("/api/v1/identity"):
+        return _handle_identity(method, path, request)
+
     # Stub endpoints → 501
     for prefix in (
         "/api/v1/observability",
         "/api/v1/gateway",
         "/api/v1/tools",
-        "/api/v1/identity",
         "/api/v1/code-interpreter",
         "/api/v1/browser",
     ):
@@ -39,6 +42,46 @@ def _mock_handler(request: httpx.Request) -> httpx.Response:
         return _handle_memory(method, path, request)
 
     return httpx.Response(404, json={"detail": "Not found"})
+
+
+def _handle_identity(method: str, path: str, request: httpx.Request) -> httpx.Response:
+    """Mock handler for identity endpoints."""
+    if method == "POST" and path == "/api/v1/identity/token":
+        body = json.loads(request.content)
+        return httpx.Response(
+            200,
+            json={
+                "access_token": "mock-token",
+                "token_type": "Bearer",
+                "scopes": body.get("scopes", []),
+            },
+        )
+
+    if method == "POST" and path == "/api/v1/identity/api-key":
+        body = json.loads(request.content)
+        return httpx.Response(
+            200,
+            json={
+                "api_key": "mock-api-key",
+                "credential_provider": body.get("credential_provider", ""),
+            },
+        )
+
+    if method == "POST" and path == "/api/v1/identity/workload-token":
+        body = json.loads(request.content)
+        return httpx.Response(
+            200,
+            json={
+                "workload_token": "mock-workload-token",
+                "workload_name": body.get("workload_name", ""),
+            },
+        )
+
+    if method == "GET" and path == "/api/v1/identity/credential-providers":
+        return httpx.Response(200, json={"credential_providers": []})
+
+    # Control plane and other identity endpoints → 501
+    return httpx.Response(501, json={"detail": "Not implemented"})
 
 
 def _handle_memory(method: str, path: str, request: httpx.Request) -> httpx.Response:

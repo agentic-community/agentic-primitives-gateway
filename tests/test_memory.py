@@ -230,21 +230,21 @@ class TestIdentityEndpoints:
     def test_get_token(self, client: TestClient) -> None:
         resp = client.post(
             "/api/v1/identity/token",
-            json={"provider_name": "github", "scopes": ["repo"]},
+            json={"credential_provider": "github", "workload_token": "wt", "scopes": ["repo"]},
         )
         assert resp.status_code == 200
 
     def test_get_api_key(self, client: TestClient) -> None:
         resp = client.post(
             "/api/v1/identity/api-key",
-            json={"provider_name": "openai"},
+            json={"credential_provider": "openai", "workload_token": "wt"},
         )
         assert resp.status_code == 200
 
-    def test_list_providers(self, client: TestClient) -> None:
-        resp = client.get("/api/v1/identity/providers")
+    def test_list_credential_providers(self, client: TestClient) -> None:
+        resp = client.get("/api/v1/identity/credential-providers")
         assert resp.status_code == 200
-        assert resp.json()["providers"] == []
+        assert resp.json()["credential_providers"] == []
 
 
 class TestCodeInterpreterEndpoints:
