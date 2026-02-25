@@ -37,6 +37,9 @@ langfuse = [
 keycloak = [
     "python-keycloak>=4.0.0",
 ]
+entra = [
+    "msal>=1.28.0",
+]
 dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.24.0",
