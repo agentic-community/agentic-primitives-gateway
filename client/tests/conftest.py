@@ -34,10 +34,13 @@ def _mock_handler(request: httpx.Request) -> httpx.Response:
     if path.startswith("/api/v1/tools"):
         return _handle_tools(method, path, request)
 
+    # Code interpreter endpoints
+    if path.startswith("/api/v1/code-interpreter"):
+        return _handle_code_interpreter(method, path, request)
+
     # Stub endpoints → 501
     for prefix in (
         "/api/v1/gateway",
-        "/api/v1/code-interpreter",
         "/api/v1/browser",
     ):
         if path.startswith(prefix):
@@ -51,6 +54,76 @@ def _mock_handler(request: httpx.Request) -> httpx.Response:
 
 
 _tools_store: dict[str, dict] = {}
+
+
+_ci_sessions: dict[str, dict] = {}
+
+
+def _handle_code_interpreter(method: str, path: str, request: httpx.Request) -> httpx.Response:
+    """Mock handler for code interpreter endpoints."""
+    rest = path.removeprefix("/api/v1/code-interpreter")
+
+    # POST /sessions (start)
+    if rest == "/sessions" and method == "POST":
+        body = json.loads(request.content)
+        sid = body.get("session_id") or "mock-session"
+        session = {
+            "session_id": sid,
+            "status": "active",
+            "language": body.get("language", "python"),
+            "created_at": "2025-01-01T00:00:00Z",
+        }
+        _ci_sessions[sid] = session
+        return httpx.Response(201, json=session)
+
+    # GET /sessions (list)
+    if rest == "/sessions" and method == "GET":
+        return httpx.Response(200, json={"sessions": list(_ci_sessions.values())})
+
+    if rest.startswith("/sessions/"):
+        parts = rest.removeprefix("/sessions/").split("/")
+        session_id = parts[0]
+
+        # DELETE /sessions/{id}
+        if len(parts) == 1 and method == "DELETE":
+            _ci_sessions.pop(session_id, None)
+            return httpx.Response(204)
+
+        # GET /sessions/{id} (get session)
+        if len(parts) == 1 and method == "GET":
+            session = _ci_sessions.get(session_id)
+            if not session:
+                return httpx.Response(404, json={"detail": "Session not found"})
+            return httpx.Response(200, json=session)
+
+        # POST /sessions/{id}/execute
+        if len(parts) == 2 and parts[1] == "execute" and method == "POST":
+            body = json.loads(request.content)
+            return httpx.Response(
+                200,
+                json={
+                    "session_id": session_id,
+                    "stdout": "",
+                    "stderr": "",
+                    "exit_code": 0,
+                },
+            )
+
+        # GET /sessions/{id}/history
+        if len(parts) == 2 and parts[1] == "history" and method == "GET":
+            if session_id not in _ci_sessions:
+                return httpx.Response(404, json={"detail": "Session not found"})
+            return httpx.Response(200, json={"entries": []})
+
+        # POST /sessions/{id}/files
+        if len(parts) == 2 and parts[1] == "files" and method == "POST":
+            return httpx.Response(200, json={"filename": "test.py", "size": 0, "session_id": session_id})
+
+        # GET /sessions/{id}/files/{filename}
+        if len(parts) == 3 and parts[1] == "files" and method == "GET":
+            return httpx.Response(200, content=b"file content")
+
+    return httpx.Response(404, json={"detail": "Not found"})
 
 
 def _handle_tools(method: str, path: str, request: httpx.Request) -> httpx.Response:
@@ -410,11 +483,13 @@ def _clear_store():
     _store.clear()
     _events.clear()
     _tools_store.clear()
+    _ci_sessions.clear()
     _event_counter = 0
     yield
     _store.clear()
     _events.clear()
     _tools_store.clear()
+    _ci_sessions.clear()
     _event_counter = 0
 
 

@@ -1,9 +1,13 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Response, UploadFile
+from typing import Any
+
+from fastapi import APIRouter, HTTPException, Query, Response, UploadFile
 
 from agentic_primitives_gateway.models.code_interpreter import (
     ExecuteRequest,
+    ExecutionHistoryEntry,
+    ExecutionHistoryResponse,
     ExecutionResult,
     FileUploadResponse,
     ListSessionsResponse,
@@ -35,6 +39,31 @@ async def stop_session(session_id: str) -> Response:
 async def list_sessions(status: str | None = None) -> ListSessionsResponse:
     sessions = await registry.code_interpreter.list_sessions(status=status)
     return ListSessionsResponse(sessions=[SessionInfo(**s) for s in sessions])
+
+
+@router.get("/sessions/{session_id}/history", response_model=ExecutionHistoryResponse)
+async def get_execution_history(
+    session_id: str,
+    limit: int = Query(default=50, ge=1, le=500),
+) -> Any:
+    try:
+        entries = await registry.code_interpreter.get_execution_history(session_id, limit=limit)
+    except NotImplementedError:
+        raise HTTPException(status_code=501, detail="Execution history not supported by this provider") from None
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Session not found") from None
+    return ExecutionHistoryResponse(entries=[ExecutionHistoryEntry(**e) for e in entries])
+
+
+@router.get("/sessions/{session_id}", response_model=SessionInfo)
+async def get_session(session_id: str) -> Any:
+    try:
+        result = await registry.code_interpreter.get_session(session_id)
+    except NotImplementedError:
+        raise HTTPException(status_code=501, detail="get_session not supported by this provider") from None
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Session not found") from None
+    return SessionInfo(**result)
 
 
 @router.post("/sessions/{session_id}/execute", response_model=ExecutionResult)

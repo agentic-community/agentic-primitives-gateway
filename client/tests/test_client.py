@@ -335,6 +335,61 @@ class TestClientTools:
             assert result["name"] == "new-server"
 
 
+class TestClientCodeInterpreter:
+    @pytest.mark.asyncio
+    async def test_start_code_session(self, make_client) -> None:
+        async with make_client() as client:
+            result = await client.start_code_session(session_id="s-1")
+            assert result["session_id"] == "s-1"
+
+    @pytest.mark.asyncio
+    async def test_stop_code_session(self, make_client) -> None:
+        async with make_client() as client:
+            await client.start_code_session(session_id="s-1")
+            await client.stop_code_session("s-1")
+
+    @pytest.mark.asyncio
+    async def test_execute_code(self, make_client) -> None:
+        async with make_client() as client:
+            await client.start_code_session(session_id="s-1")
+            result = await client.execute_code("s-1", "print(1)")
+            assert result["session_id"] == "s-1"
+
+    @pytest.mark.asyncio
+    async def test_list_code_sessions(self, make_client) -> None:
+        async with make_client() as client:
+            result = await client.list_code_sessions()
+            assert "sessions" in result
+
+    @pytest.mark.asyncio
+    async def test_get_code_session(self, make_client) -> None:
+        async with make_client() as client:
+            await client.start_code_session(session_id="s-1")
+            result = await client.get_code_session("s-1")
+            assert result["session_id"] == "s-1"
+
+    @pytest.mark.asyncio
+    async def test_get_code_session_not_found(self, make_client) -> None:
+        async with make_client() as client:
+            with pytest.raises(AgenticPlatformError) as exc_info:
+                await client.get_code_session("nonexistent")
+            assert exc_info.value.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_get_execution_history(self, make_client) -> None:
+        async with make_client() as client:
+            await client.start_code_session(session_id="s-1")
+            result = await client.get_execution_history("s-1")
+            assert "entries" in result
+
+    @pytest.mark.asyncio
+    async def test_get_execution_history_not_found(self, make_client) -> None:
+        async with make_client() as client:
+            with pytest.raises(AgenticPlatformError) as exc_info:
+                await client.get_execution_history("nonexistent")
+            assert exc_info.value.status_code == 404
+
+
 class TestClientStubs:
     """Verify the client raises AgenticPlatformError for 501 stub endpoints."""
 
@@ -343,13 +398,6 @@ class TestClientStubs:
         async with make_client() as client:
             with pytest.raises(AgenticPlatformError) as exc_info:
                 await client.create_credential_provider("test", "oauth2")
-            assert exc_info.value.status_code == 501
-
-    @pytest.mark.asyncio
-    async def test_code_interpreter_stub(self, make_client) -> None:
-        async with make_client() as client:
-            with pytest.raises(AgenticPlatformError) as exc_info:
-                await client.start_code_session()
             assert exc_info.value.status_code == 501
 
     @pytest.mark.asyncio

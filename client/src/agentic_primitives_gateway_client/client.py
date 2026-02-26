@@ -778,6 +778,26 @@ class AgenticPlatformClient:
         self._raise_for_status(resp)
         return resp.content
 
+    # ── Code Interpreter: extended ─────────────────────────────────────
+
+    async def get_code_session(self, session_id: str) -> dict[str, Any]:
+        resp = await self._get(f"/api/v1/code-interpreter/sessions/{session_id}")
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def get_execution_history(
+        self,
+        session_id: str,
+        *,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        resp = await self._get(
+            f"/api/v1/code-interpreter/sessions/{session_id}/history",
+            params={"limit": limit},
+        )
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
     # ── Browser ─────────────────────────────────────────────────────────
 
     async def start_browser_session(

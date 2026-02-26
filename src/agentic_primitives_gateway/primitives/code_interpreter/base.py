@@ -46,3 +46,16 @@ class CodeInterpreterProvider(ABC):
 
     async def healthcheck(self) -> bool:
         return True
+
+    # ── Session details & execution history (optional) ───────────────
+
+    async def get_session(self, session_id: str) -> dict[str, Any]:
+        raise NotImplementedError
+
+    async def get_execution_history(
+        self,
+        session_id: str,
+        *,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        raise NotImplementedError

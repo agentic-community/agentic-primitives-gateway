@@ -47,7 +47,7 @@ Agentic Primitives Gateway is a Kubernetes-deployed REST API service that abstra
 |-----------|-------------|--------------------|
 | **Memory** | Key-value memory, conversation events, session/branch management, memory resource lifecycle, strategy management | `NoopMemoryProvider`, `InMemoryProvider`, `Mem0MemoryProvider` (Milvus), `AgentCoreMemoryProvider` |
 | **Identity** | Workload identity tokens, OAuth2 token exchange (M2M + 3LO), API key retrieval, credential provider and workload identity management | `NoopIdentityProvider`, `AgentCoreIdentityProvider`, `KeycloakIdentityProvider`, `EntraIdentityProvider`, `OktaIdentityProvider` |
-| **Code Interpreter** | Sandboxed code execution sessions | `NoopCodeInterpreterProvider`, `AgentCoreCodeInterpreterProvider` |
+| **Code Interpreter** | Sandboxed code execution sessions with execution history | `NoopCodeInterpreterProvider`, `AgentCoreCodeInterpreterProvider` |
 | **Browser** | Cloud-based browser automation | `NoopBrowserProvider`, `AgentCoreBrowserProvider` |
 | **Observability** | Trace/log ingestion, LLM generation tracking, evaluation scoring, session management | `NoopObservabilityProvider`, `LangfuseObservabilityProvider`, `AgentCoreObservabilityProvider` |
 | **Gateway** | LLM request routing | `NoopGatewayProvider` |
@@ -176,14 +176,30 @@ Control plane endpoints return 501 if not supported by the configured provider.
 
 ### Code Interpreter (`/api/v1/code-interpreter`)
 
+**Session lifecycle:**
+
 | Method | Path | Description |
 |--------|------|-------------|
 | `POST` | `/sessions` | Start a sandboxed execution session. Returns 201. |
 | `DELETE` | `/sessions/{session_id}` | Stop a session. Returns 204. |
 | `GET` | `/sessions` | List active sessions. |
+| `GET` | `/sessions/{session_id}` | Get session details (status, language, created_at). Returns 404 if not found. |
+
+**Code execution:**
+
+| Method | Path | Description |
+|--------|------|-------------|
 | `POST` | `/sessions/{session_id}/execute` | Execute code in a session. |
+| `GET` | `/sessions/{session_id}/history` | Get execution history for a session. Query param: `limit` (1--500, default 50). |
+
+**File I/O:**
+
+| Method | Path | Description |
+|--------|------|-------------|
 | `POST` | `/sessions/{session_id}/files` | Upload a file to a session (multipart). |
 | `GET` | `/sessions/{session_id}/files/{filename}` | Download a file from a session (binary). |
+
+Session details and execution history endpoints return 501 if not supported by the configured provider. Both `NoopCodeInterpreterProvider` and `AgentCoreCodeInterpreterProvider` support session details. Only `AgentCoreCodeInterpreterProvider` stores execution history.
 
 ### Browser (`/api/v1/browser`)
 
@@ -691,7 +707,7 @@ pip install -e ".[dev]"
 pytest tests/ -v
 ```
 
-The test suite contains 459 tests covering all primitives, provider routing, and AWS credential pass-through.
+The test suite contains 480 tests covering all primitives, provider routing, and AWS credential pass-through.
 
 ---
 
@@ -969,7 +985,7 @@ agentic-primitives-gateway/
 │   │   ├── health.py               # /healthz, /readyz
 │   │   ├── memory.py               # /api/v1/memory/* (22 endpoints)
 │   │   ├── identity.py             # /api/v1/identity/* (3 endpoints)
-│   │   ├── code_interpreter.py     # /api/v1/code-interpreter/* (6 endpoints)
+│   │   ├── code_interpreter.py     # /api/v1/code-interpreter/* (8 endpoints)
 │   │   ├── browser.py              # /api/v1/browser/* (5 endpoints)
 │   │   ├── observability.py        # /api/v1/observability/* (11 endpoints)
 │   │   ├── gateway.py              # /api/v1/gateway/* (2 endpoints)
@@ -1001,7 +1017,7 @@ agentic-primitives-gateway/
 │           ├── agentcore.py        # AWS AgentCore Gateway (MCP-compatible)
 │           └── mcp_registry.py     # MCP Registry
 ├── client/                         # Standalone Python client (separate package: agentic-primitives-gateway-client)
-├── tests/                          # Server tests (459 tests)
+├── tests/                          # Server tests (480 tests)
 ├── deploy/helm/agentic-primitives-gateway/   # Helm chart
 ├── Dockerfile                      # Multi-stage build
 └── pyproject.toml

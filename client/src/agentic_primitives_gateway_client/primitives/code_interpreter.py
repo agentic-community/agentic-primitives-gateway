@@ -51,6 +51,31 @@ class CodeInterpreter:
                 pass
             self._session_id = None
 
+    # ── Extended async interface ─────────────────────────────────────
+
+    async def get_session(self) -> dict[str, Any]:
+        """Get details for the current session."""
+        if not self._session_id:
+            return {"error": "No active session"}
+        return await self._client.get_code_session(self._session_id)
+
+    async def history(self, limit: int = 10) -> str:
+        """Get execution history for the current session, returning formatted string."""
+        if not self._session_id:
+            return "No active session."
+        try:
+            result = await self._client.get_execution_history(self._session_id, limit=limit)
+            entries = result.get("entries", [])
+            if not entries:
+                return "No execution history."
+            lines: list[str] = []
+            for e in entries:
+                code_preview = e.get("code", "")[:50]
+                lines.append(f"  [{e.get('timestamp', '?')[:19]}] {code_preview!r} → exit={e.get('exit_code', 0)}")
+            return f"{len(entries)} executions:\n" + "\n".join(lines)
+        except Exception as exc:
+            return f"Failed to get history: {exc}"
+
     # ── Sync wrappers ───────────────────────────────────────────────
 
     def _get_loop(self) -> asyncio.AbstractEventLoop:
@@ -66,3 +91,10 @@ class CodeInterpreter:
 
     def close_sync(self) -> None:
         self._sync(self.close())
+
+    def get_session_sync(self) -> dict[str, Any]:
+        result: dict[str, Any] = self._sync(self.get_session())
+        return result
+
+    def history_sync(self, limit: int = 10) -> str:
+        return str(self._sync(self.history(limit)))

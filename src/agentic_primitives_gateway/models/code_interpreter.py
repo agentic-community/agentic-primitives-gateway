@@ -44,3 +44,20 @@ class FileUploadResponse(BaseModel):
 
 class ListSessionsResponse(BaseModel):
     sessions: list[SessionInfo]
+
+
+# ── Execution history ─────────────────────────────────────────────────
+
+
+class ExecutionHistoryEntry(BaseModel):
+    timestamp: str
+    code: str
+    language: str = CodeLanguage.PYTHON
+    stdout: str = ""
+    stderr: str = ""
+    exit_code: int = 0
+    result: Any = None
+
+
+class ExecutionHistoryResponse(BaseModel):
+    entries: list[ExecutionHistoryEntry]

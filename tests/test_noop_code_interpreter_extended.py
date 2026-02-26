@@ -68,3 +68,45 @@ class TestNoopCodeInterpreterExtended:
     async def test_stop_session(self, provider):
         # Should not raise
         await provider.stop_session(session_id="sess-1")
+
+    # ── Stateful session tracking ────────────────────────────────────
+
+    @pytest.mark.asyncio
+    async def test_get_session(self, provider):
+        await provider.start_session(session_id="s-1")
+        result = await provider.get_session("s-1")
+        assert result["session_id"] == "s-1"
+        assert result["status"] == "active"
+        assert "created_at" in result
+
+    @pytest.mark.asyncio
+    async def test_get_session_not_found(self, provider):
+        with pytest.raises(KeyError):
+            await provider.get_session("nonexistent")
+
+    @pytest.mark.asyncio
+    async def test_list_sessions_returns_tracked(self, provider):
+        await provider.start_session(session_id="s-a")
+        await provider.start_session(session_id="s-b")
+        sessions = await provider.list_sessions()
+        session_ids = [s["session_id"] for s in sessions]
+        assert "s-a" in session_ids
+        assert "s-b" in session_ids
+
+    @pytest.mark.asyncio
+    async def test_stop_removes_from_list(self, provider):
+        await provider.start_session(session_id="s-1")
+        await provider.stop_session("s-1")
+        sessions = await provider.list_sessions()
+        assert all(s["session_id"] != "s-1" for s in sessions)
+
+    @pytest.mark.asyncio
+    async def test_execution_history_returns_empty(self, provider):
+        await provider.start_session(session_id="s-1")
+        history = await provider.get_execution_history("s-1")
+        assert history == []
+
+    @pytest.mark.asyncio
+    async def test_execution_history_not_found(self, provider):
+        with pytest.raises(KeyError):
+            await provider.get_execution_history("nonexistent")

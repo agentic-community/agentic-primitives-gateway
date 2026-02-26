@@ -175,3 +175,88 @@ class TestAgentCoreCodeInterpreterProvider:
         provider = AgentCoreCodeInterpreterProvider(region="us-west-2")
         set_aws_credentials(AWSCredentials(access_key_id="AK", secret_access_key="SK"))
         assert provider._get_region() == "us-west-2"
+
+    # ── New methods ──────────────────────────────────────────────────
+
+    @pytest.mark.asyncio
+    async def test_get_session(self, mock_ci_cls, mock_get_session):
+        provider = AgentCoreCodeInterpreterProvider(region="us-east-1")
+        mock_client = MagicMock()
+        mock_client.start.return_value = "session-1"
+        mock_ci_cls.return_value = mock_client
+        mock_get_session.return_value = MagicMock(region_name="us-east-1")
+
+        await provider.start_session(session_id="session-1")
+        result = await provider.get_session("session-1")
+
+        assert result["session_id"] == "session-1"
+        assert result["status"] == "active"
+        assert "created_at" in result
+
+    @pytest.mark.asyncio
+    async def test_get_session_not_found(self, mock_ci_cls, mock_get_session):
+        provider = AgentCoreCodeInterpreterProvider(region="us-east-1")
+        with pytest.raises(KeyError):
+            await provider.get_session("nonexistent")
+
+    @pytest.mark.asyncio
+    async def test_execution_history(self, mock_ci_cls, mock_get_session):
+        provider = AgentCoreCodeInterpreterProvider(region="us-east-1")
+        mock_client = MagicMock()
+        mock_client.start.return_value = "session-1"
+        mock_client.execute_code.return_value = {"stdout": "2", "stderr": "", "exitCode": 0}
+        mock_ci_cls.return_value = mock_client
+        mock_get_session.return_value = MagicMock(region_name="us-east-1")
+
+        await provider.start_session(session_id="session-1")
+        await provider.execute("session-1", "print(1+1)")
+        await provider.execute("session-1", "print(2+2)")
+
+        history = await provider.get_execution_history("session-1")
+        assert len(history) == 2
+        assert history[0]["code"] == "print(1+1)"
+        assert history[1]["code"] == "print(2+2)"
+
+    @pytest.mark.asyncio
+    async def test_execution_history_empty(self, mock_ci_cls, mock_get_session):
+        provider = AgentCoreCodeInterpreterProvider(region="us-east-1")
+        mock_client = MagicMock()
+        mock_client.start.return_value = "session-1"
+        mock_ci_cls.return_value = mock_client
+        mock_get_session.return_value = MagicMock(region_name="us-east-1")
+
+        await provider.start_session(session_id="session-1")
+        history = await provider.get_execution_history("session-1")
+        assert history == []
+
+    @pytest.mark.asyncio
+    async def test_execution_history_respects_limit(self, mock_ci_cls, mock_get_session):
+        provider = AgentCoreCodeInterpreterProvider(region="us-east-1")
+        mock_client = MagicMock()
+        mock_client.start.return_value = "session-1"
+        mock_client.execute_code.return_value = {"stdout": "", "stderr": "", "exitCode": 0}
+        mock_ci_cls.return_value = mock_client
+        mock_get_session.return_value = MagicMock(region_name="us-east-1")
+
+        await provider.start_session(session_id="session-1")
+        for i in range(5):
+            await provider.execute("session-1", f"print({i})")
+
+        history = await provider.get_execution_history("session-1", limit=2)
+        assert len(history) == 2
+
+    @pytest.mark.asyncio
+    async def test_stop_session_clears_history(self, mock_ci_cls, mock_get_session):
+        provider = AgentCoreCodeInterpreterProvider(region="us-east-1")
+        mock_client = MagicMock()
+        mock_client.start.return_value = "session-1"
+        mock_client.execute_code.return_value = {"stdout": "", "stderr": "", "exitCode": 0}
+        mock_ci_cls.return_value = mock_client
+        mock_get_session.return_value = MagicMock(region_name="us-east-1")
+
+        await provider.start_session(session_id="session-1")
+        await provider.execute("session-1", "print(1)")
+        await provider.stop_session("session-1")
+
+        with pytest.raises(KeyError):
+            await provider.get_execution_history("session-1")
