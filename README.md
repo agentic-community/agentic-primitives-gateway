@@ -45,7 +45,7 @@ Agentic Primitives Gateway is a Kubernetes-deployed REST API service that abstra
 
 | Primitive | Description | Available Backends |
 |-----------|-------------|--------------------|
-| **Memory** | Store, retrieve, and search agent memories | `NoopMemoryProvider`, `InMemoryProvider`, `Mem0MemoryProvider` (Milvus), `AgentCoreMemoryProvider` |
+| **Memory** | Key-value memory, conversation events, session/branch management, memory resource lifecycle, strategy management | `NoopMemoryProvider`, `InMemoryProvider`, `Mem0MemoryProvider` (Milvus), `AgentCoreMemoryProvider` |
 | **Identity** | Workload identity tokens, OAuth2 token exchange (M2M + 3LO), API key retrieval, credential provider and workload identity management | `NoopIdentityProvider`, `AgentCoreIdentityProvider`, `KeycloakIdentityProvider`, `EntraIdentityProvider`, `OktaIdentityProvider` |
 | **Code Interpreter** | Sandboxed code execution sessions | `NoopCodeInterpreterProvider`, `AgentCoreCodeInterpreterProvider` |
 | **Browser** | Cloud-based browser automation | `NoopBrowserProvider`, `AgentCoreBrowserProvider` |
@@ -86,6 +86,8 @@ Example response:
 
 ### Memory (`/api/v1/memory`)
 
+**Key-value memory (data plane):**
+
 | Method | Path | Description |
 |--------|------|-------------|
 | `POST` | `/{namespace}` | Store a memory. Body: `{"key": "...", "content": "...", "metadata": {}}`. Returns 201. |
@@ -95,6 +97,49 @@ Example response:
 | `DELETE` | `/{namespace}/{key}` | Delete a memory. Returns 204 on success, 404 if not found. |
 
 Namespace conventions: `agent:<agent-id>`, `user:<user-id>`, `session:<session-id>`, `global`.
+
+**Conversation events:**
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/sessions/{actor_id}/{session_id}/events` | Create a conversation event. Body: `{"messages": [{"text": "...", "role": "..."}], "metadata": {}}`. Returns 201. |
+| `GET` | `/sessions/{actor_id}/{session_id}/events` | List events in a session. Query param: `limit` (1--1000, default 100). |
+| `GET` | `/sessions/{actor_id}/{session_id}/events/{event_id}` | Get a specific event. Returns 404 if not found. |
+| `DELETE` | `/sessions/{actor_id}/{session_id}/events/{event_id}` | Delete an event. Returns 204 on success, 404 if not found. |
+| `GET` | `/sessions/{actor_id}/{session_id}/turns` | Get last K conversation turns. Query param: `k` (1--100, default 5). |
+
+**Session management:**
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/actors` | List actors that have sessions. |
+| `GET` | `/actors/{actor_id}/sessions` | List sessions for an actor. |
+
+**Branch management:**
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/sessions/{actor_id}/{session_id}/branches` | Fork a conversation from a specific event. Body: `{"root_event_id": "...", "branch_name": "...", "messages": [...]}`. Returns 201. |
+| `GET` | `/sessions/{actor_id}/{session_id}/branches` | List branches in a session. |
+
+**Memory resource lifecycle (control plane):**
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/resources` | Create a memory resource. Body: `{"name": "...", "strategies": [...], "description": "..."}`. Returns 201. |
+| `GET` | `/resources` | List memory resources. |
+| `GET` | `/resources/{memory_id}` | Get memory resource details. |
+| `DELETE` | `/resources/{memory_id}` | Delete a memory resource. Returns 204. |
+
+**Strategy management:**
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/resources/{memory_id}/strategies` | List strategies on a memory resource. |
+| `POST` | `/resources/{memory_id}/strategies` | Add a strategy. Body: `{"strategy": {...}}`. Returns 201. |
+| `DELETE` | `/resources/{memory_id}/strategies/{strategy_id}` | Remove a strategy. Returns 204. |
+
+Conversation events, session management, branch management, control plane, and strategy endpoints return 501 if not supported by the configured provider. The `InMemoryProvider` supports conversation events and session management. The `AgentCoreMemoryProvider` supports all operations.
 
 ### Identity (`/api/v1/identity`)
 
@@ -594,7 +639,7 @@ pip install -e ".[dev]"
 pytest tests/ -v
 ```
 
-The test suite contains 322 tests covering all primitives, provider routing, and AWS credential pass-through.
+The test suite contains 408 tests covering all primitives, provider routing, and AWS credential pass-through.
 
 ---
 
@@ -870,7 +915,7 @@ agentic-primitives-gateway/
 │   ├── registry.py                 # Provider registry -- loads named backends, resolves per-request
 │   ├── routes/
 │   │   ├── health.py               # /healthz, /readyz
-│   │   ├── memory.py               # /api/v1/memory/* (5 endpoints)
+│   │   ├── memory.py               # /api/v1/memory/* (22 endpoints)
 │   │   ├── identity.py             # /api/v1/identity/* (3 endpoints)
 │   │   ├── code_interpreter.py     # /api/v1/code-interpreter/* (6 endpoints)
 │   │   ├── browser.py              # /api/v1/browser/* (5 endpoints)
@@ -904,7 +949,7 @@ agentic-primitives-gateway/
 │           ├── agentcore.py        # AWS AgentCore Gateway (MCP-compatible)
 │           └── mcp_registry.py     # MCP Registry
 ├── client/                         # Standalone Python client (separate package: agentic-primitives-gateway-client)
-├── tests/                          # Server tests (322 tests)
+├── tests/                          # Server tests (408 tests)
 ├── deploy/helm/agentic-primitives-gateway/   # Helm chart
 ├── Dockerfile                      # Multi-stage build
 └── pyproject.toml
