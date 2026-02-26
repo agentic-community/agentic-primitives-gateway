@@ -34,3 +34,22 @@ class ToolsProvider(ABC):
 
     async def healthcheck(self) -> bool:
         return True
+
+    # ── Tool retrieval & deletion (optional) ─────────────────────────
+
+    async def get_tool(self, tool_name: str) -> dict[str, Any]:
+        raise NotImplementedError
+
+    async def delete_tool(self, tool_name: str) -> None:
+        raise NotImplementedError
+
+    # ── Server management (optional) ─────────────────────────────────
+
+    async def list_servers(self) -> list[dict[str, Any]]:
+        raise NotImplementedError
+
+    async def get_server(self, server_name: str) -> dict[str, Any]:
+        raise NotImplementedError
+
+    async def register_server(self, server_config: dict[str, Any]) -> dict[str, Any]:
+        raise NotImplementedError

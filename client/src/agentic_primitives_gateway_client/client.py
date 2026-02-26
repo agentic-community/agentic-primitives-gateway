@@ -976,3 +976,31 @@ class AgenticPlatformClient:
         )
         self._raise_for_status(resp)
         return self._json_dict(resp)
+
+    # ── Tools: extended ────────────────────────────────────────────────
+
+    async def get_tool(self, tool_name: str) -> dict[str, Any]:
+        resp = await self._get(f"/api/v1/tools/{tool_name}")
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def delete_tool(self, tool_name: str) -> None:
+        resp = await self._delete(f"/api/v1/tools/{tool_name}")
+        if resp.status_code == 204:
+            return
+        self._raise_for_status(resp)
+
+    async def list_tool_servers(self) -> dict[str, Any]:
+        resp = await self._get("/api/v1/tools/servers")
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def get_tool_server(self, server_name: str) -> dict[str, Any]:
+        resp = await self._get(f"/api/v1/tools/servers/{server_name}")
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def register_tool_server(self, server_config: dict[str, Any]) -> dict[str, Any]:
+        resp = await self._post("/api/v1/tools/servers", json=server_config)
+        self._raise_for_status(resp)
+        return self._json_dict(resp)

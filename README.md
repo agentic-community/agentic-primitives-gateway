@@ -51,7 +51,7 @@ Agentic Primitives Gateway is a Kubernetes-deployed REST API service that abstra
 | **Browser** | Cloud-based browser automation | `NoopBrowserProvider`, `AgentCoreBrowserProvider` |
 | **Observability** | Trace/log ingestion, LLM generation tracking, evaluation scoring, session management | `NoopObservabilityProvider`, `LangfuseObservabilityProvider`, `AgentCoreObservabilityProvider` |
 | **Gateway** | LLM request routing | `NoopGatewayProvider` |
-| **Tools** | Tool registration and invocation | `NoopToolsProvider`, `AgentCoreGatewayProvider`, `MCPRegistryProvider` |
+| **Tools** | Tool registration, invocation, search, and MCP server management | `NoopToolsProvider`, `AgentCoreGatewayProvider`, `MCPRegistryProvider` |
 
 All seven primitives are fully implemented and wired to their respective providers.
 
@@ -249,11 +249,26 @@ Trace retrieval, updates, scoring, session management, and flush endpoints retur
 
 ### Tools (`/api/v1/tools`)
 
+**Tool operations (data plane):**
+
 | Method | Path | Description |
 |--------|------|-------------|
 | `POST` | `/` | Register a tool. Returns 201. |
 | `GET` | `/` | List registered tools. |
-| `POST` | `/{name}/invoke` | Invoke a tool by name. |
+| `GET` | `/search` | Search tools by query. Query params: `query`, `max_results` (1--100, default 10). |
+| `POST` | `/{name}/invoke` | Invoke a tool by name. Body: `{"params": {}}`. |
+| `GET` | `/{name}` | Get a single tool definition by name. Returns 404 if not found. |
+| `DELETE` | `/{name}` | Delete a tool. Returns 204 on success. |
+
+**Server management (MCP Registry):**
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/servers` | List registered MCP servers with health status. |
+| `POST` | `/servers` | Register a new MCP server. Body: `{"name": "...", "url": "...", "config": {}}`. Returns 201. |
+| `GET` | `/servers/{server_name}` | Get details for a specific server. Returns 404 if not found. |
+
+Tool retrieval, deletion, and server management endpoints return 501 if not supported by the configured provider. The `MCPRegistryProvider` supports all operations. The `AgentCoreGatewayProvider` supports tool retrieval only.
 
 Interactive API docs are available at `/docs` (Swagger UI) when the server is running.
 
@@ -676,7 +691,7 @@ pip install -e ".[dev]"
 pytest tests/ -v
 ```
 
-The test suite contains 437 tests covering all primitives, provider routing, and AWS credential pass-through.
+The test suite contains 459 tests covering all primitives, provider routing, and AWS credential pass-through.
 
 ---
 
@@ -958,7 +973,7 @@ agentic-primitives-gateway/
 │   │   ├── browser.py              # /api/v1/browser/* (5 endpoints)
 │   │   ├── observability.py        # /api/v1/observability/* (11 endpoints)
 │   │   ├── gateway.py              # /api/v1/gateway/* (2 endpoints)
-│   │   └── tools.py                # /api/v1/tools/* (3 endpoints)
+│   │   └── tools.py                # /api/v1/tools/* (9 endpoints)
 │   ├── models/                     # Pydantic request/response models per primitive
 │   └── primitives/
 │       ├── base.py                 # Abstract base classes for all 7 providers
@@ -986,7 +1001,7 @@ agentic-primitives-gateway/
 │           ├── agentcore.py        # AWS AgentCore Gateway (MCP-compatible)
 │           └── mcp_registry.py     # MCP Registry
 ├── client/                         # Standalone Python client (separate package: agentic-primitives-gateway-client)
-├── tests/                          # Server tests (437 tests)
+├── tests/                          # Server tests (459 tests)
 ├── deploy/helm/agentic-primitives-gateway/   # Helm chart
 ├── Dockerfile                      # Multi-stage build
 └── pyproject.toml

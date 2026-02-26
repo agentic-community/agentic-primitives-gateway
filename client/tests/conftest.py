@@ -30,10 +30,13 @@ def _mock_handler(request: httpx.Request) -> httpx.Response:
     if path.startswith("/api/v1/observability"):
         return _handle_observability(method, path, request)
 
+    # Tools endpoints
+    if path.startswith("/api/v1/tools"):
+        return _handle_tools(method, path, request)
+
     # Stub endpoints → 501
     for prefix in (
         "/api/v1/gateway",
-        "/api/v1/tools",
         "/api/v1/code-interpreter",
         "/api/v1/browser",
     ):
@@ -43,6 +46,72 @@ def _mock_handler(request: httpx.Request) -> httpx.Response:
     # Memory endpoints
     if path.startswith("/api/v1/memory/"):
         return _handle_memory(method, path, request)
+
+    return httpx.Response(404, json={"detail": "Not found"})
+
+
+_tools_store: dict[str, dict] = {}
+
+
+def _handle_tools(method: str, path: str, request: httpx.Request) -> httpx.Response:
+    """Mock handler for tools endpoints."""
+    rest = path.removeprefix("/api/v1/tools")
+
+    # POST "" (register tool)
+    if rest == "" and method == "POST":
+        body = json.loads(request.content)
+        tool = {
+            "name": body["name"],
+            "description": body.get("description", ""),
+            "parameters": body.get("parameters", {}),
+            "metadata": body.get("metadata", {}),
+        }
+        _tools_store[body["name"]] = tool
+        return httpx.Response(201, json=tool)
+
+    # GET "" (list tools)
+    if rest == "" and method == "GET":
+        return httpx.Response(200, json={"tools": list(_tools_store.values())})
+
+    # GET /search
+    if rest == "/search" and method == "GET":
+        return httpx.Response(200, json={"tools": list(_tools_store.values())})
+
+    # GET /servers
+    if rest == "/servers" and method == "GET":
+        return httpx.Response(200, json={"servers": []})
+
+    # POST /servers
+    if rest == "/servers" and method == "POST":
+        body = json.loads(request.content)
+        return httpx.Response(201, json={"name": body.get("name", ""), "status": "registered"})
+
+    # GET /servers/{name}
+    if rest.startswith("/servers/") and method == "GET":
+        server_name = rest.removeprefix("/servers/")
+        return httpx.Response(
+            200,
+            json={"name": server_name, "url": "", "health_status": "healthy", "tools_count": 0, "metadata": {}},
+        )
+
+    # POST /{name}/invoke
+    if rest.endswith("/invoke") and method == "POST":
+        tool_name = rest.removesuffix("/invoke").lstrip("/")
+        return httpx.Response(200, json={"tool_name": tool_name, "result": "mock result"})
+
+    # GET /{name} (get tool)
+    if method == "GET" and rest.startswith("/"):
+        tool_name = rest.lstrip("/")
+        tool = _tools_store.get(tool_name)
+        if tool:
+            return httpx.Response(200, json=tool)
+        return httpx.Response(200, json={"name": tool_name, "description": "mock", "parameters": {}, "metadata": {}})
+
+    # DELETE /{name}
+    if method == "DELETE" and rest.startswith("/"):
+        tool_name = rest.lstrip("/")
+        _tools_store.pop(tool_name, None)
+        return httpx.Response(204)
 
     return httpx.Response(404, json={"detail": "Not found"})
 
@@ -340,10 +409,12 @@ def _clear_store():
     global _event_counter
     _store.clear()
     _events.clear()
+    _tools_store.clear()
     _event_counter = 0
     yield
     _store.clear()
     _events.clear()
+    _tools_store.clear()
     _event_counter = 0
 
 

@@ -31,3 +31,24 @@ class ToolResult(BaseModel):
     tool_name: str
     result: Any = None
     error: str | None = None
+
+
+# ── Server management models ──────────────────────────────────────────
+
+
+class ServerInfo(BaseModel):
+    name: str
+    url: str = ""
+    health_status: str = "unknown"
+    tools_count: int = 0
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ListServersResponse(BaseModel):
+    servers: list[ServerInfo]
+
+
+class RegisterServerRequest(BaseModel):
+    name: str
+    url: str = ""
+    config: dict[str, Any] = Field(default_factory=dict)

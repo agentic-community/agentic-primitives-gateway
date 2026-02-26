@@ -299,6 +299,88 @@ class MCPRegistryProvider(ToolsProvider):
         ]
         return matched[:max_results]
 
+    # ── Tool retrieval & deletion ───────────────────────────────────
+
+    async def get_tool(self, tool_name: str) -> dict[str, Any]:
+        tools = await self.list_tools()
+        for t in tools:
+            if t.get("name") == tool_name:
+                return t
+        raise KeyError(f"Tool not found: {tool_name}")
+
+    async def delete_tool(self, tool_name: str) -> None:
+        base_url, token = self._resolve_config()
+
+        def _delete() -> None:
+            import httpx
+
+            with httpx.Client(timeout=30, verify=self._verify_ssl) as client:
+                resp = client.delete(
+                    f"{base_url}/api/tools/{tool_name}",
+                    headers=self._headers(token),
+                )
+                resp.raise_for_status()
+
+        await self._run_sync(_delete)
+
+    # ── Server management ────────────────────────────────────────────
+
+    async def list_servers(self) -> list[dict[str, Any]]:
+        base_url, token = self._resolve_config()
+
+        def _list() -> list[dict[str, Any]]:
+            import httpx
+
+            with httpx.Client(timeout=15, verify=self._verify_ssl) as http:
+                resp = http.get(f"{base_url}/v0.1/servers", headers=self._headers(token))
+                resp.raise_for_status()
+                data = resp.json()
+
+            servers: list[dict[str, Any]] = []
+            for entry in data.get("servers", data) if isinstance(data, dict) else data:
+                server = entry.get("server", entry) if isinstance(entry, dict) else entry
+                meta = server.get("_meta", {})
+                internal = meta.get("io.mcpgateway/internal", {})
+                servers.append(
+                    {
+                        "name": server.get("title", server.get("name", "")),
+                        "url": internal.get("path", ""),
+                        "health_status": internal.get("health_status", "unknown"),
+                        "tools_count": internal.get("num_tools", 0),
+                        "metadata": {k: v for k, v in server.items() if k not in ("title", "name", "_meta")},
+                    }
+                )
+            return servers
+
+        result: list[dict[str, Any]] = await self._run_sync(_list)
+        return result
+
+    async def get_server(self, server_name: str) -> dict[str, Any]:
+        servers = await self.list_servers()
+        for s in servers:
+            if s.get("name") == server_name:
+                return s
+        raise KeyError(f"Server not found: {server_name}")
+
+    async def register_server(self, server_config: dict[str, Any]) -> dict[str, Any]:
+        base_url, token = self._resolve_config()
+
+        def _register() -> dict[str, Any]:
+            import httpx
+
+            with httpx.Client(timeout=30, verify=self._verify_ssl) as client:
+                resp = client.post(
+                    f"{base_url}/api/servers/register",
+                    json=server_config,
+                    headers=self._headers(token),
+                )
+                resp.raise_for_status()
+                result: dict[str, Any] = resp.json()
+                return result
+
+        result: dict[str, Any] = await self._run_sync(_register)
+        return result
+
     async def healthcheck(self) -> bool:
         base_url, token = self._resolve_config()
         try:

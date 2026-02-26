@@ -67,6 +67,27 @@ class Tools:
         tools: list[dict[str, Any]] = result.get("tools", [])
         return tools
 
+    # ── Extended async interface ─────────────────────────────────────
+
+    async def get(self, tool_name: str) -> dict[str, Any]:
+        """Get a single tool definition by name."""
+        return await self._client.get_tool(tool_name)
+
+    async def delete(self, tool_name: str) -> None:
+        """Delete a tool by name."""
+        await self._client.delete_tool(tool_name)
+
+    async def list_servers(self) -> str:
+        """List registered MCP servers, returning formatted string."""
+        result = await self._client.list_tool_servers()
+        servers = result.get("servers", [])
+        if not servers:
+            return "No servers registered."
+        lines = [
+            f"  [{s.get('name', '?')}] {s.get('health_status', '?')} ({s.get('tools_count', 0)} tools)" for s in servers
+        ]
+        return f"{len(servers)} servers:\n" + "\n".join(lines)
+
     # ── Sync wrappers ───────────────────────────────────────────────
 
     def _get_loop(self) -> asyncio.AbstractEventLoop:
@@ -98,3 +119,13 @@ class Tools:
     def search_sync(self, query: str, max_results: int = 10) -> list[dict[str, Any]]:
         result: list[dict[str, Any]] = self._sync(self.search(query, max_results))
         return result
+
+    def get_sync(self, tool_name: str) -> dict[str, Any]:
+        result: dict[str, Any] = self._sync(self.get(tool_name))
+        return result
+
+    def delete_sync(self, tool_name: str) -> None:
+        self._sync(self.delete(tool_name))
+
+    def list_servers_sync(self) -> str:
+        return str(self._sync(self.list_servers()))

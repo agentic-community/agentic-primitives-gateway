@@ -242,3 +242,75 @@ class TestAgentCoreGatewayProvider:
             mock_client_cls.return_value = mock_client
 
             assert await provider.healthcheck() is False
+
+    # ── New methods ──────────────────────────────────────────────────
+
+    @pytest.mark.asyncio
+    async def test_get_tool(self, mock_get_creds):
+        mock_get_creds.return_value = None
+        provider = self._make_provider(gateway_url="https://gw.example.com/mcp")
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "result": {
+                "tools": [
+                    {"name": "search", "description": "Search", "inputSchema": {}},
+                    {"name": "calc", "description": "Calculate", "inputSchema": {}},
+                ]
+            }
+        }
+        mock_response.raise_for_status = MagicMock()
+
+        with patch("httpx.Client") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.__enter__ = MagicMock(return_value=mock_client)
+            mock_client.__exit__ = MagicMock(return_value=False)
+            mock_client.post.return_value = mock_response
+            mock_client_cls.return_value = mock_client
+
+            result = await provider.get_tool("search")
+
+        assert result["name"] == "search"
+
+    @pytest.mark.asyncio
+    async def test_get_tool_not_found(self, mock_get_creds):
+        mock_get_creds.return_value = None
+        provider = self._make_provider(gateway_url="https://gw.example.com/mcp")
+
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"result": {"tools": []}}
+        mock_response.raise_for_status = MagicMock()
+
+        with patch("httpx.Client") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client.__enter__ = MagicMock(return_value=mock_client)
+            mock_client.__exit__ = MagicMock(return_value=False)
+            mock_client.post.return_value = mock_response
+            mock_client_cls.return_value = mock_client
+
+            with pytest.raises(KeyError):
+                await provider.get_tool("nonexistent")
+
+    @pytest.mark.asyncio
+    async def test_delete_tool_raises_not_implemented(self, mock_get_creds):
+        provider = self._make_provider(gateway_url="https://gw.example.com/mcp")
+        with pytest.raises(NotImplementedError):
+            await provider.delete_tool("tool")
+
+    @pytest.mark.asyncio
+    async def test_list_servers_raises_not_implemented(self, mock_get_creds):
+        provider = self._make_provider(gateway_url="https://gw.example.com/mcp")
+        with pytest.raises(NotImplementedError):
+            await provider.list_servers()
+
+    @pytest.mark.asyncio
+    async def test_get_server_raises_not_implemented(self, mock_get_creds):
+        provider = self._make_provider(gateway_url="https://gw.example.com/mcp")
+        with pytest.raises(NotImplementedError):
+            await provider.get_server("server")
+
+    @pytest.mark.asyncio
+    async def test_register_server_raises_not_implemented(self, mock_get_creds):
+        provider = self._make_provider(gateway_url="https://gw.example.com/mcp")
+        with pytest.raises(NotImplementedError):
+            await provider.register_server({"name": "test"})

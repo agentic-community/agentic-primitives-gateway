@@ -337,6 +337,185 @@ class TestMCPRegistryProvider:
 
             assert await provider.healthcheck() is False
 
+    # ── New methods ──────────────────────────────────────────────────
+
+    @pytest.mark.asyncio
+    async def test_get_tool(self, mock_get_creds):
+        mock_get_creds.return_value = None
+        provider = self._make_provider(base_url="http://localhost:8080")
+
+        servers_resp = MagicMock()
+        servers_resp.json.return_value = {
+            "servers": [
+                {
+                    "server": {
+                        "title": "Calculator",
+                        "_meta": {
+                            "io.mcpgateway/internal": {
+                                "path": "/mcp/calc",
+                                "health_status": "healthy",
+                            }
+                        },
+                    }
+                }
+            ]
+        }
+        servers_resp.raise_for_status = MagicMock()
+
+        mcp_resp = MagicMock()
+        mcp_resp.text = '{"result": {"tools": [{"name": "add", "description": "Add numbers", "inputSchema": {}}]}}'
+        mcp_resp.raise_for_status = MagicMock()
+
+        with patch("httpx.Client") as mock_client_cls:
+            mock_client = self._mock_httpx_client()
+            mock_client.get.return_value = servers_resp
+            mock_client.post.return_value = mcp_resp
+            mock_client_cls.return_value = mock_client
+
+            result = await provider.get_tool("Calculator/add")
+
+        assert result["name"] == "Calculator/add"
+
+    @pytest.mark.asyncio
+    async def test_get_tool_not_found(self, mock_get_creds):
+        mock_get_creds.return_value = None
+        provider = self._make_provider(base_url="http://localhost:8080")
+
+        servers_resp = MagicMock()
+        servers_resp.json.return_value = {"servers": []}
+        servers_resp.raise_for_status = MagicMock()
+
+        with patch("httpx.Client") as mock_client_cls:
+            mock_client = self._mock_httpx_client()
+            mock_client.get.return_value = servers_resp
+            mock_client_cls.return_value = mock_client
+
+            with pytest.raises(KeyError):
+                await provider.get_tool("nonexistent")
+
+    @pytest.mark.asyncio
+    async def test_delete_tool(self, mock_get_creds):
+        mock_get_creds.return_value = None
+        provider = self._make_provider(base_url="http://localhost:8080")
+
+        delete_resp = MagicMock()
+        delete_resp.raise_for_status = MagicMock()
+
+        with patch("httpx.Client") as mock_client_cls:
+            mock_client = self._mock_httpx_client()
+            mock_client.delete.return_value = delete_resp
+            mock_client_cls.return_value = mock_client
+
+            await provider.delete_tool("Calculator/add")
+
+        mock_client.delete.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_list_servers(self, mock_get_creds):
+        mock_get_creds.return_value = None
+        provider = self._make_provider(base_url="http://localhost:8080")
+
+        servers_resp = MagicMock()
+        servers_resp.json.return_value = {
+            "servers": [
+                {
+                    "server": {
+                        "title": "Calculator",
+                        "description": "Math tools",
+                        "_meta": {
+                            "io.mcpgateway/internal": {
+                                "path": "/mcp/calc",
+                                "health_status": "healthy",
+                                "num_tools": 3,
+                            }
+                        },
+                    }
+                }
+            ]
+        }
+        servers_resp.raise_for_status = MagicMock()
+
+        with patch("httpx.Client") as mock_client_cls:
+            mock_client = self._mock_httpx_client()
+            mock_client.get.return_value = servers_resp
+            mock_client_cls.return_value = mock_client
+
+            result = await provider.list_servers()
+
+        assert len(result) == 1
+        assert result[0]["name"] == "Calculator"
+        assert result[0]["health_status"] == "healthy"
+        assert result[0]["tools_count"] == 3
+
+    @pytest.mark.asyncio
+    async def test_get_server(self, mock_get_creds):
+        mock_get_creds.return_value = None
+        provider = self._make_provider(base_url="http://localhost:8080")
+
+        servers_resp = MagicMock()
+        servers_resp.json.return_value = {
+            "servers": [
+                {
+                    "server": {
+                        "title": "Calculator",
+                        "_meta": {
+                            "io.mcpgateway/internal": {
+                                "path": "/mcp/calc",
+                                "health_status": "healthy",
+                                "num_tools": 3,
+                            }
+                        },
+                    }
+                }
+            ]
+        }
+        servers_resp.raise_for_status = MagicMock()
+
+        with patch("httpx.Client") as mock_client_cls:
+            mock_client = self._mock_httpx_client()
+            mock_client.get.return_value = servers_resp
+            mock_client_cls.return_value = mock_client
+
+            result = await provider.get_server("Calculator")
+
+        assert result["name"] == "Calculator"
+
+    @pytest.mark.asyncio
+    async def test_get_server_not_found(self, mock_get_creds):
+        mock_get_creds.return_value = None
+        provider = self._make_provider(base_url="http://localhost:8080")
+
+        servers_resp = MagicMock()
+        servers_resp.json.return_value = {"servers": []}
+        servers_resp.raise_for_status = MagicMock()
+
+        with patch("httpx.Client") as mock_client_cls:
+            mock_client = self._mock_httpx_client()
+            mock_client.get.return_value = servers_resp
+            mock_client_cls.return_value = mock_client
+
+            with pytest.raises(KeyError):
+                await provider.get_server("nonexistent")
+
+    @pytest.mark.asyncio
+    async def test_register_server(self, mock_get_creds):
+        mock_get_creds.return_value = None
+        provider = self._make_provider(base_url="http://localhost:8080")
+
+        register_resp = MagicMock()
+        register_resp.json.return_value = {"name": "new-server", "status": "registered"}
+        register_resp.raise_for_status = MagicMock()
+
+        with patch("httpx.Client") as mock_client_cls:
+            mock_client = self._mock_httpx_client()
+            mock_client.post.return_value = register_resp
+            mock_client_cls.return_value = mock_client
+
+            result = await provider.register_server({"name": "new-server", "url": "http://new:9000"})
+
+        assert result["name"] == "new-server"
+        mock_client.post.assert_called_once()
+
     @pytest.mark.asyncio
     async def test_parse_sse_json_with_data_prefix(self, mock_get_creds):
         result = MCPRegistryProvider._parse_sse_json('data: {"result": "ok"}')

@@ -173,6 +173,13 @@ class AgentCoreGatewayProvider(ToolsProvider):
         result: list[dict[str, Any]] = await super().search_tools(query, max_results)
         return result
 
+    async def get_tool(self, tool_name: str) -> dict[str, Any]:
+        tools = await self.list_tools()
+        for t in tools:
+            if t.get("name") == tool_name:
+                return t
+        raise KeyError(f"Tool not found: {tool_name}")
+
     async def healthcheck(self) -> bool:
         try:
             await self.list_tools()

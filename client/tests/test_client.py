@@ -280,6 +280,61 @@ class TestClientObservability:
             assert result["status"] == "accepted"
 
 
+class TestClientTools:
+    @pytest.mark.asyncio
+    async def test_register_tool(self, make_client) -> None:
+        async with make_client() as client:
+            result = await client.register_tool({"name": "search", "description": "Search the web"})
+            assert result["name"] == "search"
+
+    @pytest.mark.asyncio
+    async def test_list_tools(self, make_client) -> None:
+        async with make_client() as client:
+            result = await client.list_tools()
+            assert "tools" in result
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool(self, make_client) -> None:
+        async with make_client() as client:
+            result = await client.invoke_tool("search", {"query": "test"})
+            assert result["tool_name"] == "search"
+
+    @pytest.mark.asyncio
+    async def test_search_tools(self, make_client) -> None:
+        async with make_client() as client:
+            result = await client.search_tools("search")
+            assert "tools" in result
+
+    @pytest.mark.asyncio
+    async def test_get_tool(self, make_client) -> None:
+        async with make_client() as client:
+            result = await client.get_tool("my-tool")
+            assert result["name"] == "my-tool"
+
+    @pytest.mark.asyncio
+    async def test_delete_tool(self, make_client) -> None:
+        async with make_client() as client:
+            await client.delete_tool("my-tool")
+
+    @pytest.mark.asyncio
+    async def test_list_tool_servers(self, make_client) -> None:
+        async with make_client() as client:
+            result = await client.list_tool_servers()
+            assert "servers" in result
+
+    @pytest.mark.asyncio
+    async def test_get_tool_server(self, make_client) -> None:
+        async with make_client() as client:
+            result = await client.get_tool_server("calc-server")
+            assert result["name"] == "calc-server"
+
+    @pytest.mark.asyncio
+    async def test_register_tool_server(self, make_client) -> None:
+        async with make_client() as client:
+            result = await client.register_tool_server({"name": "new-server", "url": "http://new:9000"})
+            assert result["name"] == "new-server"
+
+
 class TestClientStubs:
     """Verify the client raises AgenticPlatformError for 501 stub endpoints."""
 
@@ -309,13 +364,6 @@ class TestClientStubs:
         async with make_client() as client:
             with pytest.raises(AgenticPlatformError) as exc_info:
                 await client.completions({"model": "test"})
-            assert exc_info.value.status_code == 501
-
-    @pytest.mark.asyncio
-    async def test_tools_stub(self, make_client) -> None:
-        async with make_client() as client:
-            with pytest.raises(AgenticPlatformError) as exc_info:
-                await client.list_tools()
             assert exc_info.value.status_code == 501
 
 
