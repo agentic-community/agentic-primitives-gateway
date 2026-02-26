@@ -167,6 +167,205 @@ class LangfuseObservabilityProvider(ObservabilityProvider):
         result: list[dict[str, Any]] = await self._run_sync(_query)
         return result
 
+    # ── Trace retrieval & LLM generation ────────────────────────────
+
+    async def get_trace(self, trace_id: str) -> dict[str, Any]:
+        client = self._resolve_client()
+
+        def _get() -> dict[str, Any]:
+            try:
+                t = client.api.trace.get(trace_id)
+                return _trace_to_dict(t)
+            except Exception:
+                raise KeyError(f"Trace not found: {trace_id}") from None
+
+        result: dict[str, Any] = await self._run_sync(_get)
+        return result
+
+    async def log_generation(
+        self,
+        trace_id: str,
+        name: str,
+        model: str,
+        input: Any = None,
+        output: Any = None,
+        *,
+        usage: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
+        level: str | None = None,
+    ) -> dict[str, Any]:
+        client = self._resolve_client()
+
+        def _log() -> dict[str, Any]:
+            kwargs: dict[str, Any] = {
+                "trace_id": trace_id,
+                "name": name,
+                "model": model,
+            }
+            if input is not None:
+                kwargs["input"] = input
+            if output is not None:
+                kwargs["output"] = output
+            if usage:
+                kwargs["usage"] = usage
+            if metadata:
+                kwargs["metadata"] = metadata
+            if level:
+                lf_level = _LEVEL_MAP.get(level.lower(), "DEFAULT")  # type: ignore[call-overload]
+                kwargs["level"] = lf_level
+            gen = client.generation(**kwargs)  # type: ignore[attr-defined]
+            client.flush()
+            return {
+                "generation_id": getattr(gen, "id", None),
+                "trace_id": trace_id,
+                "name": name,
+                "model": model,
+            }
+
+        result: dict[str, Any] = await self._run_sync(_log)
+        return result
+
+    async def flush(self) -> None:
+        client = self._resolve_client()
+        await self._run_sync(client.flush)
+
+    # ── Trace updates & scoring ──────────────────────────────────────
+
+    async def update_trace(
+        self,
+        trace_id: str,
+        *,
+        name: str | None = None,
+        user_id: str | None = None,
+        session_id: str | None = None,
+        input: Any = None,
+        output: Any = None,
+        metadata: dict[str, Any] | None = None,
+        tags: list[str] | None = None,
+    ) -> dict[str, Any]:
+        client = self._resolve_client()
+
+        def _update() -> dict[str, Any]:
+            kwargs: dict[str, Any] = {"id": trace_id}
+            if name is not None:
+                kwargs["name"] = name
+            if user_id is not None:
+                kwargs["user_id"] = user_id
+            if session_id is not None:
+                kwargs["session_id"] = session_id
+            if input is not None:
+                kwargs["input"] = input
+            if output is not None:
+                kwargs["output"] = output
+            if metadata is not None:
+                kwargs["metadata"] = metadata
+            if tags is not None:
+                kwargs["tags"] = tags
+            client.trace(**kwargs)  # type: ignore[attr-defined]
+            client.flush()
+            return {"trace_id": trace_id, "status": "updated"}
+
+        result: dict[str, Any] = await self._run_sync(_update)
+        return result
+
+    async def score_trace(
+        self,
+        trace_id: str,
+        name: str,
+        value: float,
+        *,
+        comment: str | None = None,
+        data_type: str | None = None,
+    ) -> dict[str, Any]:
+        client = self._resolve_client()
+
+        def _score() -> dict[str, Any]:
+            kwargs: dict[str, Any] = {
+                "trace_id": trace_id,
+                "name": name,
+                "value": value,
+            }
+            if comment is not None:
+                kwargs["comment"] = comment
+            if data_type is not None:
+                kwargs["data_type"] = data_type
+            score = client.score(**kwargs)  # type: ignore[attr-defined]
+            client.flush()
+            return {
+                "score_id": getattr(score, "id", None),
+                "trace_id": trace_id,
+                "name": name,
+                "value": value,
+            }
+
+        result: dict[str, Any] = await self._run_sync(_score)
+        return result
+
+    async def list_scores(self, trace_id: str) -> list[dict[str, Any]]:
+        client = self._resolve_client()
+
+        def _list() -> list[dict[str, Any]]:
+            result = client.api.score.list(trace_id=trace_id)  # type: ignore[attr-defined]
+            return [
+                {
+                    "score_id": getattr(s, "id", None),
+                    "trace_id": getattr(s, "trace_id", trace_id),
+                    "name": getattr(s, "name", ""),
+                    "value": getattr(s, "value", 0),
+                    "comment": getattr(s, "comment", None),
+                    "data_type": getattr(s, "data_type", None),
+                }
+                for s in result.data
+            ]
+
+        scores: list[dict[str, Any]] = await self._run_sync(_list)
+        return scores
+
+    # ── Session management ───────────────────────────────────────────
+
+    async def list_sessions(
+        self,
+        *,
+        user_id: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        client = self._resolve_client()
+
+        def _list() -> list[dict[str, Any]]:
+            result = client.api.sessions.list(page=1, limit=limit)
+            sessions = [
+                {
+                    "session_id": getattr(s, "id", ""),
+                    "user_id": getattr(s, "user_id", None),
+                    "trace_count": getattr(s, "trace_count", 0),
+                    "created_at": str(getattr(s, "created_at", "")),
+                    "metadata": getattr(s, "metadata", {}) or {},
+                }
+                for s in result.data
+            ]
+            if user_id:
+                sessions = [s for s in sessions if s.get("user_id") == user_id]
+            return sessions
+
+        sessions: list[dict[str, Any]] = await self._run_sync(_list)
+        return sessions
+
+    async def get_session(self, session_id: str) -> dict[str, Any]:
+        client = self._resolve_client()
+
+        def _get() -> dict[str, Any]:
+            s = client.api.sessions.get(session_id)
+            return {
+                "session_id": getattr(s, "id", session_id),
+                "user_id": getattr(s, "user_id", None),
+                "trace_count": getattr(s, "trace_count", 0),
+                "created_at": str(getattr(s, "created_at", "")),
+                "metadata": getattr(s, "metadata", {}) or {},
+            }
+
+        result: dict[str, Any] = await self._run_sync(_get)
+        return result
+
     async def healthcheck(self) -> bool:
         try:
             client = self._resolve_client()

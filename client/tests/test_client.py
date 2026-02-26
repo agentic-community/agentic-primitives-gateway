@@ -212,6 +212,74 @@ class TestClientHealth:
             assert result["status"] == "ok"
 
 
+class TestClientObservability:
+    @pytest.mark.asyncio
+    async def test_ingest_trace(self, make_client) -> None:
+        async with make_client() as client:
+            result = await client.ingest_trace({"trace_id": "t-1", "name": "test"})
+            assert result["status"] == "accepted"
+
+    @pytest.mark.asyncio
+    async def test_ingest_log(self, make_client) -> None:
+        async with make_client() as client:
+            result = await client.ingest_log({"level": "info", "message": "test"})
+            assert result["status"] == "accepted"
+
+    @pytest.mark.asyncio
+    async def test_query_traces(self, make_client) -> None:
+        async with make_client() as client:
+            result = await client.query_traces()
+            assert "traces" in result
+
+    @pytest.mark.asyncio
+    async def test_get_trace(self, make_client) -> None:
+        async with make_client() as client:
+            result = await client.get_trace("t-1")
+            assert result["trace_id"] == "t-1"
+
+    @pytest.mark.asyncio
+    async def test_update_trace(self, make_client) -> None:
+        async with make_client() as client:
+            result = await client.update_trace("t-1", {"name": "updated"})
+            assert result["trace_id"] == "t-1"
+
+    @pytest.mark.asyncio
+    async def test_log_generation(self, make_client) -> None:
+        async with make_client() as client:
+            result = await client.log_generation("t-1", {"name": "chat", "model": "claude-3"})
+            assert result["generation_id"] == "gen-mock"
+
+    @pytest.mark.asyncio
+    async def test_score_trace(self, make_client) -> None:
+        async with make_client() as client:
+            result = await client.score_trace("t-1", {"name": "quality", "value": 0.95})
+            assert result["score_id"] == "score-mock"
+
+    @pytest.mark.asyncio
+    async def test_list_scores(self, make_client) -> None:
+        async with make_client() as client:
+            result = await client.list_scores("t-1")
+            assert "scores" in result
+
+    @pytest.mark.asyncio
+    async def test_list_observability_sessions(self, make_client) -> None:
+        async with make_client() as client:
+            result = await client.list_observability_sessions()
+            assert "sessions" in result
+
+    @pytest.mark.asyncio
+    async def test_get_observability_session(self, make_client) -> None:
+        async with make_client() as client:
+            result = await client.get_observability_session("sess-1")
+            assert result["session_id"] == "sess-1"
+
+    @pytest.mark.asyncio
+    async def test_flush_observability(self, make_client) -> None:
+        async with make_client() as client:
+            result = await client.flush_observability()
+            assert result["status"] == "accepted"
+
+
 class TestClientStubs:
     """Verify the client raises AgenticPlatformError for 501 stub endpoints."""
 
@@ -234,13 +302,6 @@ class TestClientStubs:
         async with make_client() as client:
             with pytest.raises(AgenticPlatformError) as exc_info:
                 await client.start_browser_session()
-            assert exc_info.value.status_code == 501
-
-    @pytest.mark.asyncio
-    async def test_observability_stub(self, make_client) -> None:
-        async with make_client() as client:
-            with pytest.raises(AgenticPlatformError) as exc_info:
-                await client.ingest_trace({"trace_id": "t1"})
             assert exc_info.value.status_code == 501
 
     @pytest.mark.asyncio

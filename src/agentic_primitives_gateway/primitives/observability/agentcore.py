@@ -225,5 +225,79 @@ class AgentCoreObservabilityProvider(ObservabilityProvider):
         result: list[dict[str, Any]] = await self._run_sync(_query)
         return result
 
+    # ── Trace retrieval & LLM generation ────────────────────────────
+
+    async def get_trace(self, trace_id: str) -> dict[str, Any]:
+        def _get() -> dict[str, Any]:
+            session = get_boto3_session(default_region=self._region)
+            xray = session.client("xray", region_name=session.region_name)
+            response = xray.batch_get_traces(TraceIds=[trace_id])
+            traces = response.get("Traces", [])
+            if not traces:
+                raise KeyError(f"Trace not found: {trace_id}")
+            t = traces[0]
+            return {
+                "trace_id": t.get("Id", ""),
+                "name": "",
+                "spans": [
+                    {
+                        "name": (
+                            seg.get("Document", {}).get("name", "") if isinstance(seg.get("Document"), dict) else ""
+                        ),
+                        "metadata": seg.get("Document", {}),
+                    }
+                    for seg in t.get("Segments", [])
+                ],
+                "metadata": {"duration": t.get("Duration")},
+            }
+
+        result: dict[str, Any] = await self._run_sync(_get)
+        return result
+
+    async def log_generation(
+        self,
+        trace_id: str,
+        name: str,
+        model: str,
+        input: Any = None,
+        output: Any = None,
+        *,
+        usage: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
+        level: str | None = None,
+    ) -> dict[str, Any]:
+        def _log() -> dict[str, Any]:
+            with self._tracer.start_as_current_span(name) as span:
+                span.set_attribute("trace.id", trace_id)
+                span.set_attribute("gen_ai.model", model)
+                span.set_attribute("gen_ai.operation", "generation")
+                if input is not None:
+                    span.set_attribute("gen_ai.input", str(input))
+                if output is not None:
+                    span.set_attribute("gen_ai.output", str(output))
+                if usage:
+                    for key, val in usage.items():
+                        if val is not None:
+                            span.set_attribute(f"gen_ai.usage.{key}", val)
+                if metadata:
+                    for key, val in metadata.items():
+                        span.set_attribute(f"metadata.{key}", str(val))
+                if level:
+                    span.set_attribute("log.level", level)
+            return {
+                "trace_id": trace_id,
+                "name": name,
+                "model": model,
+            }
+
+        result: dict[str, Any] = await self._run_sync(_log)
+        return result
+
+    async def flush(self) -> None:
+        def _flush() -> None:
+            self._tracer_provider.force_flush()
+
+        await self._run_sync(_flush)
+
     async def healthcheck(self) -> bool:
         return self._tracer is not None

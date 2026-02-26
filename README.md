@@ -49,7 +49,7 @@ Agentic Primitives Gateway is a Kubernetes-deployed REST API service that abstra
 | **Identity** | Workload identity tokens, OAuth2 token exchange (M2M + 3LO), API key retrieval, credential provider and workload identity management | `NoopIdentityProvider`, `AgentCoreIdentityProvider`, `KeycloakIdentityProvider`, `EntraIdentityProvider`, `OktaIdentityProvider` |
 | **Code Interpreter** | Sandboxed code execution sessions | `NoopCodeInterpreterProvider`, `AgentCoreCodeInterpreterProvider` |
 | **Browser** | Cloud-based browser automation | `NoopBrowserProvider`, `AgentCoreBrowserProvider` |
-| **Observability** | Trace and log ingestion/querying | `NoopObservabilityProvider`, `LangfuseObservabilityProvider`, `AgentCoreObservabilityProvider` |
+| **Observability** | Trace/log ingestion, LLM generation tracking, evaluation scoring, session management | `NoopObservabilityProvider`, `LangfuseObservabilityProvider`, `AgentCoreObservabilityProvider` |
 | **Gateway** | LLM request routing | `NoopGatewayProvider` |
 | **Tools** | Tool registration and invocation | `NoopToolsProvider`, `AgentCoreGatewayProvider`, `MCPRegistryProvider` |
 
@@ -197,11 +197,48 @@ Control plane endpoints return 501 if not supported by the configured provider.
 
 ### Observability (`/api/v1/observability`)
 
+**Trace and log ingestion (data plane):**
+
 | Method | Path | Description |
 |--------|------|-------------|
 | `POST` | `/traces` | Ingest a trace. Returns 202. |
 | `POST` | `/logs` | Ingest a log entry. Returns 202. |
-| `GET` | `/traces` | Query traces. |
+| `GET` | `/traces` | Query traces. Query params: `trace_id`, `limit` (1--1000, default 100). |
+
+**Trace retrieval and updates:**
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/traces/{trace_id}` | Get a single trace by ID. Returns 404 if not found. |
+| `PUT` | `/traces/{trace_id}` | Update trace metadata after creation. Body: `{"name": "...", "tags": [...]}`. |
+
+**LLM generation logging:**
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/traces/{trace_id}/generations` | Log an LLM call. Body: `{"name": "...", "model": "...", "input": ..., "output": ..., "usage": {"prompt_tokens": N, "completion_tokens": N}}`. Returns 201. |
+
+**Evaluation scoring:**
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/traces/{trace_id}/scores` | Attach evaluation score. Body: `{"name": "...", "value": 0.95, "comment": "..."}`. Returns 201. |
+| `GET` | `/traces/{trace_id}/scores` | List scores for a trace. |
+
+**Session management:**
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/sessions` | List observability sessions. Query params: `user_id`, `limit`. |
+| `GET` | `/sessions/{session_id}` | Get session details. |
+
+**Flush:**
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/flush` | Force flush pending telemetry. Returns 202. |
+
+Trace retrieval, updates, scoring, session management, and flush endpoints return 501 if not supported by the configured provider. The `LangfuseObservabilityProvider` supports all operations. The `AgentCoreObservabilityProvider` supports trace retrieval, LLM generation logging, and flush.
 
 ### Gateway (`/api/v1/gateway`)
 
@@ -639,7 +676,7 @@ pip install -e ".[dev]"
 pytest tests/ -v
 ```
 
-The test suite contains 408 tests covering all primitives, provider routing, and AWS credential pass-through.
+The test suite contains 437 tests covering all primitives, provider routing, and AWS credential pass-through.
 
 ---
 
@@ -919,7 +956,7 @@ agentic-primitives-gateway/
 │   │   ├── identity.py             # /api/v1/identity/* (3 endpoints)
 │   │   ├── code_interpreter.py     # /api/v1/code-interpreter/* (6 endpoints)
 │   │   ├── browser.py              # /api/v1/browser/* (5 endpoints)
-│   │   ├── observability.py        # /api/v1/observability/* (3 endpoints)
+│   │   ├── observability.py        # /api/v1/observability/* (11 endpoints)
 │   │   ├── gateway.py              # /api/v1/gateway/* (2 endpoints)
 │   │   └── tools.py                # /api/v1/tools/* (3 endpoints)
 │   ├── models/                     # Pydantic request/response models per primitive
@@ -949,7 +986,7 @@ agentic-primitives-gateway/
 │           ├── agentcore.py        # AWS AgentCore Gateway (MCP-compatible)
 │           └── mcp_registry.py     # MCP Registry
 ├── client/                         # Standalone Python client (separate package: agentic-primitives-gateway-client)
-├── tests/                          # Server tests (408 tests)
+├── tests/                          # Server tests (437 tests)
 ├── deploy/helm/agentic-primitives-gateway/   # Helm chart
 ├── Dockerfile                      # Multi-stage build
 └── pyproject.toml

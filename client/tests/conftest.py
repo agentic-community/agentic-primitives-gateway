@@ -26,9 +26,12 @@ def _mock_handler(request: httpx.Request) -> httpx.Response:
     if path.startswith("/api/v1/identity"):
         return _handle_identity(method, path, request)
 
+    # Observability endpoints
+    if path.startswith("/api/v1/observability"):
+        return _handle_observability(method, path, request)
+
     # Stub endpoints → 501
     for prefix in (
-        "/api/v1/observability",
         "/api/v1/gateway",
         "/api/v1/tools",
         "/api/v1/code-interpreter",
@@ -40,6 +43,84 @@ def _mock_handler(request: httpx.Request) -> httpx.Response:
     # Memory endpoints
     if path.startswith("/api/v1/memory/"):
         return _handle_memory(method, path, request)
+
+    return httpx.Response(404, json={"detail": "Not found"})
+
+
+def _handle_observability(method: str, path: str, request: httpx.Request) -> httpx.Response:
+    """Mock handler for observability endpoints."""
+    rest = path.removeprefix("/api/v1/observability")
+
+    # POST /flush
+    if rest == "/flush" and method == "POST":
+        return httpx.Response(202, json={"status": "accepted"})
+
+    # GET /sessions
+    if rest == "/sessions" and method == "GET":
+        return httpx.Response(200, json={"sessions": []})
+
+    # GET /sessions/{session_id}
+    if rest.startswith("/sessions/") and method == "GET":
+        session_id = rest.removeprefix("/sessions/")
+        return httpx.Response(200, json={"session_id": session_id, "trace_count": 0, "metadata": {}})
+
+    # POST /traces (ingest)
+    if rest == "/traces" and method == "POST":
+        return httpx.Response(202, json={"status": "accepted"})
+
+    # GET /traces (query)
+    if rest == "/traces" and method == "GET":
+        return httpx.Response(200, json={"traces": []})
+
+    # POST /logs
+    if rest == "/logs" and method == "POST":
+        return httpx.Response(202, json={"status": "accepted"})
+
+    # Routes with /traces/{trace_id}
+    if rest.startswith("/traces/"):
+        parts = rest.removeprefix("/traces/").split("/")
+        trace_id = parts[0]
+
+        # POST /traces/{trace_id}/generations
+        if len(parts) == 2 and parts[1] == "generations" and method == "POST":
+            body = json.loads(request.content)
+            return httpx.Response(
+                201,
+                json={
+                    "generation_id": "gen-mock",
+                    "trace_id": trace_id,
+                    "name": body.get("name", ""),
+                    "model": body.get("model", ""),
+                },
+            )
+
+        # POST /traces/{trace_id}/scores
+        if len(parts) == 2 and parts[1] == "scores" and method == "POST":
+            body = json.loads(request.content)
+            return httpx.Response(
+                201,
+                json={
+                    "score_id": "score-mock",
+                    "trace_id": trace_id,
+                    "name": body.get("name", ""),
+                    "value": body.get("value", 0),
+                },
+            )
+
+        # GET /traces/{trace_id}/scores
+        if len(parts) == 2 and parts[1] == "scores" and method == "GET":
+            return httpx.Response(200, json={"scores": []})
+
+        # GET /traces/{trace_id}
+        if len(parts) == 1 and method == "GET":
+            return httpx.Response(
+                200,
+                json={"trace_id": trace_id, "name": "mock-trace", "tags": [], "spans": [], "metadata": {}},
+            )
+
+        # PUT /traces/{trace_id}
+        if len(parts) == 1 and method == "PUT":
+            return httpx.Response(200, json={"trace_id": trace_id, "status": "updated"})
 
     return httpx.Response(404, json={"detail": "Not found"})
 

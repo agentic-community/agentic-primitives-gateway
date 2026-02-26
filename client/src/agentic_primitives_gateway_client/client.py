@@ -877,6 +877,69 @@ class AgenticPlatformClient:
         self._raise_for_status(resp)
         return self._json_dict(resp)
 
+    # ── Observability: extended ────────────────────────────────────────
+
+    async def get_trace(self, trace_id: str) -> dict[str, Any]:
+        resp = await self._get(f"/api/v1/observability/traces/{trace_id}")
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def update_trace(self, trace_id: str, updates: dict[str, Any]) -> dict[str, Any]:
+        resp = await self._request("PUT", f"/api/v1/observability/traces/{trace_id}", json=updates)
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def log_generation(
+        self,
+        trace_id: str,
+        generation: dict[str, Any],
+    ) -> dict[str, Any]:
+        resp = await self._post(
+            f"/api/v1/observability/traces/{trace_id}/generations",
+            json=generation,
+        )
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def score_trace(
+        self,
+        trace_id: str,
+        score: dict[str, Any],
+    ) -> dict[str, Any]:
+        resp = await self._post(
+            f"/api/v1/observability/traces/{trace_id}/scores",
+            json=score,
+        )
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def list_scores(self, trace_id: str) -> dict[str, Any]:
+        resp = await self._get(f"/api/v1/observability/traces/{trace_id}/scores")
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def list_observability_sessions(
+        self,
+        user_id: str | None = None,
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {"limit": limit}
+        if user_id:
+            params["user_id"] = user_id
+        resp = await self._get("/api/v1/observability/sessions", params=params)
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def get_observability_session(self, session_id: str) -> dict[str, Any]:
+        resp = await self._get(f"/api/v1/observability/sessions/{session_id}")
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def flush_observability(self) -> dict[str, Any]:
+        resp = await self._post("/api/v1/observability/flush")
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
     # ── Gateway ─────────────────────────────────────────────────────────
 
     async def completions(self, model_request: dict[str, Any]) -> dict[str, Any]:

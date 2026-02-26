@@ -196,6 +196,177 @@ class TestLangfuseObservabilityProvider:
         assert provider._default_secret_key == "env-sk"
         assert provider._default_base_url == "https://env.com"
 
+    # ── New methods: get_trace, log_generation, flush ──────────────
+
+    @patch("agentic_primitives_gateway.primitives.observability.langfuse.get_service_credentials_or_defaults")
+    @patch("agentic_primitives_gateway.primitives.observability.langfuse.Langfuse")
+    @pytest.mark.asyncio
+    async def test_get_trace(self, mock_langfuse_cls, mock_get_creds, provider):
+        mock_get_creds.return_value = {"public_key": "pk", "secret_key": "sk", "base_url": None}
+        mock_client = MagicMock()
+        mock_langfuse_cls.return_value = mock_client
+
+        mock_trace = MagicMock()
+        mock_trace.id = "trace-123"
+        mock_trace.name = "test"
+        mock_trace.user_id = None
+        mock_trace.session_id = None
+        mock_trace.input = None
+        mock_trace.output = None
+        mock_trace.tags = []
+        mock_trace.metadata = {}
+        mock_trace.latency = 1.5
+        mock_trace.total_cost = 0.01
+        mock_trace.observations = None
+        mock_client.api.trace.get.return_value = mock_trace
+
+        result = await provider.get_trace("trace-123")
+        assert result["trace_id"] == "trace-123"
+        mock_client.api.trace.get.assert_called_once_with("trace-123")
+
+    @patch("agentic_primitives_gateway.primitives.observability.langfuse.get_service_credentials_or_defaults")
+    @patch("agentic_primitives_gateway.primitives.observability.langfuse.Langfuse")
+    @pytest.mark.asyncio
+    async def test_get_trace_not_found(self, mock_langfuse_cls, mock_get_creds, provider):
+        mock_get_creds.return_value = {"public_key": "pk", "secret_key": "sk", "base_url": None}
+        mock_client = MagicMock()
+        mock_langfuse_cls.return_value = mock_client
+        mock_client.api.trace.get.side_effect = Exception("not found")
+
+        with pytest.raises(KeyError):
+            await provider.get_trace("missing")
+
+    @patch("agentic_primitives_gateway.primitives.observability.langfuse.get_service_credentials_or_defaults")
+    @patch("agentic_primitives_gateway.primitives.observability.langfuse.Langfuse")
+    @pytest.mark.asyncio
+    async def test_log_generation(self, mock_langfuse_cls, mock_get_creds, provider):
+        mock_get_creds.return_value = {"public_key": "pk", "secret_key": "sk", "base_url": None}
+        mock_client = MagicMock()
+        mock_langfuse_cls.return_value = mock_client
+        mock_gen = MagicMock()
+        mock_gen.id = "gen-1"
+        mock_client.generation.return_value = mock_gen
+
+        result = await provider.log_generation(
+            trace_id="t-1",
+            name="chat",
+            model="claude-3",
+            input="hello",
+            output="hi",
+            usage={"prompt_tokens": 10, "completion_tokens": 5},
+        )
+
+        assert result["trace_id"] == "t-1"
+        assert result["generation_id"] == "gen-1"
+        mock_client.generation.assert_called_once()
+        mock_client.flush.assert_called()
+
+    @patch("agentic_primitives_gateway.primitives.observability.langfuse.get_service_credentials_or_defaults")
+    @patch("agentic_primitives_gateway.primitives.observability.langfuse.Langfuse")
+    @pytest.mark.asyncio
+    async def test_flush(self, mock_langfuse_cls, mock_get_creds, provider):
+        mock_get_creds.return_value = {"public_key": "pk", "secret_key": "sk", "base_url": None}
+        mock_client = MagicMock()
+        mock_langfuse_cls.return_value = mock_client
+
+        await provider.flush()
+        mock_client.flush.assert_called_once()
+
+    # ── New methods: update_trace, score_trace, list_scores ──────────
+
+    @patch("agentic_primitives_gateway.primitives.observability.langfuse.get_service_credentials_or_defaults")
+    @patch("agentic_primitives_gateway.primitives.observability.langfuse.Langfuse")
+    @pytest.mark.asyncio
+    async def test_update_trace(self, mock_langfuse_cls, mock_get_creds, provider):
+        mock_get_creds.return_value = {"public_key": "pk", "secret_key": "sk", "base_url": None}
+        mock_client = MagicMock()
+        mock_langfuse_cls.return_value = mock_client
+
+        result = await provider.update_trace("t-1", name="updated", tags=["new"])
+        assert result["trace_id"] == "t-1"
+        assert result["status"] == "updated"
+        mock_client.trace.assert_called_once()
+        mock_client.flush.assert_called()
+
+    @patch("agentic_primitives_gateway.primitives.observability.langfuse.get_service_credentials_or_defaults")
+    @patch("agentic_primitives_gateway.primitives.observability.langfuse.Langfuse")
+    @pytest.mark.asyncio
+    async def test_score_trace(self, mock_langfuse_cls, mock_get_creds, provider):
+        mock_get_creds.return_value = {"public_key": "pk", "secret_key": "sk", "base_url": None}
+        mock_client = MagicMock()
+        mock_langfuse_cls.return_value = mock_client
+        mock_score = MagicMock()
+        mock_score.id = "score-1"
+        mock_client.score.return_value = mock_score
+
+        result = await provider.score_trace("t-1", "quality", 0.95, comment="great")
+        assert result["trace_id"] == "t-1"
+        assert result["score_id"] == "score-1"
+        mock_client.score.assert_called_once()
+
+    @patch("agentic_primitives_gateway.primitives.observability.langfuse.get_service_credentials_or_defaults")
+    @patch("agentic_primitives_gateway.primitives.observability.langfuse.Langfuse")
+    @pytest.mark.asyncio
+    async def test_list_scores(self, mock_langfuse_cls, mock_get_creds, provider):
+        mock_get_creds.return_value = {"public_key": "pk", "secret_key": "sk", "base_url": None}
+        mock_client = MagicMock()
+        mock_langfuse_cls.return_value = mock_client
+
+        mock_s = MagicMock()
+        mock_s.id = "score-1"
+        mock_s.trace_id = "t-1"
+        mock_s.name = "quality"
+        mock_s.value = 0.95
+        mock_s.comment = None
+        mock_s.data_type = "NUMERIC"
+        mock_client.api.score.list.return_value = MagicMock(data=[mock_s])
+
+        result = await provider.list_scores("t-1")
+        assert len(result) == 1
+        assert result[0]["name"] == "quality"
+
+    # ── New methods: list_sessions, get_session ──────────────────────
+
+    @patch("agentic_primitives_gateway.primitives.observability.langfuse.get_service_credentials_or_defaults")
+    @patch("agentic_primitives_gateway.primitives.observability.langfuse.Langfuse")
+    @pytest.mark.asyncio
+    async def test_list_sessions(self, mock_langfuse_cls, mock_get_creds, provider):
+        mock_get_creds.return_value = {"public_key": "pk", "secret_key": "sk", "base_url": None}
+        mock_client = MagicMock()
+        mock_langfuse_cls.return_value = mock_client
+
+        mock_sess = MagicMock()
+        mock_sess.id = "sess-1"
+        mock_sess.user_id = "u-1"
+        mock_sess.trace_count = 5
+        mock_sess.created_at = "2025-01-01T00:00:00Z"
+        mock_sess.metadata = {}
+        mock_client.api.sessions.list.return_value = MagicMock(data=[mock_sess])
+
+        result = await provider.list_sessions(limit=50)
+        assert len(result) == 1
+        assert result[0]["session_id"] == "sess-1"
+
+    @patch("agentic_primitives_gateway.primitives.observability.langfuse.get_service_credentials_or_defaults")
+    @patch("agentic_primitives_gateway.primitives.observability.langfuse.Langfuse")
+    @pytest.mark.asyncio
+    async def test_get_session(self, mock_langfuse_cls, mock_get_creds, provider):
+        mock_get_creds.return_value = {"public_key": "pk", "secret_key": "sk", "base_url": None}
+        mock_client = MagicMock()
+        mock_langfuse_cls.return_value = mock_client
+
+        mock_sess = MagicMock()
+        mock_sess.id = "sess-1"
+        mock_sess.user_id = "u-1"
+        mock_sess.trace_count = 3
+        mock_sess.created_at = "2025-01-01T00:00:00Z"
+        mock_sess.metadata = {}
+        mock_client.api.sessions.get.return_value = mock_sess
+
+        result = await provider.get_session("sess-1")
+        assert result["session_id"] == "sess-1"
+        assert result["trace_count"] == 3
+
 
 class TestTraceToDict:
     """Tests for the _trace_to_dict helper."""
