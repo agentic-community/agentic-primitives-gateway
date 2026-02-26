@@ -70,6 +70,134 @@ class TestClientMemory:
             assert exc_info.value.status_code == 404
 
 
+class TestClientConversationEvents:
+    @pytest.mark.asyncio
+    async def test_create_event(self, make_client) -> None:
+        async with make_client() as client:
+            result = await client.create_event(
+                "actor-1",
+                "sess-1",
+                [{"text": "Hello", "role": "user"}],
+            )
+            assert result["actor_id"] == "actor-1"
+            assert result["session_id"] == "sess-1"
+            assert "event_id" in result
+
+    @pytest.mark.asyncio
+    async def test_list_events(self, make_client) -> None:
+        async with make_client() as client:
+            await client.create_event("a1", "s1", [{"text": "hi", "role": "user"}])
+            result = await client.list_events("a1", "s1")
+            assert len(result["events"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_get_event(self, make_client) -> None:
+        async with make_client() as client:
+            created = await client.create_event("a1", "s1", [{"text": "hi", "role": "user"}])
+            result = await client.get_event("a1", "s1", created["event_id"])
+            assert result["event_id"] == created["event_id"]
+
+    @pytest.mark.asyncio
+    async def test_delete_event(self, make_client) -> None:
+        async with make_client() as client:
+            created = await client.create_event("a1", "s1", [{"text": "hi", "role": "user"}])
+            await client.delete_event("a1", "s1", created["event_id"])
+            with pytest.raises(AgenticPlatformError) as exc_info:
+                await client.get_event("a1", "s1", created["event_id"])
+            assert exc_info.value.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_get_last_turns(self, make_client) -> None:
+        async with make_client() as client:
+            await client.create_event("a1", "s1", [{"text": "turn1", "role": "user"}])
+            await client.create_event("a1", "s1", [{"text": "turn2", "role": "assistant"}])
+            result = await client.get_last_turns("a1", "s1", k=5)
+            assert len(result["turns"]) == 2
+
+
+class TestClientSessionManagement:
+    @pytest.mark.asyncio
+    async def test_list_actors(self, make_client) -> None:
+        async with make_client() as client:
+            await client.create_event("a1", "s1", [{"text": "hi", "role": "user"}])
+            result = await client.list_actors()
+            actor_ids = [a["actor_id"] for a in result["actors"]]
+            assert "a1" in actor_ids
+
+    @pytest.mark.asyncio
+    async def test_list_memory_sessions(self, make_client) -> None:
+        async with make_client() as client:
+            await client.create_event("a1", "s1", [{"text": "hi", "role": "user"}])
+            result = await client.list_memory_sessions("a1")
+            session_ids = [s["session_id"] for s in result["sessions"]]
+            assert "s1" in session_ids
+
+
+class TestClientBranchManagement:
+    @pytest.mark.asyncio
+    async def test_fork_conversation(self, make_client) -> None:
+        async with make_client() as client:
+            result = await client.fork_conversation(
+                "a1",
+                "s1",
+                "evt-1",
+                "branch-1",
+                [{"text": "hello", "role": "user"}],
+            )
+            assert result["name"] == "branch-1"
+
+    @pytest.mark.asyncio
+    async def test_list_branches(self, make_client) -> None:
+        async with make_client() as client:
+            result = await client.list_branches("a1", "s1")
+            assert "branches" in result
+
+
+class TestClientControlPlane:
+    @pytest.mark.asyncio
+    async def test_create_memory_resource(self, make_client) -> None:
+        async with make_client() as client:
+            result = await client.create_memory_resource("test-mem")
+            assert result["memory_id"] == "mem-new"
+            assert result["name"] == "test-mem"
+
+    @pytest.mark.asyncio
+    async def test_get_memory_resource(self, make_client) -> None:
+        async with make_client() as client:
+            result = await client.get_memory_resource("mem-1")
+            assert result["memory_id"] == "mem-1"
+
+    @pytest.mark.asyncio
+    async def test_list_memory_resources(self, make_client) -> None:
+        async with make_client() as client:
+            result = await client.list_memory_resources()
+            assert "resources" in result
+
+    @pytest.mark.asyncio
+    async def test_delete_memory_resource(self, make_client) -> None:
+        async with make_client() as client:
+            await client.delete_memory_resource("mem-1")
+
+
+class TestClientStrategyManagement:
+    @pytest.mark.asyncio
+    async def test_list_strategies(self, make_client) -> None:
+        async with make_client() as client:
+            result = await client.list_strategies("mem-1")
+            assert "strategies" in result
+
+    @pytest.mark.asyncio
+    async def test_add_strategy(self, make_client) -> None:
+        async with make_client() as client:
+            result = await client.add_strategy("mem-1", {"type": "semantic"})
+            assert result["strategy_id"] == "strat-1"
+
+    @pytest.mark.asyncio
+    async def test_delete_strategy(self, make_client) -> None:
+        async with make_client() as client:
+            await client.delete_strategy("mem-1", "strat-1")
+
+
 class TestClientHealth:
     @pytest.mark.asyncio
     async def test_healthz(self, make_client) -> None:

@@ -47,5 +47,113 @@ class MemoryProvider(ABC):
         offset: int = 0,
     ) -> list[MemoryRecord]: ...
 
+    # ── Conversation memory (optional) ─────────────────────────────────
+
+    async def create_event(
+        self,
+        actor_id: str,
+        session_id: str,
+        messages: list[tuple[str, str]],
+        *,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        raise NotImplementedError
+
+    async def list_events(
+        self,
+        actor_id: str,
+        session_id: str,
+        *,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        raise NotImplementedError
+
+    async def get_event(
+        self,
+        actor_id: str,
+        session_id: str,
+        event_id: str,
+    ) -> dict[str, Any]:
+        raise NotImplementedError
+
+    async def delete_event(
+        self,
+        actor_id: str,
+        session_id: str,
+        event_id: str,
+    ) -> None:
+        raise NotImplementedError
+
+    async def get_last_turns(
+        self,
+        actor_id: str,
+        session_id: str,
+        *,
+        k: int = 5,
+    ) -> list[list[dict[str, str]]]:
+        raise NotImplementedError
+
+    # ── Session management (optional) ────────────────────────────────
+
+    async def list_actors(self) -> list[dict[str, Any]]:
+        raise NotImplementedError
+
+    async def list_sessions(self, actor_id: str) -> list[dict[str, Any]]:
+        raise NotImplementedError
+
+    # ── Branch management (optional) ─────────────────────────────────
+
+    async def fork_conversation(
+        self,
+        actor_id: str,
+        session_id: str,
+        root_event_id: str,
+        branch_name: str,
+        messages: list[tuple[str, str]],
+    ) -> dict[str, Any]:
+        raise NotImplementedError
+
+    async def list_branches(
+        self,
+        actor_id: str,
+        session_id: str,
+    ) -> list[dict[str, Any]]:
+        raise NotImplementedError
+
+    # ── Control plane (optional) ─────────────────────────────────────
+
+    async def create_memory_resource(
+        self,
+        name: str,
+        *,
+        strategies: list[dict[str, Any]] | None = None,
+        description: str | None = None,
+    ) -> dict[str, Any]:
+        raise NotImplementedError
+
+    async def get_memory_resource(self, memory_id: str) -> dict[str, Any]:
+        raise NotImplementedError
+
+    async def list_memory_resources(self) -> list[dict[str, Any]]:
+        raise NotImplementedError
+
+    async def delete_memory_resource(self, memory_id: str) -> None:
+        raise NotImplementedError
+
+    # ── Strategy management (optional) ───────────────────────────────
+
+    async def list_strategies(self, memory_id: str) -> list[dict[str, Any]]:
+        raise NotImplementedError
+
+    async def add_strategy(
+        self,
+        memory_id: str,
+        strategy: dict[str, Any],
+    ) -> dict[str, Any]:
+        raise NotImplementedError
+
+    async def delete_strategy(self, memory_id: str, strategy_id: str) -> None:
+        raise NotImplementedError
+
     async def healthcheck(self) -> bool:
         return True

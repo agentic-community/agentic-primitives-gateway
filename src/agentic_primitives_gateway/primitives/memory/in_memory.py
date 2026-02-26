@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from datetime import UTC, datetime
 from typing import Any
 
@@ -16,6 +17,8 @@ class InMemoryProvider(MemoryProvider):
     def __init__(self, **kwargs: Any) -> None:
         # namespace -> key -> MemoryRecord
         self._store: dict[str, dict[str, MemoryRecord]] = {}
+        # actor_id -> session_id -> [event dicts]
+        self._events: dict[str, dict[str, list[dict[str, Any]]]] = {}
 
     async def store(
         self,
@@ -92,3 +95,81 @@ class InMemoryProvider(MemoryProvider):
     @staticmethod
     def _matches_filters(record: MemoryRecord, filters: dict[str, Any]) -> bool:
         return all(record.metadata.get(fk) == fv for fk, fv in filters.items())
+
+    # ── Conversation memory ──────────────────────────────────────────
+
+    async def create_event(
+        self,
+        actor_id: str,
+        session_id: str,
+        messages: list[tuple[str, str]],
+        *,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        event_id = str(uuid.uuid4())[:8]
+        event: dict[str, Any] = {
+            "event_id": event_id,
+            "actor_id": actor_id,
+            "session_id": session_id,
+            "messages": [{"text": text, "role": role} for text, role in messages],
+            "timestamp": datetime.now(UTC).isoformat(),
+            "metadata": metadata or {},
+        }
+        self._events.setdefault(actor_id, {}).setdefault(session_id, []).append(event)
+        return event
+
+    async def list_events(
+        self,
+        actor_id: str,
+        session_id: str,
+        *,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        events = self._events.get(actor_id, {}).get(session_id, [])
+        return events[:limit]
+
+    async def get_event(
+        self,
+        actor_id: str,
+        session_id: str,
+        event_id: str,
+    ) -> dict[str, Any]:
+        for event in self._events.get(actor_id, {}).get(session_id, []):
+            if event["event_id"] == event_id:
+                return event
+        raise KeyError(f"Event {event_id} not found")
+
+    async def delete_event(
+        self,
+        actor_id: str,
+        session_id: str,
+        event_id: str,
+    ) -> None:
+        events = self._events.get(actor_id, {}).get(session_id, [])
+        for i, event in enumerate(events):
+            if event["event_id"] == event_id:
+                events.pop(i)
+                return
+        raise KeyError(f"Event {event_id} not found")
+
+    async def get_last_turns(
+        self,
+        actor_id: str,
+        session_id: str,
+        *,
+        k: int = 5,
+    ) -> list[list[dict[str, str]]]:
+        events = self._events.get(actor_id, {}).get(session_id, [])
+        turns: list[list[dict[str, str]]] = []
+        for event in events:
+            turns.append(event["messages"])
+        return turns[-k:]
+
+    # ── Session management ───────────────────────────────────────────
+
+    async def list_actors(self) -> list[dict[str, Any]]:
+        return [{"actor_id": aid, "metadata": {}} for aid in self._events]
+
+    async def list_sessions(self, actor_id: str) -> list[dict[str, Any]]:
+        sessions = self._events.get(actor_id, {})
+        return [{"session_id": sid, "actor_id": actor_id, "metadata": {}} for sid in sessions]

@@ -195,6 +195,45 @@ class Memory:
         except Exception as e:
             return f"Could not delete '{key}': {e}"
 
+    # ── Conversation-native methods (async) ─────────────────────────
+
+    async def add_message(self, role: str, content: str, *, metadata: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Store a conversation message using the native event API.
+
+        Uses the helper's namespace as actor_id and session_id for convenience.
+        """
+        return await self._client.create_event(
+            actor_id=self.namespace,
+            session_id=self.session_id,
+            messages=[{"text": content, "role": role}],
+            metadata=metadata,
+        )
+
+    async def get_history(self, k: int = 10) -> str:
+        """Get recent conversation history as a formatted string."""
+        result = await self._client.get_last_turns(
+            actor_id=self.namespace,
+            session_id=self.session_id,
+            k=k,
+        )
+        turns = result.get("turns", [])
+        if not turns:
+            return "No conversation history."
+        lines: list[str] = []
+        for turn in turns:
+            for msg in turn.get("messages", []):
+                lines.append(f"[{msg.get('role', '')}] {msg.get('text', '')}")
+        return "\n".join(lines)
+
+    async def list_conversations(self) -> str:
+        """List sessions for this actor as a formatted string."""
+        result = await self._client.list_memory_sessions(actor_id=self.namespace)
+        sessions = result.get("sessions", [])
+        if not sessions:
+            return "No conversations found."
+        lines = [f"  {s.get('session_id', '')}" for s in sessions]
+        return f"{len(sessions)} conversations:\n" + "\n".join(lines)
+
     # ── Sync wrappers ───────────────────────────────────────────────
 
     def _get_loop(self) -> asyncio.AbstractEventLoop:
@@ -225,3 +264,13 @@ class Memory:
 
     def forget_sync(self, key: str) -> str:
         return str(self._sync(self.forget(key)))
+
+    def add_message_sync(self, role: str, content: str, *, metadata: dict[str, Any] | None = None) -> dict[str, Any]:
+        result: dict[str, Any] = self._sync(self.add_message(role, content, metadata=metadata))
+        return result
+
+    def get_history_sync(self, k: int = 10) -> str:
+        return str(self._sync(self.get_history(k)))
+
+    def list_conversations_sync(self) -> str:
+        return str(self._sync(self.list_conversations()))

@@ -84,8 +84,122 @@ def _handle_identity(method: str, path: str, request: httpx.Request) -> httpx.Re
     return httpx.Response(501, json={"detail": "Not implemented"})
 
 
+_events: dict[str, dict[str, list[dict]]] = {}
+_event_counter = 0
+
+
 def _handle_memory(method: str, path: str, request: httpx.Request) -> httpx.Response:
-    parts = path.removeprefix("/api/v1/memory/").split("/")
+    global _event_counter
+    rest = path.removeprefix("/api/v1/memory/")
+
+    # ── Conversation events ──────────────────────────────────────────
+    # POST /sessions/{actor_id}/{session_id}/events
+    if rest.startswith("sessions/"):
+        session_parts = rest.removeprefix("sessions/").split("/")
+
+        # /sessions/{actor_id}/{session_id}/events
+        if len(session_parts) >= 3 and session_parts[2] == "events":
+            actor_id, session_id = session_parts[0], session_parts[1]
+
+            if len(session_parts) == 3:
+                if method == "POST":
+                    body = json.loads(request.content)
+                    _event_counter += 1
+                    event = {
+                        "event_id": f"evt-{_event_counter}",
+                        "actor_id": actor_id,
+                        "session_id": session_id,
+                        "messages": body["messages"],
+                        "timestamp": "2025-01-01T00:00:00Z",
+                        "metadata": body.get("metadata", {}),
+                    }
+                    _events.setdefault(actor_id, {}).setdefault(session_id, []).append(event)
+                    return httpx.Response(201, json=event)
+
+                if method == "GET":
+                    events = _events.get(actor_id, {}).get(session_id, [])
+                    return httpx.Response(200, json={"events": events})
+
+            # /sessions/{actor_id}/{session_id}/events/{event_id}
+            if len(session_parts) == 4:
+                event_id = session_parts[3]
+                events = _events.get(actor_id, {}).get(session_id, [])
+
+                if method == "GET":
+                    for e in events:
+                        if e["event_id"] == event_id:
+                            return httpx.Response(200, json=e)
+                    return httpx.Response(404, json={"detail": "Event not found"})
+
+                if method == "DELETE":
+                    for i, e in enumerate(events):
+                        if e["event_id"] == event_id:
+                            events.pop(i)
+                            return httpx.Response(204)
+                    return httpx.Response(404, json={"detail": "Event not found"})
+
+        # /sessions/{actor_id}/{session_id}/turns
+        if len(session_parts) == 3 and session_parts[2] == "turns":
+            actor_id, session_id = session_parts[0], session_parts[1]
+            if method == "GET":
+                events = _events.get(actor_id, {}).get(session_id, [])
+                turns = [{"messages": e["messages"]} for e in events[-5:]]
+                return httpx.Response(200, json={"turns": turns})
+
+        # /sessions/{actor_id}/{session_id}/branches
+        if len(session_parts) >= 3 and session_parts[2] == "branches":
+            if method == "POST":
+                return httpx.Response(201, json={"name": "branch-1", "root_event_id": "evt-1"})
+            if method == "GET":
+                return httpx.Response(200, json={"branches": []})
+
+    # ── Session management ───────────────────────────────────────────
+    if rest == "actors" and method == "GET":
+        actors = [{"actor_id": aid, "metadata": {}} for aid in _events]
+        return httpx.Response(200, json={"actors": actors})
+
+    if rest.startswith("actors/") and rest.endswith("/sessions") and method == "GET":
+        actor_id = rest.removeprefix("actors/").removesuffix("/sessions")
+        sessions = [{"session_id": sid, "actor_id": actor_id, "metadata": {}} for sid in _events.get(actor_id, {})]
+        return httpx.Response(200, json={"sessions": sessions})
+
+    # ── Control plane ────────────────────────────────────────────────
+    if rest == "resources" and method == "POST":
+        body = json.loads(request.content)
+        return httpx.Response(
+            201,
+            json={"memory_id": "mem-new", "name": body["name"], "status": "ACTIVE"},
+        )
+    if rest == "resources" and method == "GET":
+        return httpx.Response(200, json={"resources": []})
+
+    if rest.startswith("resources/"):
+        res_parts = rest.removeprefix("resources/").split("/")
+        memory_id = res_parts[0]
+
+        # /resources/{memory_id}/strategies
+        if len(res_parts) == 2 and res_parts[1] == "strategies":
+            if method == "GET":
+                return httpx.Response(200, json={"strategies": []})
+            if method == "POST":
+                return httpx.Response(201, json={"strategy_id": "strat-1", "type": "semantic"})
+
+        # /resources/{memory_id}/strategies/{strategy_id}
+        if len(res_parts) == 3 and res_parts[1] == "strategies" and method == "DELETE":
+            return httpx.Response(204)
+
+        # /resources/{memory_id}
+        if len(res_parts) == 1:
+            if method == "GET":
+                return httpx.Response(
+                    200,
+                    json={"memory_id": memory_id, "name": "test", "status": "ACTIVE"},
+                )
+            if method == "DELETE":
+                return httpx.Response(204)
+
+    # ── Key-value memory (original) ──────────────────────────────────
+    parts = rest.split("/")
     namespace = parts[0]
 
     # POST /{namespace}/search
@@ -142,9 +256,14 @@ def _handle_memory(method: str, path: str, request: httpx.Request) -> httpx.Resp
 
 @pytest.fixture(autouse=True)
 def _clear_store():
+    global _event_counter
     _store.clear()
+    _events.clear()
+    _event_counter = 0
     yield
     _store.clear()
+    _events.clear()
+    _event_counter = 0
 
 
 @pytest.fixture

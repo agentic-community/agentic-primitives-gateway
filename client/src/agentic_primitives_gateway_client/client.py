@@ -386,6 +386,179 @@ class AgenticPlatformClient:
             return
         self._raise_for_status(resp)
 
+    # ── Memory: Conversation events ────────────────────────────────────
+
+    async def create_event(
+        self,
+        actor_id: str,
+        session_id: str,
+        messages: list[dict[str, str]],
+        *,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        resp = await self._post(
+            f"/api/v1/memory/sessions/{actor_id}/{session_id}/events",
+            json={"messages": messages, "metadata": metadata or {}},
+        )
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def list_events(
+        self,
+        actor_id: str,
+        session_id: str,
+        *,
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        resp = await self._get(
+            f"/api/v1/memory/sessions/{actor_id}/{session_id}/events",
+            params={"limit": limit},
+        )
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def get_event(
+        self,
+        actor_id: str,
+        session_id: str,
+        event_id: str,
+    ) -> dict[str, Any]:
+        resp = await self._get(
+            f"/api/v1/memory/sessions/{actor_id}/{session_id}/events/{event_id}",
+        )
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def delete_event(
+        self,
+        actor_id: str,
+        session_id: str,
+        event_id: str,
+    ) -> None:
+        resp = await self._delete(
+            f"/api/v1/memory/sessions/{actor_id}/{session_id}/events/{event_id}",
+        )
+        if resp.status_code == 204:
+            return
+        self._raise_for_status(resp)
+
+    async def get_last_turns(
+        self,
+        actor_id: str,
+        session_id: str,
+        *,
+        k: int = 5,
+    ) -> dict[str, Any]:
+        resp = await self._get(
+            f"/api/v1/memory/sessions/{actor_id}/{session_id}/turns",
+            params={"k": k},
+        )
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    # ── Memory: Session management ─────────────────────────────────────
+
+    async def list_actors(self) -> dict[str, Any]:
+        resp = await self._get("/api/v1/memory/actors")
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def list_memory_sessions(self, actor_id: str) -> dict[str, Any]:
+        resp = await self._get(f"/api/v1/memory/actors/{actor_id}/sessions")
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    # ── Memory: Branch management ──────────────────────────────────────
+
+    async def fork_conversation(
+        self,
+        actor_id: str,
+        session_id: str,
+        root_event_id: str,
+        branch_name: str,
+        messages: list[dict[str, str]],
+    ) -> dict[str, Any]:
+        resp = await self._post(
+            f"/api/v1/memory/sessions/{actor_id}/{session_id}/branches",
+            json={
+                "root_event_id": root_event_id,
+                "branch_name": branch_name,
+                "messages": messages,
+            },
+        )
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def list_branches(
+        self,
+        actor_id: str,
+        session_id: str,
+    ) -> dict[str, Any]:
+        resp = await self._get(
+            f"/api/v1/memory/sessions/{actor_id}/{session_id}/branches",
+        )
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    # ── Memory: Control plane ──────────────────────────────────────────
+
+    async def create_memory_resource(
+        self,
+        name: str,
+        *,
+        strategies: list[dict[str, Any]] | None = None,
+        description: str = "",
+    ) -> dict[str, Any]:
+        resp = await self._post(
+            "/api/v1/memory/resources",
+            json={"name": name, "strategies": strategies or [], "description": description},
+        )
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def get_memory_resource(self, memory_id: str) -> dict[str, Any]:
+        resp = await self._get(f"/api/v1/memory/resources/{memory_id}")
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def list_memory_resources(self) -> dict[str, Any]:
+        resp = await self._get("/api/v1/memory/resources")
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def delete_memory_resource(self, memory_id: str) -> None:
+        resp = await self._delete(f"/api/v1/memory/resources/{memory_id}")
+        if resp.status_code == 204:
+            return
+        self._raise_for_status(resp)
+
+    # ── Memory: Strategy management ────────────────────────────────────
+
+    async def list_strategies(self, memory_id: str) -> dict[str, Any]:
+        resp = await self._get(f"/api/v1/memory/resources/{memory_id}/strategies")
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def add_strategy(
+        self,
+        memory_id: str,
+        strategy: dict[str, Any],
+    ) -> dict[str, Any]:
+        resp = await self._post(
+            f"/api/v1/memory/resources/{memory_id}/strategies",
+            json={"strategy": strategy},
+        )
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def delete_strategy(self, memory_id: str, strategy_id: str) -> None:
+        resp = await self._delete(
+            f"/api/v1/memory/resources/{memory_id}/strategies/{strategy_id}",
+        )
+        if resp.status_code == 204:
+            return
+        self._raise_for_status(resp)
+
     # ── Identity ────────────────────────────────────────────────────────
 
     async def get_token(

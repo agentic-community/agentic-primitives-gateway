@@ -302,6 +302,358 @@ class AgentCoreMemoryProvider(MemoryProvider):
 
         return records[offset : offset + limit]
 
+    # ── Conversation memory ──────────────────────────────────────────
+
+    async def create_event(
+        self,
+        actor_id: str,
+        session_id: str,
+        messages: list[tuple[str, str]],
+        *,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        memory_id = self._resolve_memory_id()
+        boto_session = self._resolve_boto3_session()
+
+        def _create():
+            manager = self._make_manager(memory_id, boto_session)
+            session = manager.create_memory_session(
+                actor_id=actor_id,
+                session_id=session_id,
+            )
+            conv_messages = [ConversationalMessage(text=text, role=MessageRole(role)) for text, role in messages]
+            return session.add_turns(messages=conv_messages)
+
+        result = await self._run_sync(_create)
+        # Normalize result to a dict
+        if isinstance(result, dict):
+            return result
+        return {
+            "event_id": str(getattr(result, "event_id", "")),
+            "actor_id": actor_id,
+            "session_id": session_id,
+            "messages": [{"text": t, "role": r} for t, r in messages],
+            "metadata": metadata or {},
+        }
+
+    async def list_events(
+        self,
+        actor_id: str,
+        session_id: str,
+        *,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        memory_id = self._resolve_memory_id()
+        boto_session = self._resolve_boto3_session()
+
+        def _list():
+            manager = self._make_manager(memory_id, boto_session)
+            return manager.list_events(actor_id=actor_id, session_id=session_id)
+
+        events = await self._run_sync(_list)
+        result: list[dict[str, Any]] = []
+        for e in events[:limit]:
+            if isinstance(e, dict):
+                result.append(e)
+            else:
+                result.append({"event_id": str(e)})
+        return result
+
+    async def get_event(
+        self,
+        actor_id: str,
+        session_id: str,
+        event_id: str,
+    ) -> dict[str, Any]:
+        memory_id = self._resolve_memory_id()
+        boto_session = self._resolve_boto3_session()
+
+        def _get():
+            manager = self._make_manager(memory_id, boto_session)
+            return manager.get_event(
+                actor_id=actor_id,
+                session_id=session_id,
+                event_id=event_id,
+            )
+
+        event = await self._run_sync(_get)
+        if isinstance(event, dict):
+            return event
+        return {"event_id": event_id, "actor_id": actor_id, "session_id": session_id}
+
+    async def delete_event(
+        self,
+        actor_id: str,
+        session_id: str,
+        event_id: str,
+    ) -> None:
+        memory_id = self._resolve_memory_id()
+        boto_session = self._resolve_boto3_session()
+
+        def _delete():
+            manager = self._make_manager(memory_id, boto_session)
+            manager.delete_event(
+                actor_id=actor_id,
+                session_id=session_id,
+                event_id=event_id,
+            )
+
+        await self._run_sync(_delete)
+
+    async def get_last_turns(
+        self,
+        actor_id: str,
+        session_id: str,
+        *,
+        k: int = 5,
+    ) -> list[list[dict[str, str]]]:
+        memory_id = self._resolve_memory_id()
+        boto_session = self._resolve_boto3_session()
+
+        def _get_turns():
+            manager = self._make_manager(memory_id, boto_session)
+            session = manager.create_memory_session(
+                actor_id=actor_id,
+                session_id=session_id,
+            )
+            return session.get_last_k_turns(k=k)
+
+        raw_turns = await self._run_sync(_get_turns)
+        result: list[list[dict[str, str]]] = []
+        for turn_group in raw_turns:
+            msgs: list[dict[str, str]] = []
+            for msg in turn_group:
+                if isinstance(msg, dict):
+                    content = msg.get("content", {})
+                    text = content.get("text", str(msg)) if isinstance(content, dict) else str(content)
+                    role = msg.get("role", "")
+                    msgs.append({"text": text, "role": role})
+                else:
+                    msgs.append({"text": str(msg), "role": ""})
+            result.append(msgs)
+        return result
+
+    # ── Session management ───────────────────────────────────────────
+
+    async def list_actors(self) -> list[dict[str, Any]]:
+        memory_id = self._resolve_memory_id()
+        boto_session = self._resolve_boto3_session()
+
+        def _list():
+            manager = self._make_manager(memory_id, boto_session)
+            return manager.list_actors()
+
+        actors = await self._run_sync(_list)
+        result: list[dict[str, Any]] = []
+        for a in actors:
+            if isinstance(a, dict):
+                result.append(a)
+            else:
+                result.append({"actor_id": str(a)})
+        return result
+
+    async def list_sessions(self, actor_id: str) -> list[dict[str, Any]]:
+        memory_id = self._resolve_memory_id()
+        boto_session = self._resolve_boto3_session()
+
+        def _list():
+            manager = self._make_manager(memory_id, boto_session)
+            return manager.list_actor_sessions(actor_id=actor_id)
+
+        sessions = await self._run_sync(_list)
+        result: list[dict[str, Any]] = []
+        for s in sessions:
+            if isinstance(s, dict):
+                result.append(s)
+            else:
+                result.append({"session_id": str(s), "actor_id": actor_id})
+        return result
+
+    # ── Branch management ────────────────────────────────────────────
+
+    async def fork_conversation(
+        self,
+        actor_id: str,
+        session_id: str,
+        root_event_id: str,
+        branch_name: str,
+        messages: list[tuple[str, str]],
+    ) -> dict[str, Any]:
+        memory_id = self._resolve_memory_id()
+        boto_session = self._resolve_boto3_session()
+
+        def _fork():
+            manager = self._make_manager(memory_id, boto_session)
+            conv_messages = [ConversationalMessage(text=text, role=MessageRole(role)) for text, role in messages]
+            return manager.fork_conversation(
+                actor_id=actor_id,
+                session_id=session_id,
+                root_event_id=root_event_id,
+                branch_name=branch_name,
+                messages=conv_messages,
+            )
+
+        result = await self._run_sync(_fork)
+        if isinstance(result, dict):
+            return result
+        return {
+            "name": branch_name,
+            "root_event_id": root_event_id,
+        }
+
+    async def list_branches(
+        self,
+        actor_id: str,
+        session_id: str,
+    ) -> list[dict[str, Any]]:
+        memory_id = self._resolve_memory_id()
+        boto_session = self._resolve_boto3_session()
+
+        def _list():
+            manager = self._make_manager(memory_id, boto_session)
+            return manager.list_branches(actor_id=actor_id, session_id=session_id)
+
+        branches = await self._run_sync(_list)
+        result: list[dict[str, Any]] = []
+        for b in branches:
+            if isinstance(b, dict):
+                result.append(b)
+            else:
+                result.append({"name": str(b)})
+        return result
+
+    # ── Control plane ────────────────────────────────────────────────
+
+    async def create_memory_resource(
+        self,
+        name: str,
+        *,
+        strategies: list[dict[str, Any]] | None = None,
+        description: str | None = None,
+    ) -> dict[str, Any]:
+        boto_session = self._resolve_boto3_session()
+
+        def _create():
+            manager = MemorySessionManager(
+                memory_id="placeholder",
+                region_name=boto_session.region_name,
+                boto3_session=boto_session,
+            )
+            return manager.create_memory(
+                name=name,
+                strategies=strategies or [],
+                description=description or "",
+            )
+
+        result = await self._run_sync(_create)
+        if isinstance(result, dict):
+            return result
+        return {"memory_id": str(result), "name": name}
+
+    async def get_memory_resource(self, memory_id: str) -> dict[str, Any]:
+        boto_session = self._resolve_boto3_session()
+
+        def _get():
+            manager = MemorySessionManager(
+                memory_id=memory_id,
+                region_name=boto_session.region_name,
+                boto3_session=boto_session,
+            )
+            return manager.get_memory(memory_id=memory_id)
+
+        result = await self._run_sync(_get)
+        if isinstance(result, dict):
+            return result
+        return {"memory_id": memory_id}
+
+    async def list_memory_resources(self) -> list[dict[str, Any]]:
+        boto_session = self._resolve_boto3_session()
+
+        def _list():
+            manager = MemorySessionManager(
+                memory_id="placeholder",
+                region_name=boto_session.region_name,
+                boto3_session=boto_session,
+            )
+            return manager.list_memories()
+
+        resources = await self._run_sync(_list)
+        result: list[dict[str, Any]] = []
+        for r in resources:
+            if isinstance(r, dict):
+                result.append(r)
+            else:
+                result.append({"memory_id": str(r)})
+        return result
+
+    async def delete_memory_resource(self, memory_id: str) -> None:
+        boto_session = self._resolve_boto3_session()
+
+        def _delete():
+            manager = MemorySessionManager(
+                memory_id=memory_id,
+                region_name=boto_session.region_name,
+                boto3_session=boto_session,
+            )
+            manager.delete_memory(memory_id=memory_id)
+
+        await self._run_sync(_delete)
+
+    # ── Strategy management ──────────────────────────────────────────
+
+    async def list_strategies(self, memory_id: str) -> list[dict[str, Any]]:
+        boto_session = self._resolve_boto3_session()
+
+        def _list():
+            manager = MemorySessionManager(
+                memory_id=memory_id,
+                region_name=boto_session.region_name,
+                boto3_session=boto_session,
+            )
+            return manager.list_strategies(memory_id=memory_id)
+
+        strategies = await self._run_sync(_list)
+        result: list[dict[str, Any]] = []
+        for s in strategies:
+            if isinstance(s, dict):
+                result.append(s)
+            else:
+                result.append({"strategy_id": str(s)})
+        return result
+
+    async def add_strategy(
+        self,
+        memory_id: str,
+        strategy: dict[str, Any],
+    ) -> dict[str, Any]:
+        boto_session = self._resolve_boto3_session()
+
+        def _add():
+            manager = MemorySessionManager(
+                memory_id=memory_id,
+                region_name=boto_session.region_name,
+                boto3_session=boto_session,
+            )
+            return manager.add_strategy(memory_id=memory_id, strategy=strategy)
+
+        result = await self._run_sync(_add)
+        if isinstance(result, dict):
+            return result
+        return {"strategy_id": str(result)}
+
+    async def delete_strategy(self, memory_id: str, strategy_id: str) -> None:
+        boto_session = self._resolve_boto3_session()
+
+        def _delete():
+            manager = MemorySessionManager(
+                memory_id=memory_id,
+                region_name=boto_session.region_name,
+                boto3_session=boto_session,
+            )
+            manager.delete_strategy(memory_id=memory_id, strategy_id=strategy_id)
+
+        await self._run_sync(_delete)
+
     async def healthcheck(self) -> bool:
         # Healthcheck doesn't have request context, just check basic connectivity
         return True
