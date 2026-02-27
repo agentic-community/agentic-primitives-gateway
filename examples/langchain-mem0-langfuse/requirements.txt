@@ -1,0 +1,3 @@
+langchain
+langchain-aws
+agentic-primitives-gateway-client[aws]
