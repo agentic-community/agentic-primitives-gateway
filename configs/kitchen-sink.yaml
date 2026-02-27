@@ -87,6 +87,11 @@ providers:
         backend: "agentic_primitives_gateway.primitives.browser.agentcore.AgentCoreBrowserProvider"
         config:
           region: "${AWS_REGION:=us-east-1}"
+      selenium_grid:
+        backend: "agentic_primitives_gateway.primitives.browser.selenium_grid.SeleniumGridBrowserProvider"
+        config:
+          hub_url: "${SELENIUM_HUB_URL:=http://localhost:4444}"
+          browser: "${SELENIUM_BROWSER:=chrome}"
 
   gateway:
     default: "noop"
