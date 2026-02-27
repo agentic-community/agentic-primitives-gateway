@@ -16,6 +16,10 @@ through the open-source stack:
     - Trace querying and session management
     - Automatic tracing of all tool calls
 
+  Browser (Selenium Grid):
+    - Navigate, screenshot, read page content
+    - Click elements, type into inputs, run JavaScript
+
 Server config:
     ./run.sh milvus-langfuse
 
@@ -24,6 +28,9 @@ Prerequisites:
 
     # Milvus must be running (e.g., via Docker)
     docker run -d --name milvus -p 19530:19530 milvusdb/milvus:latest
+
+    # Selenium Grid for browser
+    docker run -d --name selenium -p 4444:4444 -p 7900:7900 --shm-size="2g" selenium/standalone-chrome:latest
 
 Usage:
     export LANGFUSE_PUBLIC_KEY=pk-lf-...
@@ -42,14 +49,28 @@ from langchain.agents import create_agent
 from langchain_aws import ChatBedrock
 from langchain_core.tools import tool
 
-from agentic_primitives_gateway_client import AgenticPlatformClient, Memory, Observability
+from agentic_primitives_gateway_client import AgenticPlatformClient, Browser, Memory, Observability
+
+# ── Platform client ─────────────────────────────────────────────────
+
+# ── Configuration ─────────────────────────────────────────────────
+
+GATEWAY_URL = "http://localhost:8000"
+SELENIUM_HOST = "localhost"
+SELENIUM_PORT = 61576
 
 # ── Platform client ─────────────────────────────────────────────────
 
 platform = AgenticPlatformClient(
-    "http://localhost:8000",
+    GATEWAY_URL,
     aws_from_environment=True,
 )
+
+# Route browser to Selenium Grid
+platform.set_provider_for("browser", "selenium_grid")
+SELENIUM_HUB_URL = f"http://{SELENIUM_HOST}:{SELENIUM_PORT}"
+platform.set_service_credentials("selenium", {"hub_url": SELENIUM_HUB_URL})
+print(f"Selenium Grid: {SELENIUM_HUB_URL}")
 
 # Langfuse credentials
 if os.environ.get("LANGFUSE_PUBLIC_KEY"):
@@ -82,6 +103,8 @@ memory = Memory(
     session_id=SESSION_ID,
     observability=obs,
 )
+
+browser = Browser(platform)
 
 
 # ── Memory: key-value tools ────────────────────────────────────────
@@ -200,6 +223,90 @@ async def list_branches() -> str:
     return f"{len(branches)} branches:\n" + "\n".join(lines)
 
 
+# ── Browser tools (Selenium Grid) ─────────────────────────────────
+
+
+@tool
+async def open_browser() -> str:
+    """Start a Selenium Grid browser session."""
+    result = await browser.start()
+    await obs.trace("browser:start", {}, result)
+    return result
+
+
+@tool
+async def close_browser() -> str:
+    """Close the current browser session."""
+    result = await browser.close()
+    await obs.trace("browser:stop", {}, result)
+    return result
+
+
+@tool
+async def browse_to(url: str) -> str:
+    """Navigate the browser to a URL.
+
+    Args:
+        url: The URL to navigate to.
+    """
+    result = await browser.navigate(url)
+    await obs.trace("browser:navigate", {"url": url}, result)
+    return result
+
+
+@tool
+async def read_page() -> str:
+    """Read the text content of the current page."""
+    result = await browser.get_page_content()
+    await obs.trace("browser:read_page", {}, result[:200])
+    return result
+
+
+@tool
+async def click_element(selector: str) -> str:
+    """Click an element on the page.
+
+    Args:
+        selector: CSS selector (e.g., "button.submit", "#login").
+    """
+    result = await browser.click(selector)
+    await obs.trace("browser:click", {"selector": selector}, result)
+    return result
+
+
+@tool
+async def type_into(selector: str, text: str) -> str:
+    """Type text into an input field.
+
+    Args:
+        selector: CSS selector of the input.
+        text: Text to type.
+    """
+    result = await browser.type_text(selector, text)
+    await obs.trace("browser:type", {"selector": selector}, result)
+    return result
+
+
+@tool
+async def take_screenshot() -> str:
+    """Take a screenshot of the current browser page."""
+    result = await browser.screenshot()
+    await obs.trace("browser:screenshot", {}, "screenshot captured")
+    return result
+
+
+@tool
+async def run_js(expression: str) -> str:
+    """Run JavaScript in the browser and return the result.
+
+    Args:
+        expression: JavaScript expression to evaluate.
+    """
+    result = await browser.evaluate(expression)
+    await obs.trace("browser:evaluate", {"expression": expression[:200]}, result[:500])
+    return result
+
+
 # ── Observability: Langfuse features ──────────────────────────────
 
 
@@ -277,7 +384,7 @@ async def view_sessions(limit: int = 10) -> str:
 
 SYSTEM_PROMPT = """\
 You are a research assistant with persistent memory backed by mem0 + \
-Milvus and full observability through Langfuse.
+Milvus, a browser via Selenium Grid, and full observability through Langfuse.
 
 **Memory** (mem0 + Milvus vector search):
 - `remember` — store with semantic indexing
@@ -289,6 +396,16 @@ Milvus and full observability through Langfuse.
 - `list_sessions` — see all conversation sessions
 - `fork_conversation`, `list_branches` — branch conversations
 
+**Browser** (Selenium Grid — self-hosted):
+- `open_browser` — start a browser session
+- `browse_to` — navigate to a URL
+- `read_page` — read the text content of the current page
+- `click_element` — click a button, link, or other element (CSS selector)
+- `type_into` — type text into an input field (CSS selector)
+- `run_js` — run JavaScript on the page
+- `take_screenshot` — capture a screenshot
+- `close_browser` — stop the session when done
+
 **Observability** (Langfuse):
 - `query_traces` — see recent activity
 - `get_trace` — inspect a specific trace
@@ -299,7 +416,9 @@ Milvus and full observability through Langfuse.
 
 Always search your memory before saying you don't know something. \
 When you learn new information, store it. Your memory persists across \
-sessions — if a user told you something yesterday, you can recall it today.
+sessions — if a user told you something yesterday, you can recall it today. \
+When using the browser, always start with `open_browser`, then `browse_to` \
+a URL. Use `close_browser` when done.
 """
 
 
@@ -322,6 +441,15 @@ async def main():
             # Memory: branching
             fork_conversation,
             list_branches,
+            # Browser (Selenium Grid)
+            open_browser,
+            close_browser,
+            browse_to,
+            read_page,
+            click_element,
+            type_into,
+            take_screenshot,
+            run_js,
             # Observability
             query_traces,
             get_trace,
@@ -332,7 +460,7 @@ async def main():
         system_prompt=SYSTEM_PROMPT,
     )
 
-    print("LangChain + mem0/Milvus + Langfuse agent ready.")
+    print("LangChain + mem0/Milvus + Selenium + Langfuse agent ready.")
     print(f"Namespace: {AGENT_NAMESPACE}")
     print(f"Session: {SESSION_ID}")
     print(f"Langfuse session: {obs.session_id}")
@@ -406,6 +534,7 @@ async def main():
         else:
             print("\nAssistant: (no response)\n")
 
+    await browser.close()
     await obs.flush()
     await obs.log("info", "LangChain mem0+langfuse agent stopped")
 
