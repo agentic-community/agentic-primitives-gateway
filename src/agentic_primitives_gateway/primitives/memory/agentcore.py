@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import logging
 from datetime import UTC, datetime
-from functools import partial
 from typing import Any
 
 from bedrock_agentcore.memory import MemorySessionManager
@@ -12,12 +10,13 @@ from bedrock_agentcore.memory.constants import ConversationalMessage, MessageRol
 
 from agentic_primitives_gateway.context import get_boto3_session, get_service_credentials
 from agentic_primitives_gateway.models.memory import MemoryRecord, SearchResult
+from agentic_primitives_gateway.primitives._sync import SyncRunnerMixin
 from agentic_primitives_gateway.primitives.memory.base import MemoryProvider
 
 logger = logging.getLogger(__name__)
 
 
-class AgentCoreMemoryProvider(MemoryProvider):
+class AgentCoreMemoryProvider(SyncRunnerMixin, MemoryProvider):
     """Memory provider backed by AWS Bedrock AgentCore Memory service.
 
     The memory_id is resolved per-request in this order:
@@ -103,10 +102,6 @@ class AgentCoreMemoryProvider(MemoryProvider):
             region_name=boto_session.region_name,
             boto3_session=boto_session,
         )
-
-    async def _run_sync(self, func: Any, *args: Any, **kwargs: Any) -> Any:
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, partial(func, *args, **kwargs))
 
     async def store(
         self,

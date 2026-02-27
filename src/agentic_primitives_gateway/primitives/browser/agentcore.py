@@ -1,19 +1,18 @@
 from __future__ import annotations
 
-import asyncio
 import logging
-from functools import partial
 from typing import Any
 
 from bedrock_agentcore.tools import BrowserClient
 
 from agentic_primitives_gateway.context import get_boto3_session
+from agentic_primitives_gateway.primitives._sync import SyncRunnerMixin
 from agentic_primitives_gateway.primitives.browser.base import BrowserProvider
 
 logger = logging.getLogger(__name__)
 
 
-class AgentCoreBrowserProvider(BrowserProvider):
+class AgentCoreBrowserProvider(BrowserProvider, SyncRunnerMixin):
     """Browser provider backed by AWS Bedrock AgentCore Browser service.
 
     Uses Playwright to connect to the AgentCore browser via CDP for
@@ -43,10 +42,6 @@ class AgentCoreBrowserProvider(BrowserProvider):
             pw = await async_playwright().start()
             self._playwright = pw
         return self._playwright
-
-    async def _run_sync(self, func: Any, *args: Any, **kwargs: Any) -> Any:
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, partial(func, *args, **kwargs))
 
     async def start_session(
         self,

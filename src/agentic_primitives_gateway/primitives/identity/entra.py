@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 import uuid
-from functools import partial
 from typing import Any
 
 import msal  # type: ignore[import-untyped]
@@ -15,6 +13,7 @@ from agentic_primitives_gateway.models.enums import (
     CredentialProviderType,
     TokenType,
 )
+from agentic_primitives_gateway.primitives._sync import SyncRunnerMixin
 from agentic_primitives_gateway.primitives.identity.base import IdentityProvider
 
 logger = logging.getLogger(__name__)
@@ -22,7 +21,7 @@ logger = logging.getLogger(__name__)
 _GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 
 
-class EntraIdentityProvider(IdentityProvider):
+class EntraIdentityProvider(SyncRunnerMixin, IdentityProvider):
     """Identity provider backed by Microsoft Entra ID (Azure AD).
 
     Uses ``msal`` for OAuth2 token operations and the Microsoft Graph
@@ -92,10 +91,6 @@ class EntraIdentityProvider(IdentityProvider):
         if "access_token" not in result:
             raise RuntimeError(f"Failed to get Graph API token: {result.get('error_description', result)}")
         return {"Authorization": f"Bearer {result['access_token']}"}
-
-    async def _run_sync(self, func: Any, *args: Any, **kwargs: Any) -> Any:
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, partial(func, *args, **kwargs))
 
     # ── Data plane — runtime token operations ─────────────────────
 

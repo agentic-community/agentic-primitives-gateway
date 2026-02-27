@@ -5,40 +5,41 @@ Agentic Primitives Gateway is a Kubernetes-deployed REST API service that abstra
 ## Architecture
 
 ```
-+---------------------------------------------------------------------+
-|                    Agentic Primitives Gateway                       |
-|                                                                     |
-|  +----------+ +----------+ +----------+ +----------+ +----------+   |
-|  |  Memory   | | Identity | |  Code    | | Browser  | |  Tools   |  |
-|  |  Routes   | |  Routes  | |Interpret.| |  Routes  | |  Routes  |  |
-|  +-----+----+ +-----+----+ |  Routes  | +-----+----+ +-----+----+  |
-|        |            |       +-----+----+       |            |       |
-|  +-----+----+ +-----+----+       |       +----+-----+ +----+-----+ |
-|  |Observ.   | |Gateway   |       |       |          | |          |  |
-|  |Routes    | |Routes    |       |       |          | |          |  |
-|  +-----+----+ +-----+----+       |       |          | |          |  |
-|        |            |             |       |          | |          |  |
-|  +-----v------------v-------------v-------v----------v-v----------+ |
-|  |               RequestContextMiddleware                         | |
-|  |       (AWS creds + provider routing from headers)              | |
-|  +-----+------------+-------------+-------+----------+------------+ |
-|        |            |             |       |          |              |
-|  +-----v------------v-------------v-------v----------v------------+ |
-|  |                    Provider Registry                           | |
-|  |  (loads named backends from config; resolves per-request)      | |
-|  +--+-------+-------+-------+-------+--------+------+------------+ |
-|     |       |       |       |       |        |      |              |
-+-----+-------+-------+-------+-------+--------+------+--------------+
-      |       |       |       |       |        |      |
- +----v----+ +v--------+ +v----+ +v----+ +v------+ +v--+ +v-----------+
- | Memory  | |Identity  | |Code | |Brwsr| |Obsrvb.| |Gwy| |  Tools    |
- |---------| |----------| |Intrp| |-----| |-------| |---| |-----------|
- | Noop    | |Noop      | |Noop | |Noop | |Noop   | |Nop| | Noop      |
- | InMem   | |AgntCore  | |Agnt | |Agnt | |Lang   | |   | | AgntCore  |
- | Mem0    | |Keycloak  | |Core | |Core | | fuse  | |   | | MCP       |
- | AgntCore| |Entra     | |     | |     | |AgntCre| |   | |  Registry |
- |         | |Okta      | |     | |     | |       | |   | |           |
- +---------+ +----------+ +-----+ +-----+ +-------+ +---+ +-----------+
++------------------------------------------------------------------------+
+|                      Agentic Primitives Gateway                        |
+|                                                                        |
+|  +---------+ +---------+ +---------+ +---------+ +---------+          |
+|  | Memory  | |Identity | |  Code   | | Browser | |  Tools  |          |
+|  | Routes  | | Routes  | |Interpret| | Routes  | | Routes  |          |
+|  +----+----+ +----+----+ | Routes  | +----+----+ +----+----+          |
+|       |           |      +----+----+      |           |               |
+|  +----+----+ +----+----+     |       +----+----+ +----+----+          |
+|  |Observ.  | |Gateway  |     |       |         | |         |          |
+|  | Routes  | | Routes  |     |       |         | |         |          |
+|  +----+----+ +----+----+     |       |         | |         |          |
+|       |           |           |       |         | |         |          |
+|  +----v-----------v-----------v-------v---------v-v---------v--------+ |
+|  |                  RequestContextMiddleware                         | |
+|  |          (AWS creds + provider routing from headers)              | |
+|  +----+----------+-----------+-------+---------+----------+----------+ |
+|       |          |           |       |         |          |            |
+|  +----v----------v-----------v-------v---------v----------v----------+ |
+|  |                     Provider Registry                             | |
+|  |     (loads named backends from config; resolves per-request)      | |
+|  |              wrapped by MetricsProxy (Prometheus)                 | |
+|  +--+-------+-------+-------+-------+--------+-------+--------------+ |
+|     |       |       |       |       |        |       |                |
++-----+-------+-------+-------+-------+--------+-------+----------------+
+      |       |       |       |       |        |       |
+ +----v---+ +-v-------+ +v----+ +v----+ +v-----+ +v---+ +v----------+
+ | Memory | |Identity | |Code | |Brwsr| |Obsrv.| |Gwy | |  Tools   |
+ |--------| |---------| |Intrp| |-----| |------| |----| |----------|
+ | Noop   | |Noop     | |Noop | |Noop | |Noop  | |Noop| | Noop     |
+ | InMem  | |AgntCore | |Agnt | |Agnt | |Lang  | |    | | AgntCore |
+ | Mem0   | |Keycloak | |Core | |Core | |fuse  | |    | | MCP      |
+ | Agnt   | |Entra    | |     | |     | |Agnt  | |    | | Registry |
+ | Core   | |Okta     | |     | |     | |Core  | |    | |          |
+ +--------+ +---------+ +-----+ +-----+ +------+ +----+ +----------+
 ```
 
 ## Primitives
@@ -203,6 +204,8 @@ Session details and execution history endpoints return 501 if not supported by t
 
 ### Browser (`/api/v1/browser`)
 
+**Session lifecycle:**
+
 | Method | Path | Description |
 |--------|------|-------------|
 | `POST` | `/sessions` | Start a browser session. Returns 201. |
@@ -210,6 +213,19 @@ Session details and execution history endpoints return 501 if not supported by t
 | `GET` | `/sessions/{session_id}` | Get session info. |
 | `GET` | `/sessions` | List sessions. |
 | `GET` | `/sessions/{session_id}/live-view` | Get a live view URL for a session. |
+
+**Browser interaction:**
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/sessions/{session_id}/navigate` | Navigate to a URL. Body: `{"url": "..."}`. |
+| `GET` | `/sessions/{session_id}/screenshot` | Take a screenshot (returns PNG base64). |
+| `GET` | `/sessions/{session_id}/content` | Get current page HTML content. |
+| `POST` | `/sessions/{session_id}/click` | Click an element. Body: `{"selector": "..."}`. |
+| `POST` | `/sessions/{session_id}/type` | Type text into an element. Body: `{"selector": "...", "text": "..."}`. |
+| `POST` | `/sessions/{session_id}/evaluate` | Evaluate a JavaScript expression. Body: `{"expression": "..."}`. |
+
+Browser interaction endpoints return 400 if the session is not found or the operation is not supported.
 
 ### Observability (`/api/v1/observability`)
 
@@ -707,7 +723,7 @@ pip install -e ".[dev]"
 pytest tests/ -v
 ```
 
-The test suite contains 480 tests covering all primitives, provider routing, and AWS credential pass-through.
+The test suite contains 634 unit/system tests plus 42 integration tests covering all primitives, provider routing, and AWS credential pass-through.
 
 ---
 
@@ -981,18 +997,21 @@ agentic-primitives-gateway/
 │   ├── config.py                   # Settings (pydantic-settings), multi-provider config parsing
 │   ├── context.py                  # Request-scoped AWS credentials and provider routing context vars
 │   ├── registry.py                 # Provider registry -- loads named backends, resolves per-request
+│   ├── metrics.py                  # Prometheus MetricsProxy wrapper for all providers
+│   ├── watcher.py                  # Config file watcher for hot-reload (K8s ConfigMap aware)
 │   ├── routes/
 │   │   ├── health.py               # /healthz, /readyz
 │   │   ├── memory.py               # /api/v1/memory/* (22 endpoints)
-│   │   ├── identity.py             # /api/v1/identity/* (3 endpoints)
+│   │   ├── identity.py             # /api/v1/identity/* (14 endpoints)
 │   │   ├── code_interpreter.py     # /api/v1/code-interpreter/* (8 endpoints)
-│   │   ├── browser.py              # /api/v1/browser/* (5 endpoints)
+│   │   ├── browser.py              # /api/v1/browser/* (11 endpoints)
 │   │   ├── observability.py        # /api/v1/observability/* (11 endpoints)
 │   │   ├── gateway.py              # /api/v1/gateway/* (2 endpoints)
 │   │   └── tools.py                # /api/v1/tools/* (9 endpoints)
 │   ├── models/                     # Pydantic request/response models per primitive
 │   └── primitives/
-│       ├── base.py                 # Abstract base classes for all 7 providers
+│       ├── base.py                 # Re-exports all provider ABCs
+│       ├── _sync.py                # SyncRunnerMixin (shared executor helper for sync backends)
 │       ├── memory/
 │       │   ├── noop.py             # No-op (logs only)
 │       │   ├── in_memory.py        # Dict-based (dev/test)
@@ -1000,7 +1019,10 @@ agentic-primitives-gateway/
 │       │   └── agentcore.py        # AWS Bedrock AgentCore
 │       ├── identity/
 │       │   ├── noop.py
-│       │   └── agentcore.py        # AWS Bedrock AgentCore
+│       │   ├── agentcore.py        # AWS Bedrock AgentCore
+│       │   ├── keycloak.py         # Keycloak
+│       │   ├── entra.py            # Microsoft Entra (Azure AD)
+│       │   └── okta.py             # Okta
 │       ├── code_interpreter/
 │       │   ├── noop.py
 │       │   └── agentcore.py        # AWS Bedrock AgentCore
@@ -1009,7 +1031,7 @@ agentic-primitives-gateway/
 │       │   └── agentcore.py        # AWS Bedrock AgentCore
 │       ├── observability/
 │       │   ├── noop.py
-│       │   ├── langfuse.py         # Langfuse
+│       │   ├── langfuse.py         # Langfuse (SDK v3)
 │       │   └── agentcore.py        # AWS AgentCore via OpenTelemetry
 │       ├── gateway/noop.py
 │       └── tools/
@@ -1017,7 +1039,8 @@ agentic-primitives-gateway/
 │           ├── agentcore.py        # AWS AgentCore Gateway (MCP-compatible)
 │           └── mcp_registry.py     # MCP Registry
 ├── client/                         # Standalone Python client (separate package: agentic-primitives-gateway-client)
-├── tests/                          # Server tests (480 tests)
+├── tests/                          # Server tests (634 unit/system + 42 integration)
+├── configs/                        # YAML presets (local, agentcore, kitchen-sink, milvus-langfuse)
 ├── deploy/helm/agentic-primitives-gateway/   # Helm chart
 ├── Dockerfile                      # Multi-stage build
 └── pyproject.toml

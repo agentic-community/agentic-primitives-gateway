@@ -11,7 +11,7 @@ FastAPI service providing pluggable primitives (memory, observability, gateway, 
   - `context.py` — Request-scoped contextvars (AWS creds, service creds, provider overrides)
   - `metrics.py` — Prometheus MetricsProxy wrapping all providers
   - `models/` — Pydantic request/response models and StrEnum definitions (`enums.py`)
-  - `primitives/` — Abstract base classes + backend implementations per primitive
+  - `primitives/` — Abstract base classes + backend implementations per primitive; `_sync.py` provides `SyncRunnerMixin` for executor-based async wrappers
   - `routes/` — FastAPI routers, one per primitive plus health
 - `client/` — Separate `agentic-primitives-gateway-client` package (httpx-based, no server dependency)
 - `tests/` — Server integration tests (pytest, async)
@@ -43,7 +43,7 @@ python -m pytest tests/ -v
 ## Test Commands
 
 ```bash
-# All server tests (282 tests)
+# All server tests (634 unit/system + 42 integration)
 python -m pytest tests/ -v
 
 # All client tests (30 tests)
@@ -69,6 +69,7 @@ pre-commit run --all-files # Run all hooks on entire repo
 - **Request-scoped context** — AWS credentials, service credentials (`X-Cred-{Service}-{Key}`), and provider overrides (`X-Provider-*`) are stored per-request in contextvars.
 - **MetricsProxy** — All provider instances are wrapped transparently for Prometheus instrumentation.
 - **Config normalization** — Legacy single-provider format (`backend` + `config`) auto-converts to multi-provider format (`default` + `backends`).
+- **SyncRunnerMixin** — `primitives/_sync.py` provides a shared `_run_sync` method. All providers wrapping synchronous client libraries inherit from it instead of duplicating the executor boilerplate.
 - **Client is independent** — `client/` has no imports from the server package. It's a thin HTTP wrapper; validation happens server-side.
 
 ## Style

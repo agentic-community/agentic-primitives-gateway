@@ -1,17 +1,16 @@
 from __future__ import annotations
 
-import asyncio
 import logging
-from functools import partial
 from typing import Any, ClassVar
 
 from agentic_primitives_gateway.context import get_service_credentials
+from agentic_primitives_gateway.primitives._sync import SyncRunnerMixin
 from agentic_primitives_gateway.primitives.tools.base import ToolsProvider
 
 logger = logging.getLogger(__name__)
 
 
-class MCPRegistryProvider(ToolsProvider):
+class MCPRegistryProvider(SyncRunnerMixin, ToolsProvider):
     """Tools provider backed by MCP Gateway Registry.
 
     Connects to a self-hosted MCP Gateway Registry instance for centralized
@@ -112,10 +111,6 @@ class MCPRegistryProvider(ToolsProvider):
             return self._server_paths[server_title]
 
         raise ValueError(f"Server '{server_title}' not found in registry")
-
-    async def _run_sync(self, func: Any, *args: Any, **kwargs: Any) -> Any:
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, partial(func, *args, **kwargs))
 
     async def list_tools(self, filters: dict[str, Any] | None = None) -> list[dict[str, Any]]:
         base_url, token = self._resolve_config()

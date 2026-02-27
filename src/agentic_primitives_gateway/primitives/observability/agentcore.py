@@ -1,21 +1,20 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 from datetime import UTC, datetime, timedelta
-from functools import partial
 from typing import Any
 
 import boto3
 from botocore.session import Session as BotocoreSession
 
 from agentic_primitives_gateway.context import get_boto3_session
+from agentic_primitives_gateway.primitives._sync import SyncRunnerMixin
 from agentic_primitives_gateway.primitives.observability.base import ObservabilityProvider
 
 logger = logging.getLogger(__name__)
 
 
-class AgentCoreObservabilityProvider(ObservabilityProvider):
+class AgentCoreObservabilityProvider(SyncRunnerMixin, ObservabilityProvider):
     """Observability provider using ADOT to send traces to CloudWatch/X-Ray.
 
     Uses the AwsAuthSession from the AWS OpenTelemetry distro for SigV4-signed
@@ -129,10 +128,6 @@ class AgentCoreObservabilityProvider(ObservabilityProvider):
             logger.info("AgentCore observability provider closed")
         except Exception:
             logger.exception("Error closing AgentCore observability provider")
-
-    async def _run_sync(self, func: Any, *args: Any, **kwargs: Any) -> Any:
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, partial(func, *args, **kwargs))
 
     async def ingest_trace(self, trace_data: dict[str, Any]) -> None:
         def _ingest() -> None:

@@ -1,17 +1,16 @@
 from __future__ import annotations
 
-import asyncio
 import logging
-from functools import partial
 from typing import Any
 
 from agentic_primitives_gateway.context import get_service_credentials
+from agentic_primitives_gateway.primitives._sync import SyncRunnerMixin
 from agentic_primitives_gateway.primitives.tools.base import ToolsProvider
 
 logger = logging.getLogger(__name__)
 
 
-class AgentCoreGatewayProvider(ToolsProvider):
+class AgentCoreGatewayProvider(SyncRunnerMixin, ToolsProvider):
     """Tools provider backed by AWS Bedrock AgentCore Gateway.
 
     AgentCore Gateway exposes MCP-compatible tools from APIs, Lambda functions,
@@ -69,10 +68,6 @@ class AgentCoreGatewayProvider(ToolsProvider):
         """Resolve access token from context."""
         creds = get_service_credentials("agentcore")
         return (creds or {}).get("gateway_token")
-
-    async def _run_sync(self, func: Any, *args: Any, **kwargs: Any) -> Any:
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, partial(func, *args, **kwargs))
 
     async def list_tools(self, filters: dict[str, Any] | None = None) -> list[dict[str, Any]]:
         gateway_url = self._resolve_gateway_url()

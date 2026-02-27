@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 import uuid
-from functools import partial
 from typing import Any
 from urllib.parse import urlencode
 
@@ -15,12 +13,13 @@ from agentic_primitives_gateway.models.enums import (
     CredentialProviderType,
     TokenType,
 )
+from agentic_primitives_gateway.primitives._sync import SyncRunnerMixin
 from agentic_primitives_gateway.primitives.identity.base import IdentityProvider
 
 logger = logging.getLogger(__name__)
 
 
-class OktaIdentityProvider(IdentityProvider):
+class OktaIdentityProvider(SyncRunnerMixin, IdentityProvider):
     """Identity provider backed by Okta.
 
     Uses Okta's OAuth2 endpoints for token operations and the Okta
@@ -104,10 +103,6 @@ class OktaIdentityProvider(IdentityProvider):
     def _client_auth(self) -> tuple[str, str]:
         cfg = self._resolve_config()
         return (cfg["client_id"] or self._client_id or "", cfg["client_secret"] or self._client_secret or "")
-
-    async def _run_sync(self, func: Any, *args: Any, **kwargs: Any) -> Any:
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, partial(func, *args, **kwargs))
 
     # ── Data plane — runtime token operations ─────────────────────
 

@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 import uuid
-from functools import partial
 from typing import Any
 
 from keycloak import KeycloakAdmin, KeycloakOpenID
@@ -14,12 +12,13 @@ from agentic_primitives_gateway.models.enums import (
     CredentialProviderType,
     TokenType,
 )
+from agentic_primitives_gateway.primitives._sync import SyncRunnerMixin
 from agentic_primitives_gateway.primitives.identity.base import IdentityProvider
 
 logger = logging.getLogger(__name__)
 
 
-class KeycloakIdentityProvider(IdentityProvider):
+class KeycloakIdentityProvider(SyncRunnerMixin, IdentityProvider):
     """Identity provider backed by Keycloak.
 
     Uses ``python-keycloak`` for both OpenID Connect token operations and
@@ -97,10 +96,6 @@ class KeycloakIdentityProvider(IdentityProvider):
             client_id=cfg["client_id"] or self._client_id,
             client_secret_key=cfg["client_secret"] or self._client_secret,
         )
-
-    async def _run_sync(self, func: Any, *args: Any, **kwargs: Any) -> Any:
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, partial(func, *args, **kwargs))
 
     # ── Data plane — runtime token operations ─────────────────────
 

@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 import re
 import uuid
-from functools import partial
 from typing import Any
 
 import httpx
@@ -12,6 +10,7 @@ from langfuse import Langfuse
 
 from agentic_primitives_gateway.context import get_service_credentials_or_defaults
 from agentic_primitives_gateway.models.enums import LogLevel
+from agentic_primitives_gateway.primitives._sync import SyncRunnerMixin
 from agentic_primitives_gateway.primitives.observability.base import ObservabilityProvider
 
 logger = logging.getLogger(__name__)
@@ -38,7 +37,7 @@ _LEVEL_MAP = {
 }
 
 
-class LangfuseObservabilityProvider(ObservabilityProvider):
+class LangfuseObservabilityProvider(SyncRunnerMixin, ObservabilityProvider):
     """Observability provider backed by Langfuse.
 
     Langfuse credentials (public_key, secret_key, base_url) are read from
@@ -93,10 +92,6 @@ class LangfuseObservabilityProvider(ObservabilityProvider):
             secret_key=creds.get("secret_key"),
             base_url=creds.get("base_url"),
         )
-
-    async def _run_sync(self, func: Any, *args: Any, **kwargs: Any) -> Any:
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, partial(func, *args, **kwargs))
 
     async def ingest_trace(self, trace: dict[str, Any]) -> None:
         client = self._resolve_client()

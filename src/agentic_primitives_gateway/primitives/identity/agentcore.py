@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import asyncio
 import logging
-from functools import partial
 from typing import Any
 
 from bedrock_agentcore.services.identity import (
@@ -17,12 +15,13 @@ from agentic_primitives_gateway.models.enums import (
     CredentialProviderType,
     TokenType,
 )
+from agentic_primitives_gateway.primitives._sync import SyncRunnerMixin
 from agentic_primitives_gateway.primitives.identity.base import IdentityProvider
 
 logger = logging.getLogger(__name__)
 
 
-class AgentCoreIdentityProvider(IdentityProvider):
+class AgentCoreIdentityProvider(SyncRunnerMixin, IdentityProvider):
     """Identity provider backed by AWS Bedrock AgentCore Identity service.
 
     AWS credentials are read from request context on every call. The caller's
@@ -43,10 +42,6 @@ class AgentCoreIdentityProvider(IdentityProvider):
         """Create an IdentityClient using the current request's boto3 session."""
         session = get_boto3_session(default_region=self._region)
         return IdentityClient(region=session.region_name)
-
-    async def _run_sync(self, func: Any, *args: Any, **kwargs: Any) -> Any:
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, partial(func, *args, **kwargs))
 
     # ── Data plane — runtime token operations ─────────────────────
 

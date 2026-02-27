@@ -1,19 +1,18 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
-from functools import partial
 from typing import Any
 
 from mem0 import Memory
 
 from agentic_primitives_gateway.context import get_aws_credentials
 from agentic_primitives_gateway.models.memory import MemoryRecord, SearchResult
+from agentic_primitives_gateway.primitives._sync import SyncRunnerMixin
 from agentic_primitives_gateway.primitives.memory.base import MemoryProvider
 
 logger = logging.getLogger(__name__)
@@ -68,7 +67,7 @@ def _with_aws_env(creds: Any) -> Iterator[None]:
                     os.environ[key] = original
 
 
-class Mem0MemoryProvider(MemoryProvider):
+class Mem0MemoryProvider(SyncRunnerMixin, MemoryProvider):
     """Memory provider backed by mem0 framework with Milvus vector store.
 
     A single shared mem0 Memory instance is created at first use and reused
@@ -112,10 +111,6 @@ class Mem0MemoryProvider(MemoryProvider):
                     with _with_aws_env(creds):
                         self._client = Memory.from_config({"version": "v1.1", **self._mem0_config})
         return self._client
-
-    async def _run_sync(self, func: Any, *args: Any, **kwargs: Any) -> Any:
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, partial(func, *args, **kwargs))
 
     @staticmethod
     def _resolve_creds() -> Any:

@@ -1,21 +1,20 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 from datetime import UTC, datetime
-from functools import partial
 from typing import Any
 
 from bedrock_agentcore.tools import CodeInterpreter as AgentCoreCodeInterpreter
 
 from agentic_primitives_gateway.context import get_aws_credentials, get_boto3_session
 from agentic_primitives_gateway.models.enums import CodeLanguage, SessionStatus
+from agentic_primitives_gateway.primitives._sync import SyncRunnerMixin
 from agentic_primitives_gateway.primitives.code_interpreter.base import CodeInterpreterProvider
 
 logger = logging.getLogger(__name__)
 
 
-class AgentCoreCodeInterpreterProvider(CodeInterpreterProvider):
+class AgentCoreCodeInterpreterProvider(SyncRunnerMixin, CodeInterpreterProvider):
     """Code interpreter backed by AWS Bedrock AgentCore Code Interpreter.
 
     AWS credentials are read from request context on every call. Each agent
@@ -40,10 +39,6 @@ class AgentCoreCodeInterpreterProvider(CodeInterpreterProvider):
         if creds and creds.region:
             return creds.region
         return self._region
-
-    async def _run_sync(self, func: Any, *args: Any, **kwargs: Any) -> Any:
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, partial(func, *args, **kwargs))
 
     async def start_session(
         self,
