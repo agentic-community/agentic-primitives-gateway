@@ -245,7 +245,7 @@ class TestLangfuseObservabilityProvider:
         mock_langfuse_cls.return_value = mock_client
         mock_gen = MagicMock()
         mock_gen.id = "gen-1"
-        mock_client.generation.return_value = mock_gen
+        mock_client.start_generation.return_value = mock_gen
 
         result = await provider.log_generation(
             trace_id="t-1",
@@ -258,7 +258,8 @@ class TestLangfuseObservabilityProvider:
 
         assert result["trace_id"] == "t-1"
         assert result["generation_id"] == "gen-1"
-        mock_client.generation.assert_called_once()
+        mock_client.start_generation.assert_called_once()
+        mock_gen.end.assert_called_once()
         mock_client.flush.assert_called()
 
     @patch("agentic_primitives_gateway.primitives.observability.langfuse.get_service_credentials_or_defaults")
@@ -282,10 +283,15 @@ class TestLangfuseObservabilityProvider:
         mock_client = MagicMock()
         mock_langfuse_cls.return_value = mock_client
 
+        # Set up context manager for start_as_current_observation
+        mock_root = MagicMock()
+        mock_client.start_as_current_observation.return_value.__enter__ = MagicMock(return_value=mock_root)
+        mock_client.start_as_current_observation.return_value.__exit__ = MagicMock(return_value=False)
+
         result = await provider.update_trace("t-1", name="updated", tags=["new"])
         assert result["trace_id"] == "t-1"
         assert result["status"] == "updated"
-        mock_client.trace.assert_called_once()
+        mock_client.update_current_trace.assert_called_once()
         mock_client.flush.assert_called()
 
     @patch("agentic_primitives_gateway.primitives.observability.langfuse.get_service_credentials_or_defaults")
@@ -295,31 +301,36 @@ class TestLangfuseObservabilityProvider:
         mock_get_creds.return_value = {"public_key": "pk", "secret_key": "sk", "base_url": None}
         mock_client = MagicMock()
         mock_langfuse_cls.return_value = mock_client
-        mock_score = MagicMock()
-        mock_score.id = "score-1"
-        mock_client.score.return_value = mock_score
 
         result = await provider.score_trace("t-1", "quality", 0.95, comment="great")
         assert result["trace_id"] == "t-1"
-        assert result["score_id"] == "score-1"
-        mock_client.score.assert_called_once()
+        assert result["score_id"] is None
+        mock_client.create_score.assert_called_once()
 
+    @patch("agentic_primitives_gateway.primitives.observability.langfuse.httpx.get")
     @patch("agentic_primitives_gateway.primitives.observability.langfuse.get_service_credentials_or_defaults")
-    @patch("agentic_primitives_gateway.primitives.observability.langfuse.Langfuse")
     @pytest.mark.asyncio
-    async def test_list_scores(self, mock_langfuse_cls, mock_get_creds, provider):
-        mock_get_creds.return_value = {"public_key": "pk", "secret_key": "sk", "base_url": None}
-        mock_client = MagicMock()
-        mock_langfuse_cls.return_value = mock_client
-
-        mock_s = MagicMock()
-        mock_s.id = "score-1"
-        mock_s.trace_id = "t-1"
-        mock_s.name = "quality"
-        mock_s.value = 0.95
-        mock_s.comment = None
-        mock_s.data_type = "NUMERIC"
-        mock_client.api.score.list.return_value = MagicMock(data=[mock_s])
+    async def test_list_scores(self, mock_get_creds, mock_httpx_get, provider):
+        mock_get_creds.return_value = {
+            "public_key": "pk",
+            "secret_key": "sk",
+            "base_url": "https://langfuse.example.com",
+        }
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {
+            "data": [
+                {
+                    "id": "score-1",
+                    "traceId": "t-1",
+                    "name": "quality",
+                    "value": 0.95,
+                    "comment": None,
+                    "dataType": "NUMERIC",
+                }
+            ]
+        }
+        mock_resp.raise_for_status = MagicMock()
+        mock_httpx_get.return_value = mock_resp
 
         result = await provider.list_scores("t-1")
         assert len(result) == 1

@@ -143,6 +143,7 @@ class Mem0MemoryProvider(MemoryProvider):
                         content,
                         user_id=namespace,
                         metadata=store_metadata,
+                        infer=False,
                     )
 
         await self._run_sync(_store)

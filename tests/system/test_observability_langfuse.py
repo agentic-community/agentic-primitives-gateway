@@ -242,7 +242,7 @@ class TestLogGeneration:
         mock_lf = _mock_langfuse_client()
         mock_gen = MagicMock()
         mock_gen.id = "gen-1"
-        mock_lf.generation.return_value = mock_gen
+        mock_lf.start_generation.return_value = mock_gen
 
         with patch(
             "agentic_primitives_gateway.primitives.observability.langfuse.Langfuse",
@@ -261,6 +261,8 @@ class TestLogGeneration:
         assert result["trace_id"] == "t1"
         assert result["name"] == "claude-gen"
         assert result["model"] == "claude-3"
+        mock_lf.start_generation.assert_called_once()
+        mock_gen.end.assert_called_once()
 
 
 # ── Flush ────────────────────────────────────────────────────────────
@@ -295,16 +297,13 @@ class TestUpdateTrace:
 
         assert result["trace_id"] == "t1"
         assert result["status"] == "updated"
-        mock_lf.trace.assert_called_once()
+        mock_lf.update_current_trace.assert_called_once()
         mock_lf.flush.assert_called_once()
 
 
 class TestScoreTrace:
     async def test_score_trace(self, client: AgenticPlatformClient) -> None:
         mock_lf = _mock_langfuse_client()
-        mock_score = MagicMock()
-        mock_score.id = "score-1"
-        mock_lf.score.return_value = mock_score
 
         with patch(
             "agentic_primitives_gateway.primitives.observability.langfuse.Langfuse",
@@ -315,23 +314,36 @@ class TestScoreTrace:
         assert result["trace_id"] == "t1"
         assert result["name"] == "accuracy"
         assert result["value"] == 0.9
+        mock_lf.create_score.assert_called_once()
 
 
 class TestListScores:
     async def test_list_scores(self, client: AgenticPlatformClient) -> None:
-        mock_lf = _mock_langfuse_client()
-        mock_score_obj = MagicMock()
-        mock_score_obj.id = "score-1"
-        mock_score_obj.trace_id = "t1"
-        mock_score_obj.name = "accuracy"
-        mock_score_obj.value = 0.95
-        mock_score_obj.comment = None
-        mock_score_obj.data_type = None
-        mock_lf.api.score.list.return_value = MagicMock(data=[mock_score_obj])
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "data": [
+                {
+                    "id": "score-1",
+                    "traceId": "t1",
+                    "name": "accuracy",
+                    "value": 0.95,
+                    "comment": None,
+                    "dataType": None,
+                }
+            ]
+        }
+        mock_resp.raise_for_status = MagicMock()
 
-        with patch(
-            "agentic_primitives_gateway.primitives.observability.langfuse.Langfuse",
-            return_value=mock_lf,
+        with (
+            patch(
+                "agentic_primitives_gateway.primitives.observability.langfuse.Langfuse",
+                return_value=_mock_langfuse_client(),
+            ),
+            patch(
+                "agentic_primitives_gateway.primitives.observability.langfuse.httpx.get",
+                return_value=mock_resp,
+            ),
         ):
             result = await client.list_scores("t1")
 

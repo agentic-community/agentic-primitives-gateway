@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
+import uuid
 from functools import partial
 from typing import Any
 
+import httpx
 from langfuse import Langfuse
 
 from agentic_primitives_gateway.context import get_service_credentials_or_defaults
@@ -12,6 +15,20 @@ from agentic_primitives_gateway.models.enums import LogLevel
 from agentic_primitives_gateway.primitives.observability.base import ObservabilityProvider
 
 logger = logging.getLogger(__name__)
+
+_HEX32_RE = re.compile(r"^[0-9a-f]{32}$")
+
+
+def _to_langfuse_trace_id(trace_id: str) -> str:
+    """Convert a trace ID to a Langfuse v3 compatible 32-char lowercase hex string.
+
+    If the input is already valid 32-char hex, return as-is.
+    Otherwise, generate a deterministic 32-char hex via uuid5.
+    """
+    if _HEX32_RE.match(trace_id):
+        return trace_id
+    return uuid.uuid5(uuid.NAMESPACE_URL, trace_id).hex
+
 
 _LEVEL_MAP = {
     LogLevel.DEBUG: "DEBUG",
@@ -56,9 +73,9 @@ class LangfuseObservabilityProvider(ObservabilityProvider):
         self._default_base_url = base_url or os.environ.get("LANGFUSE_BASE_URL")
         logger.info("Langfuse observability provider initialized")
 
-    def _resolve_client(self) -> Langfuse:
-        """Resolve Langfuse client from context. Must be called from async context."""
-        creds = get_service_credentials_or_defaults(
+    def _resolve_credentials(self) -> dict[str, Any]:
+        """Resolve Langfuse credentials from context."""
+        return get_service_credentials_or_defaults(
             "langfuse",
             {
                 "public_key": self._default_public_key,
@@ -66,6 +83,10 @@ class LangfuseObservabilityProvider(ObservabilityProvider):
                 "base_url": self._default_base_url,
             },
         )
+
+    def _resolve_client(self) -> Langfuse:
+        """Resolve Langfuse client from context. Must be called from async context."""
+        creds = self._resolve_credentials()
 
         return Langfuse(
             public_key=creds.get("public_key"),
@@ -81,7 +102,11 @@ class LangfuseObservabilityProvider(ObservabilityProvider):
         client = self._resolve_client()
 
         def _ingest() -> None:
+            raw_trace_id = trace.get("trace_id", uuid.uuid4().hex)
+            lf_trace_id = _to_langfuse_trace_id(raw_trace_id)
+
             with client.start_as_current_observation(
+                trace_context={"trace_id": lf_trace_id},
                 as_type="span",
                 name=trace.get("name", trace.get("trace_id", "trace")),
             ) as root:
@@ -197,8 +222,9 @@ class LangfuseObservabilityProvider(ObservabilityProvider):
         client = self._resolve_client()
 
         def _log() -> dict[str, Any]:
+            lf_trace_id = _to_langfuse_trace_id(trace_id)
             kwargs: dict[str, Any] = {
-                "trace_id": trace_id,
+                "trace_context": {"trace_id": lf_trace_id},
                 "name": name,
                 "model": model,
             }
@@ -213,7 +239,8 @@ class LangfuseObservabilityProvider(ObservabilityProvider):
             if level:
                 lf_level = _LEVEL_MAP.get(level.lower(), "DEFAULT")  # type: ignore[call-overload]
                 kwargs["level"] = lf_level
-            gen = client.generation(**kwargs)  # type: ignore[attr-defined]
+            gen = client.start_generation(**kwargs)
+            gen.end()
             client.flush()
             return {
                 "generation_id": getattr(gen, "id", None),
@@ -246,22 +273,28 @@ class LangfuseObservabilityProvider(ObservabilityProvider):
         client = self._resolve_client()
 
         def _update() -> dict[str, Any]:
-            kwargs: dict[str, Any] = {"id": trace_id}
+            lf_trace_id = _to_langfuse_trace_id(trace_id)
+            update_kwargs: dict[str, Any] = {}
             if name is not None:
-                kwargs["name"] = name
+                update_kwargs["name"] = name
             if user_id is not None:
-                kwargs["user_id"] = user_id
+                update_kwargs["user_id"] = user_id
             if session_id is not None:
-                kwargs["session_id"] = session_id
+                update_kwargs["session_id"] = session_id
             if input is not None:
-                kwargs["input"] = input
+                update_kwargs["input"] = input
             if output is not None:
-                kwargs["output"] = output
+                update_kwargs["output"] = output
             if metadata is not None:
-                kwargs["metadata"] = metadata
+                update_kwargs["metadata"] = metadata
             if tags is not None:
-                kwargs["tags"] = tags
-            client.trace(**kwargs)  # type: ignore[attr-defined]
+                update_kwargs["tags"] = tags
+            with client.start_as_current_observation(
+                trace_context={"trace_id": lf_trace_id},
+                name="update",
+                as_type="span",
+            ):
+                client.update_current_trace(**update_kwargs)
             client.flush()
             return {"trace_id": trace_id, "status": "updated"}
 
@@ -280,8 +313,9 @@ class LangfuseObservabilityProvider(ObservabilityProvider):
         client = self._resolve_client()
 
         def _score() -> dict[str, Any]:
+            lf_trace_id = _to_langfuse_trace_id(trace_id)
             kwargs: dict[str, Any] = {
-                "trace_id": trace_id,
+                "trace_id": lf_trace_id,
                 "name": name,
                 "value": value,
             }
@@ -289,10 +323,10 @@ class LangfuseObservabilityProvider(ObservabilityProvider):
                 kwargs["comment"] = comment
             if data_type is not None:
                 kwargs["data_type"] = data_type
-            score = client.score(**kwargs)  # type: ignore[attr-defined]
+            client.create_score(**kwargs)
             client.flush()
             return {
-                "score_id": getattr(score, "id", None),
+                "score_id": None,
                 "trace_id": trace_id,
                 "name": name,
                 "value": value,
@@ -302,20 +336,28 @@ class LangfuseObservabilityProvider(ObservabilityProvider):
         return result
 
     async def list_scores(self, trace_id: str) -> list[dict[str, Any]]:
-        client = self._resolve_client()
+        creds = self._resolve_credentials()
 
         def _list() -> list[dict[str, Any]]:
-            result = client.api.score.list(trace_id=trace_id)  # type: ignore[attr-defined]
+            lf_trace_id = _to_langfuse_trace_id(trace_id)
+            base_url = (creds.get("base_url") or "https://cloud.langfuse.com").rstrip("/")
+            url = f"{base_url}/api/public/scores?traceId={lf_trace_id}"
+            resp = httpx.get(
+                url,
+                auth=(creds.get("public_key", ""), creds.get("secret_key", "")),
+            )
+            resp.raise_for_status()
+            data = resp.json().get("data", [])
             return [
                 {
-                    "score_id": getattr(s, "id", None),
-                    "trace_id": getattr(s, "trace_id", trace_id),
-                    "name": getattr(s, "name", ""),
-                    "value": getattr(s, "value", 0),
-                    "comment": getattr(s, "comment", None),
-                    "data_type": getattr(s, "data_type", None),
+                    "score_id": s.get("id"),
+                    "trace_id": s.get("traceId", trace_id),
+                    "name": s.get("name", ""),
+                    "value": s.get("value", 0),
+                    "comment": s.get("comment"),
+                    "data_type": s.get("dataType"),
                 }
-                for s in result.data
+                for s in data
             ]
 
         scores: list[dict[str, Any]] = await self._run_sync(_list)

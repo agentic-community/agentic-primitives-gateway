@@ -40,17 +40,23 @@ def _has_aws_credentials() -> bool:
         return False
 
 
-@pytest.fixture(autouse=True, scope="session")
-def _skip_without_credentials():
+@pytest.fixture(scope="session")
+def _skip_without_aws_credentials():
+    """Skip if AWS credentials are not available.
+
+    Not autouse — only applied as a dependency of the AgentCore ``_init_registry``
+    fixture.  Test modules that use different providers (e.g. Milvus/mem0,
+    Langfuse) define their own registry fixtures with their own skip logic.
+    """
     if not _has_aws_credentials():
-        pytest.skip("AWS credentials not available — skipping integration tests")
+        pytest.skip("AWS credentials not available — skipping AgentCore integration tests")
 
 
 # ── Registry initialization ──────────────────────────────────────────
 
 
 @pytest.fixture(autouse=True)
-def _init_registry():
+def _init_registry(_skip_without_aws_credentials):
     """Initialise registry with real AgentCore providers.
 
     Unlike system tests, no SDK methods are mocked.  The observability
