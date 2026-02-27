@@ -59,6 +59,10 @@ packages = ["src/agentic_primitives_gateway"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+markers = [
+    "integration: real AWS integration tests (require credentials)",
+    "browser: browser automation tests (require playwright)",
+]
 
 [tool.ruff]
 target-version = "py311"

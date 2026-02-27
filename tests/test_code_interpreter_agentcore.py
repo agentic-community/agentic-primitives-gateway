@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -116,13 +115,8 @@ class TestAgentCoreCodeInterpreterProvider:
         mock_client = MagicMock()
         mock_client.start.return_value = "s1"
 
-        # download_file writes to a destination directory
-        def fake_download(file_name, destination):
-            filepath = os.path.join(destination, file_name)
-            with open(filepath, "wb") as f:
-                f.write(b"downloaded content")
-
-        mock_client.download_file.side_effect = fake_download
+        # download_file(path=filename) now returns bytes directly
+        mock_client.download_file.return_value = b"downloaded content"
         mock_ci_cls.return_value = mock_client
 
         provider = AgentCoreCodeInterpreterProvider()
@@ -130,6 +124,7 @@ class TestAgentCoreCodeInterpreterProvider:
         result = await provider.download_file("s1", "output.txt")
 
         assert result == b"downloaded content"
+        mock_client.download_file.assert_called_once_with(path="output.txt")
 
     @pytest.mark.asyncio
     async def test_download_file_session_not_found(self, mock_ci_cls, mock_get_session):

@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
-import tempfile
 from datetime import UTC, datetime
 from functools import partial
 from typing import Any
@@ -82,6 +80,24 @@ class AgentCoreCodeInterpreterProvider(CodeInterpreterProvider):
         if session:
             await self._run_sync(session["client"].stop)
 
+    @staticmethod
+    def _consume_stream(raw: dict[str, Any]) -> dict[str, Any]:
+        """Consume the EventStream from invoke_code_interpreter and extract results."""
+        structured: dict[str, Any] = {}
+        stream = raw.get("stream")
+        if stream:
+            for event in stream:
+                if "result" in event:
+                    sc = event["result"].get("structuredContent") or {}
+                    structured.update(sc)
+        # Fall back to top-level fields if present (older SDK versions)
+        return {
+            "stdout": structured.get("stdout", raw.get("stdout", "")),
+            "stderr": structured.get("stderr", raw.get("stderr", "")),
+            "exitCode": structured.get("exitCode", raw.get("exitCode", 0)),
+            "result": structured.get("result", raw.get("result")),
+        }
+
     async def execute(
         self,
         session_id: str,
@@ -91,7 +107,12 @@ class AgentCoreCodeInterpreterProvider(CodeInterpreterProvider):
         session = self._sessions.get(session_id)
         if not session:
             raise ValueError(f"Session {session_id} not found")
-        result = await self._run_sync(session["client"].execute_code, code=code, language=language)
+
+        def _execute() -> dict[str, Any]:
+            raw = session["client"].execute_code(code=code, language=language)
+            return self._consume_stream(raw)
+
+        result = await self._run_sync(_execute)
         exec_result = {
             "session_id": session_id,
             "stdout": result.get("stdout", ""),
@@ -122,13 +143,7 @@ class AgentCoreCodeInterpreterProvider(CodeInterpreterProvider):
         if not session:
             raise ValueError(f"Session {session_id} not found")
 
-        with tempfile.NamedTemporaryFile(delete=False, suffix=f"_{filename}") as tmp:
-            tmp.write(content)
-            tmp_path = tmp.name
-        try:
-            await self._run_sync(session["client"].upload_file, file_path=tmp_path)
-        finally:
-            os.unlink(tmp_path)
+        await self._run_sync(session["client"].upload_file, path=filename, content=content)
         return {"filename": filename, "size": len(content), "session_id": session_id}
 
     async def download_file(self, session_id: str, filename: str) -> bytes:
@@ -136,15 +151,12 @@ class AgentCoreCodeInterpreterProvider(CodeInterpreterProvider):
         if not session:
             raise ValueError(f"Session {session_id} not found")
 
-        dest = tempfile.mkdtemp()
-        await self._run_sync(session["client"].download_file, file_name=filename, destination=dest)
-        file_path = os.path.join(dest, filename)
-        try:
-            with open(file_path, "rb") as f:
-                return f.read()
-        finally:
-            os.unlink(file_path)
-            os.rmdir(dest)
+        result = await self._run_sync(session["client"].download_file, path=filename)
+        if isinstance(result, bytes):
+            return result
+        if isinstance(result, str):
+            return result.encode("utf-8")
+        return str(result).encode("utf-8")
 
     async def list_sessions(self, status: str | None = None) -> list[dict[str, Any]]:
         return [

@@ -46,6 +46,12 @@ class AgentCoreMemoryProvider(MemoryProvider):
     ) -> None:
         self._default_memory_id = memory_id
         self._region = region
+        # Write-through cache: (namespace, key) -> MemoryRecord.
+        # AgentCore memory is conversational — there's no native key-value
+        # store.  This cache bridges the KV abstraction so that store/retrieve
+        # /delete work within the lifetime of the provider instance, while
+        # also persisting content as conversation turns in AgentCore.
+        self._kv_cache: dict[tuple[str, str], MemoryRecord] = {}
         logger.info(
             "AgentCore memory provider initialized (region=%s, default_memory_id=%s)",
             region,
@@ -121,7 +127,7 @@ class AgentCoreMemoryProvider(MemoryProvider):
         await self._run_sync(_store)
 
         now = datetime.now(UTC)
-        return MemoryRecord(
+        record = MemoryRecord(
             namespace=namespace,
             key=key,
             content=content,
@@ -129,8 +135,15 @@ class AgentCoreMemoryProvider(MemoryProvider):
             created_at=now,
             updated_at=now,
         )
+        self._kv_cache[(namespace, key)] = record
+        return record
 
     async def retrieve(self, namespace: str, key: str) -> MemoryRecord | None:
+        # Check local KV cache first
+        cached = self._kv_cache.get((namespace, key))
+        if cached is not None:
+            return cached
+        # Fall back to searching AgentCore long-term + short-term memories
         results = await self.search(namespace, query=key, top_k=10)
         for r in results:
             if r.record.key == key:
@@ -206,6 +219,18 @@ class AgentCoreMemoryProvider(MemoryProvider):
         except Exception:
             logger.warning("Short-term turn fetch failed", exc_info=True)
 
+        # 3. Include matching entries from the local KV cache
+        #    Use word-level matching as a basic approximation of semantic
+        #    search: any significant query word sharing a 4-char prefix with
+        #    a content word is considered a match (simple stemming heuristic).
+        query_words = {w for w in query.lower().split() if len(w) > 2}
+        for (ns, _key), rec in self._kv_cache.items():
+            if ns != namespace:
+                continue
+            content_words = set(rec.content.lower().split())
+            if any(qw[:4] == cw[:4] for qw in query_words for cw in content_words if len(cw) > 2):
+                search_results.append(SearchResult(record=rec, score=0.8))
+
         # Dedupe by content, sort by score
         seen: set[str] = set()
         deduped: list[SearchResult] = []
@@ -216,6 +241,10 @@ class AgentCoreMemoryProvider(MemoryProvider):
         return deduped[:top_k]
 
     async def delete(self, namespace: str, key: str) -> bool:
+        # Remove from local KV cache
+        cache_hit = self._kv_cache.pop((namespace, key), None)
+
+        # Also attempt to remove from AgentCore long-term memories
         memory_id = self._resolve_memory_id()
         boto_session = self._resolve_boto3_session()
 
@@ -238,11 +267,12 @@ class AgentCoreMemoryProvider(MemoryProvider):
             return False
 
         try:
-            result: bool = await self._run_sync(_delete)
-            return result
+            sdk_deleted: bool = await self._run_sync(_delete)
+            return sdk_deleted or cache_hit is not None
         except Exception:
             logger.debug("Delete failed", exc_info=True)
-            return False
+            # Even if SDK delete fails, cache removal counts
+            return cache_hit is not None
 
     async def list_memories(
         self,
@@ -300,9 +330,45 @@ class AgentCoreMemoryProvider(MemoryProvider):
         except Exception:
             logger.debug("List failed", exc_info=True)
 
+        # Include cached KV entries for this namespace
+        seen_content: set[str] = {r.content for r in records}
+        for (ns, _key), rec in self._kv_cache.items():
+            if ns != namespace:
+                continue
+            if filters and not all(rec.metadata.get(k) == v for k, v in filters.items()):
+                continue
+            if rec.content not in seen_content:
+                records.append(rec)
+                seen_content.add(rec.content)
+
         return records[offset : offset + limit]
 
     # ── Conversation memory ──────────────────────────────────────────
+
+    @staticmethod
+    def _normalize_event(
+        raw: Any,
+        *,
+        actor_id: str,
+        session_id: str,
+        messages: list[dict[str, str]] | None = None,
+    ) -> dict[str, Any]:
+        """Normalize an SDK event result to match the EventInfo model shape."""
+        if isinstance(raw, dict):
+            return {
+                "event_id": raw.get("event_id") or raw.get("eventId", ""),
+                "actor_id": raw.get("actor_id") or raw.get("actorId", actor_id),
+                "session_id": raw.get("session_id") or raw.get("sessionId", session_id),
+                "messages": raw.get("messages", messages or []),
+                "metadata": raw.get("metadata", {}),
+            }
+        return {
+            "event_id": str(getattr(raw, "event_id", getattr(raw, "eventId", ""))),
+            "actor_id": actor_id,
+            "session_id": session_id,
+            "messages": messages or [],
+            "metadata": {},
+        }
 
     async def create_event(
         self,
@@ -325,16 +391,16 @@ class AgentCoreMemoryProvider(MemoryProvider):
             return session.add_turns(messages=conv_messages)
 
         result = await self._run_sync(_create)
-        # Normalize result to a dict
-        if isinstance(result, dict):
-            return result
-        return {
-            "event_id": str(getattr(result, "event_id", "")),
-            "actor_id": actor_id,
-            "session_id": session_id,
-            "messages": [{"text": t, "role": r} for t, r in messages],
-            "metadata": metadata or {},
-        }
+        msg_dicts = [{"text": t, "role": r} for t, r in messages]
+        normalized = self._normalize_event(
+            result,
+            actor_id=actor_id,
+            session_id=session_id,
+            messages=msg_dicts,
+        )
+        if metadata:
+            normalized["metadata"] = metadata
+        return normalized
 
     async def list_events(
         self,
@@ -353,10 +419,7 @@ class AgentCoreMemoryProvider(MemoryProvider):
         events = await self._run_sync(_list)
         result: list[dict[str, Any]] = []
         for e in events[:limit]:
-            if isinstance(e, dict):
-                result.append(e)
-            else:
-                result.append({"event_id": str(e)})
+            result.append(self._normalize_event(e, actor_id=actor_id, session_id=session_id))
         return result
 
     async def get_event(
@@ -377,9 +440,11 @@ class AgentCoreMemoryProvider(MemoryProvider):
             )
 
         event = await self._run_sync(_get)
-        if isinstance(event, dict):
-            return event
-        return {"event_id": event_id, "actor_id": actor_id, "session_id": session_id}
+        return self._normalize_event(
+            event,
+            actor_id=actor_id,
+            session_id=session_id,
+        )
 
     async def delete_event(
         self,
@@ -524,6 +589,14 @@ class AgentCoreMemoryProvider(MemoryProvider):
 
     # ── Control plane ────────────────────────────────────────────────
 
+    def _get_control_plane_client(self) -> Any:
+        """Get the bedrock-agentcore-control boto3 client for control plane ops."""
+        boto_session = self._resolve_boto3_session()
+        return boto_session.client(
+            "bedrock-agentcore-control",
+            region_name=boto_session.region_name,
+        )
+
     async def create_memory_resource(
         self,
         name: str,
@@ -531,126 +604,128 @@ class AgentCoreMemoryProvider(MemoryProvider):
         strategies: list[dict[str, Any]] | None = None,
         description: str | None = None,
     ) -> dict[str, Any]:
-        boto_session = self._resolve_boto3_session()
+        cp = self._get_control_plane_client()
 
-        def _create():
-            manager = MemorySessionManager(
-                memory_id="placeholder",
-                region_name=boto_session.region_name,
-                boto3_session=boto_session,
-            )
-            return manager.create_memory(
-                name=name,
-                strategies=strategies or [],
-                description=description or "",
-            )
+        def _create() -> dict[str, Any]:
+            kwargs: dict[str, Any] = {
+                "name": name,
+                "eventExpiryDuration": 90,  # days — required by API
+            }
+            if description:
+                kwargs["description"] = description
+            if strategies:
+                kwargs["memoryStrategies"] = strategies
+            resp = cp.create_memory(**kwargs)
+            mem = resp.get("memory", resp)
+            return {
+                "memory_id": mem.get("id", ""),
+                "name": mem.get("name", name),
+                "status": mem.get("status", ""),
+                "arn": mem.get("arn", ""),
+            }
 
-        result = await self._run_sync(_create)
-        if isinstance(result, dict):
-            return result
-        return {"memory_id": str(result), "name": name}
+        return await self._run_sync(_create)
 
     async def get_memory_resource(self, memory_id: str) -> dict[str, Any]:
-        boto_session = self._resolve_boto3_session()
+        cp = self._get_control_plane_client()
 
-        def _get():
-            manager = MemorySessionManager(
-                memory_id=memory_id,
-                region_name=boto_session.region_name,
-                boto3_session=boto_session,
-            )
-            return manager.get_memory(memory_id=memory_id)
+        def _get() -> dict[str, Any]:
+            resp = cp.get_memory(memoryId=memory_id)
+            mem = resp.get("memory", resp)
+            return {
+                "memory_id": mem.get("id", memory_id),
+                "name": mem.get("name", ""),
+                "status": mem.get("status", ""),
+                "arn": mem.get("arn", ""),
+            }
 
-        result = await self._run_sync(_get)
-        if isinstance(result, dict):
-            return result
-        return {"memory_id": memory_id}
+        return await self._run_sync(_get)
 
     async def list_memory_resources(self) -> list[dict[str, Any]]:
-        boto_session = self._resolve_boto3_session()
+        cp = self._get_control_plane_client()
 
-        def _list():
-            manager = MemorySessionManager(
-                memory_id="placeholder",
-                region_name=boto_session.region_name,
-                boto3_session=boto_session,
-            )
-            return manager.list_memories()
+        def _list() -> list[dict[str, Any]]:
+            resp = cp.list_memories()
+            result: list[dict[str, Any]] = []
+            for mem in resp.get("memories", []):
+                result.append(
+                    {
+                        "memory_id": mem.get("id", ""),
+                        "name": mem.get("name", ""),
+                        "status": mem.get("status", ""),
+                        "arn": mem.get("arn", ""),
+                    }
+                )
+            return result
 
-        resources = await self._run_sync(_list)
-        result: list[dict[str, Any]] = []
-        for r in resources:
-            if isinstance(r, dict):
-                result.append(r)
-            else:
-                result.append({"memory_id": str(r)})
-        return result
+        return await self._run_sync(_list)
 
     async def delete_memory_resource(self, memory_id: str) -> None:
-        boto_session = self._resolve_boto3_session()
+        cp = self._get_control_plane_client()
 
-        def _delete():
-            manager = MemorySessionManager(
-                memory_id=memory_id,
-                region_name=boto_session.region_name,
-                boto3_session=boto_session,
-            )
-            manager.delete_memory(memory_id=memory_id)
+        def _delete() -> None:
+            cp.delete_memory(memoryId=memory_id)
 
         await self._run_sync(_delete)
 
     # ── Strategy management ──────────────────────────────────────────
 
     async def list_strategies(self, memory_id: str) -> list[dict[str, Any]]:
-        boto_session = self._resolve_boto3_session()
+        cp = self._get_control_plane_client()
 
-        def _list():
-            manager = MemorySessionManager(
-                memory_id=memory_id,
-                region_name=boto_session.region_name,
-                boto3_session=boto_session,
-            )
-            return manager.list_strategies(memory_id=memory_id)
+        def _list() -> list[dict[str, Any]]:
+            resp = cp.get_memory(memoryId=memory_id)
+            mem = resp.get("memory", resp)
+            result: list[dict[str, Any]] = []
+            for s in mem.get("strategies", []):
+                result.append(
+                    {
+                        "strategy_id": s.get("strategyId", ""),
+                        "name": s.get("name", ""),
+                        "description": s.get("description", ""),
+                    }
+                )
+            return result
 
-        strategies = await self._run_sync(_list)
-        result: list[dict[str, Any]] = []
-        for s in strategies:
-            if isinstance(s, dict):
-                result.append(s)
-            else:
-                result.append({"strategy_id": str(s)})
-        return result
+        return await self._run_sync(_list)
 
     async def add_strategy(
         self,
         memory_id: str,
         strategy: dict[str, Any],
     ) -> dict[str, Any]:
-        boto_session = self._resolve_boto3_session()
+        cp = self._get_control_plane_client()
 
-        def _add():
-            manager = MemorySessionManager(
-                memory_id=memory_id,
-                region_name=boto_session.region_name,
-                boto3_session=boto_session,
+        def _add() -> dict[str, Any]:
+            resp = cp.update_memory(
+                memoryId=memory_id,
+                memoryStrategies={
+                    "addMemoryStrategies": [strategy],
+                },
             )
-            return manager.add_strategy(memory_id=memory_id, strategy=strategy)
+            mem = resp.get("memory", resp)
+            strategies = mem.get("strategies", [])
+            # Return the last added strategy
+            if strategies:
+                last = strategies[-1]
+                return {
+                    "strategy_id": last.get("strategyId", ""),
+                    "name": last.get("name", ""),
+                }
+            return {"strategy_id": ""}
 
-        result = await self._run_sync(_add)
-        if isinstance(result, dict):
-            return result
-        return {"strategy_id": str(result)}
+        return await self._run_sync(_add)
 
     async def delete_strategy(self, memory_id: str, strategy_id: str) -> None:
-        boto_session = self._resolve_boto3_session()
+        cp = self._get_control_plane_client()
 
-        def _delete():
-            manager = MemorySessionManager(
-                memory_id=memory_id,
-                region_name=boto_session.region_name,
-                boto3_session=boto_session,
+        def _delete() -> None:
+            cp.update_memory(
+                memoryId=memory_id,
+                memoryStrategies={
+                    "deleteMemoryStrategies": [{"memoryStrategyId": strategy_id}],
+                },
             )
-            manager.delete_strategy(memory_id=memory_id, strategy_id=strategy_id)
 
         await self._run_sync(_delete)
 

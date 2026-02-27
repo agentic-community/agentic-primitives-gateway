@@ -42,6 +42,53 @@ class TestAgentCoreMemoryProvider:
         mock_mem_session.add_turns.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_store_and_retrieve_via_cache(self, mock_get_svc_creds, mock_get_session):
+        """Store populates the KV cache so retrieve returns the record without SDK search."""
+        mock_get_svc_creds.return_value = {"memory_id": "mem-123"}
+        mock_session = MagicMock(region_name="us-east-1")
+        mock_get_session.return_value = mock_session
+
+        with patch("agentic_primitives_gateway.primitives.memory.agentcore.MemorySessionManager") as mock_mgr_cls:
+            mock_mgr = MagicMock()
+            mock_mgr.create_memory_session.return_value = MagicMock()
+            mock_mgr_cls.return_value = mock_mgr
+
+            provider = self._make_provider()
+            await provider.store(namespace="ns", key="k1", content="cached value", metadata={"env": "test"})
+
+            result = await provider.retrieve(namespace="ns", key="k1")
+
+        assert result is not None
+        assert result.key == "k1"
+        assert result.content == "cached value"
+        assert result.metadata["env"] == "test"
+
+    @pytest.mark.asyncio
+    async def test_delete_removes_from_cache(self, mock_get_svc_creds, mock_get_session):
+        """Delete removes from KV cache, so retrieve returns None."""
+        mock_get_svc_creds.return_value = {"memory_id": "mem-123"}
+        mock_session = MagicMock(region_name="us-east-1")
+        mock_get_session.return_value = mock_session
+
+        with patch("agentic_primitives_gateway.primitives.memory.agentcore.MemorySessionManager") as mock_mgr_cls:
+            mock_mgr = MagicMock()
+            mock_mgr.create_memory_session.return_value = MagicMock()
+            mock_mgr.search_long_term_memories.return_value = []
+            mock_mgr_cls.return_value = mock_mgr
+
+            provider = self._make_provider()
+            await provider.store(namespace="ns", key="k1", content="to delete")
+
+            deleted = await provider.delete(namespace="ns", key="k1")
+            assert deleted is True
+
+            # Retrieve should now return None (cache cleared, no SDK results)
+            mock_mgr.search_long_term_memories.return_value = []
+            mock_mgr.create_memory_session.return_value = MagicMock(get_last_k_turns=MagicMock(return_value=[]))
+            result = await provider.retrieve(namespace="ns", key="k1")
+            assert result is None
+
+    @pytest.mark.asyncio
     async def test_store_uses_config_memory_id(self, mock_get_svc_creds, mock_get_session):
         mock_get_svc_creds.return_value = None
         mock_session = MagicMock(region_name="us-east-1")
@@ -276,6 +323,8 @@ class TestAgentCoreMemoryProvider:
             "event_id": "evt-1",
             "actor_id": "actor-1",
             "session_id": "sess-1",
+            "messages": [{"text": "Hello", "role": "USER"}],
+            "metadata": {},
         }
 
         with patch("agentic_primitives_gateway.primitives.memory.agentcore.MemorySessionManager") as mock_mgr_cls:
@@ -291,7 +340,41 @@ class TestAgentCoreMemoryProvider:
             )
 
         assert result["event_id"] == "evt-1"
+        assert result["actor_id"] == "actor-1"
+        assert result["session_id"] == "sess-1"
+        assert result["messages"] == [{"text": "Hello", "role": "USER"}]
         mock_mem_session.add_turns.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_create_event_camelcase_sdk(self, mock_get_svc_creds, mock_get_session):
+        """Verify normalization handles camelCase keys from the SDK."""
+        mock_get_svc_creds.return_value = {"memory_id": "mem-123"}
+        mock_session = MagicMock(region_name="us-east-1")
+        mock_get_session.return_value = mock_session
+
+        mock_mem_session = MagicMock()
+        mock_mem_session.add_turns.return_value = {
+            "eventId": "evt-2",
+            "actorId": "actor-1",
+            "sessionId": "sess-1",
+        }
+
+        with patch("agentic_primitives_gateway.primitives.memory.agentcore.MemorySessionManager") as mock_mgr_cls:
+            mock_mgr = MagicMock()
+            mock_mgr.create_memory_session.return_value = mock_mem_session
+            mock_mgr_cls.return_value = mock_mgr
+
+            provider = self._make_provider()
+            result = await provider.create_event(
+                actor_id="actor-1",
+                session_id="sess-1",
+                messages=[("Hello", "USER")],
+            )
+
+        assert result["event_id"] == "evt-2"
+        assert result["actor_id"] == "actor-1"
+        assert result["session_id"] == "sess-1"
+        assert result["messages"] == [{"text": "Hello", "role": "USER"}]
 
     @pytest.mark.asyncio
     async def test_list_events(self, mock_get_svc_creds, mock_get_session):
@@ -302,8 +385,20 @@ class TestAgentCoreMemoryProvider:
         with patch("agentic_primitives_gateway.primitives.memory.agentcore.MemorySessionManager") as mock_mgr_cls:
             mock_mgr = MagicMock()
             mock_mgr.list_events.return_value = [
-                {"event_id": "e1", "actor_id": "a1", "session_id": "s1"},
-                {"event_id": "e2", "actor_id": "a1", "session_id": "s1"},
+                {
+                    "event_id": "e1",
+                    "actor_id": "a1",
+                    "session_id": "s1",
+                    "messages": [{"text": "hi", "role": "USER"}],
+                    "metadata": {},
+                },
+                {
+                    "event_id": "e2",
+                    "actor_id": "a1",
+                    "session_id": "s1",
+                    "messages": [{"text": "hello", "role": "ASSISTANT"}],
+                    "metadata": {},
+                },
             ]
             mock_mgr_cls.return_value = mock_mgr
 
@@ -312,6 +407,9 @@ class TestAgentCoreMemoryProvider:
 
         assert len(result) == 2
         assert result[0]["event_id"] == "e1"
+        assert result[0]["actor_id"] == "a1"
+        assert result[0]["session_id"] == "s1"
+        assert result[0]["messages"] == [{"text": "hi", "role": "USER"}]
 
     @pytest.mark.asyncio
     async def test_get_event(self, mock_get_svc_creds, mock_get_session):
@@ -325,6 +423,8 @@ class TestAgentCoreMemoryProvider:
                 "event_id": "evt-1",
                 "actor_id": "a1",
                 "session_id": "s1",
+                "messages": [{"text": "hi", "role": "USER"}],
+                "metadata": {},
             }
             mock_mgr_cls.return_value = mock_mgr
 
@@ -332,6 +432,8 @@ class TestAgentCoreMemoryProvider:
             result = await provider.get_event(actor_id="a1", session_id="s1", event_id="evt-1")
 
         assert result["event_id"] == "evt-1"
+        assert result["actor_id"] == "a1"
+        assert result["messages"] == [{"text": "hi", "role": "USER"}]
 
     @pytest.mark.asyncio
     async def test_delete_event(self, mock_get_svc_creds, mock_get_session):
@@ -464,15 +566,18 @@ class TestAgentCoreMemoryProvider:
         mock_session = MagicMock(region_name="us-east-1")
         mock_get_session.return_value = mock_session
 
-        with patch("agentic_primitives_gateway.primitives.memory.agentcore.MemorySessionManager") as mock_mgr_cls:
-            mock_mgr = MagicMock()
-            mock_mgr.create_memory.return_value = {
-                "memory_id": "mem-new",
+        mock_cp = MagicMock()
+        mock_cp.create_memory.return_value = {
+            "memory": {
+                "id": "mem-new",
                 "name": "test-mem",
+                "status": "CREATING",
+                "arn": "arn:aws:bedrock:us-east-1:123:memory/mem-new",
             }
-            mock_mgr_cls.return_value = mock_mgr
+        }
 
-            provider = self._make_provider()
+        provider = self._make_provider()
+        with patch.object(provider, "_get_control_plane_client", return_value=mock_cp):
             result = await provider.create_memory_resource(name="test-mem")
 
         assert result["memory_id"] == "mem-new"
@@ -483,16 +588,18 @@ class TestAgentCoreMemoryProvider:
         mock_session = MagicMock(region_name="us-east-1")
         mock_get_session.return_value = mock_session
 
-        with patch("agentic_primitives_gateway.primitives.memory.agentcore.MemorySessionManager") as mock_mgr_cls:
-            mock_mgr = MagicMock()
-            mock_mgr.get_memory.return_value = {
-                "memory_id": "mem-1",
+        mock_cp = MagicMock()
+        mock_cp.get_memory.return_value = {
+            "memory": {
+                "id": "mem-1",
                 "name": "test-mem",
                 "status": "ACTIVE",
+                "arn": "arn:aws:bedrock:us-east-1:123:memory/mem-1",
             }
-            mock_mgr_cls.return_value = mock_mgr
+        }
 
-            provider = self._make_provider()
+        provider = self._make_provider()
+        with patch.object(provider, "_get_control_plane_client", return_value=mock_cp):
             result = await provider.get_memory_resource(memory_id="mem-1")
 
         assert result["memory_id"] == "mem-1"
@@ -504,14 +611,15 @@ class TestAgentCoreMemoryProvider:
         mock_session = MagicMock(region_name="us-east-1")
         mock_get_session.return_value = mock_session
 
-        with patch("agentic_primitives_gateway.primitives.memory.agentcore.MemorySessionManager") as mock_mgr_cls:
-            mock_mgr = MagicMock()
-            mock_mgr.list_memories.return_value = [
-                {"memory_id": "mem-1", "name": "test-1"},
+        mock_cp = MagicMock()
+        mock_cp.list_memories.return_value = {
+            "memories": [
+                {"id": "mem-1", "name": "test-1", "status": "ACTIVE", "arn": "arn:1"},
             ]
-            mock_mgr_cls.return_value = mock_mgr
+        }
 
-            provider = self._make_provider()
+        provider = self._make_provider()
+        with patch.object(provider, "_get_control_plane_client", return_value=mock_cp):
             result = await provider.list_memory_resources()
 
         assert len(result) == 1
@@ -522,14 +630,13 @@ class TestAgentCoreMemoryProvider:
         mock_session = MagicMock(region_name="us-east-1")
         mock_get_session.return_value = mock_session
 
-        with patch("agentic_primitives_gateway.primitives.memory.agentcore.MemorySessionManager") as mock_mgr_cls:
-            mock_mgr = MagicMock()
-            mock_mgr_cls.return_value = mock_mgr
+        mock_cp = MagicMock()
 
-            provider = self._make_provider()
+        provider = self._make_provider()
+        with patch.object(provider, "_get_control_plane_client", return_value=mock_cp):
             await provider.delete_memory_resource(memory_id="mem-1")
 
-        mock_mgr.delete_memory.assert_called_once_with(memory_id="mem-1")
+        mock_cp.delete_memory.assert_called_once_with(memoryId="mem-1")
 
     # ── Strategy management tests ────────────────────────────────────
 
@@ -539,17 +646,22 @@ class TestAgentCoreMemoryProvider:
         mock_session = MagicMock(region_name="us-east-1")
         mock_get_session.return_value = mock_session
 
-        with patch("agentic_primitives_gateway.primitives.memory.agentcore.MemorySessionManager") as mock_mgr_cls:
-            mock_mgr = MagicMock()
-            mock_mgr.list_strategies.return_value = [
-                {"strategy_id": "s1", "type": "semantic"},
-            ]
-            mock_mgr_cls.return_value = mock_mgr
+        mock_cp = MagicMock()
+        mock_cp.get_memory.return_value = {
+            "memory": {
+                "id": "mem-1",
+                "strategies": [
+                    {"strategyId": "s1", "name": "semantic", "description": "semantic search"},
+                ],
+            }
+        }
 
-            provider = self._make_provider()
+        provider = self._make_provider()
+        with patch.object(provider, "_get_control_plane_client", return_value=mock_cp):
             result = await provider.list_strategies(memory_id="mem-1")
 
         assert len(result) == 1
+        assert result[0]["strategy_id"] == "s1"
 
     @pytest.mark.asyncio
     async def test_add_strategy(self, mock_get_svc_creds, mock_get_session):
@@ -557,12 +669,18 @@ class TestAgentCoreMemoryProvider:
         mock_session = MagicMock(region_name="us-east-1")
         mock_get_session.return_value = mock_session
 
-        with patch("agentic_primitives_gateway.primitives.memory.agentcore.MemorySessionManager") as mock_mgr_cls:
-            mock_mgr = MagicMock()
-            mock_mgr.add_strategy.return_value = {"strategy_id": "s-new"}
-            mock_mgr_cls.return_value = mock_mgr
+        mock_cp = MagicMock()
+        mock_cp.update_memory.return_value = {
+            "memory": {
+                "id": "mem-1",
+                "strategies": [
+                    {"strategyId": "s-new", "name": "semantic"},
+                ],
+            }
+        }
 
-            provider = self._make_provider()
+        provider = self._make_provider()
+        with patch.object(provider, "_get_control_plane_client", return_value=mock_cp):
             result = await provider.add_strategy(
                 memory_id="mem-1",
                 strategy={"type": "semantic"},
@@ -576,11 +694,15 @@ class TestAgentCoreMemoryProvider:
         mock_session = MagicMock(region_name="us-east-1")
         mock_get_session.return_value = mock_session
 
-        with patch("agentic_primitives_gateway.primitives.memory.agentcore.MemorySessionManager") as mock_mgr_cls:
-            mock_mgr = MagicMock()
-            mock_mgr_cls.return_value = mock_mgr
+        mock_cp = MagicMock()
 
-            provider = self._make_provider()
+        provider = self._make_provider()
+        with patch.object(provider, "_get_control_plane_client", return_value=mock_cp):
             await provider.delete_strategy(memory_id="mem-1", strategy_id="s1")
 
-        mock_mgr.delete_strategy.assert_called_once_with(memory_id="mem-1", strategy_id="s1")
+        mock_cp.update_memory.assert_called_once_with(
+            memoryId="mem-1",
+            memoryStrategies={
+                "deleteMemoryStrategies": [{"memoryStrategyId": "s1"}],
+            },
+        )

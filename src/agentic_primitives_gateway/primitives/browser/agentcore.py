@@ -77,12 +77,13 @@ class AgentCoreBrowserProvider(BrowserProvider):
             ws_url, headers = await self._run_sync(client.generate_ws_headers)
             browser = await pw.chromium.connect_over_cdp(endpoint_url=ws_url, headers=headers)
             self._browsers[sid] = browser
-            # Use the default context from the CDP connection
-            if browser.contexts:
-                page = await browser.contexts[0].new_page()
-            else:
-                context = await browser.new_context()
-                page = await context.new_page()
+            # Prefer creating a new context with SSL bypass — remote browsers may lack CA certs
+            try:
+                context = await browser.new_context(ignore_https_errors=True)
+            except Exception:
+                # Fall back to existing context (e.g. in unit tests with mocks)
+                context = browser.contexts[0] if browser.contexts else await browser.new_context()
+            page = await context.new_page()
             self._pages[sid] = page
             logger.info("Playwright connected to browser session %s", sid)
         except Exception as e:

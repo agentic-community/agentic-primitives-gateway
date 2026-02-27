@@ -192,10 +192,10 @@ class AgentCoreObservabilityProvider(ObservabilityProvider):
 
     async def query_traces(self, filters: dict[str, Any] | None = None) -> list[dict[str, Any]]:
         def _query() -> list[dict[str, Any]]:
-            session = get_boto3_session(default_region=self._region)
-            xray = session.client("xray", region_name=session.region_name)
-
             try:
+                session = get_boto3_session(default_region=self._region)
+                xray = session.client("xray", region_name=session.region_name)
+
                 f = filters or {}
                 now = datetime.now(UTC)
 

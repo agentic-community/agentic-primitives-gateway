@@ -288,10 +288,16 @@ class TestListBranches:
 
 
 class TestCreateMemoryResource:
-    async def test_create_memory_resource(self, client: AgenticPlatformClient, mock_memory_manager: MagicMock) -> None:
-        mock_memory_manager.create_memory.return_value = {
-            "memory_id": "mem-new",
-            "name": "test-resource",
+    async def test_create_memory_resource(
+        self, client: AgenticPlatformClient, mock_memory_control_plane: MagicMock
+    ) -> None:
+        mock_memory_control_plane.create_memory.return_value = {
+            "memory": {
+                "id": "mem-new",
+                "name": "test-resource",
+                "status": "CREATING",
+                "arn": "arn:aws:bedrock:us-east-1:123:memory/mem-new",
+            }
         }
 
         result = await client.create_memory_resource("test-resource")
@@ -300,10 +306,16 @@ class TestCreateMemoryResource:
 
 
 class TestGetMemoryResource:
-    async def test_get_memory_resource(self, client: AgenticPlatformClient, mock_memory_manager: MagicMock) -> None:
-        mock_memory_manager.get_memory.return_value = {
-            "memory_id": "mem-1",
-            "name": "my-mem",
+    async def test_get_memory_resource(
+        self, client: AgenticPlatformClient, mock_memory_control_plane: MagicMock
+    ) -> None:
+        mock_memory_control_plane.get_memory.return_value = {
+            "memory": {
+                "id": "mem-1",
+                "name": "my-mem",
+                "status": "ACTIVE",
+                "arn": "arn:aws:bedrock:us-east-1:123:memory/mem-1",
+            }
         }
 
         result = await client.get_memory_resource("mem-1")
@@ -312,11 +324,15 @@ class TestGetMemoryResource:
 
 
 class TestListMemoryResources:
-    async def test_list_memory_resources(self, client: AgenticPlatformClient, mock_memory_manager: MagicMock) -> None:
-        mock_memory_manager.list_memories.return_value = [
-            {"memory_id": "mem-1"},
-            {"memory_id": "mem-2"},
-        ]
+    async def test_list_memory_resources(
+        self, client: AgenticPlatformClient, mock_memory_control_plane: MagicMock
+    ) -> None:
+        mock_memory_control_plane.list_memories.return_value = {
+            "memories": [
+                {"id": "mem-1", "name": "m1", "status": "ACTIVE", "arn": "arn:1"},
+                {"id": "mem-2", "name": "m2", "status": "ACTIVE", "arn": "arn:2"},
+            ]
+        }
 
         result = await client.list_memory_resources()
 
@@ -325,8 +341,10 @@ class TestListMemoryResources:
 
 
 class TestDeleteMemoryResource:
-    async def test_delete_memory_resource(self, client: AgenticPlatformClient, mock_memory_manager: MagicMock) -> None:
-        mock_memory_manager.delete_memory.return_value = None
+    async def test_delete_memory_resource(
+        self, client: AgenticPlatformClient, mock_memory_control_plane: MagicMock
+    ) -> None:
+        mock_memory_control_plane.delete_memory.return_value = None
 
         await client.delete_memory_resource("mem-1")
 
@@ -335,10 +353,15 @@ class TestDeleteMemoryResource:
 
 
 class TestListStrategies:
-    async def test_list_strategies(self, client: AgenticPlatformClient, mock_memory_manager: MagicMock) -> None:
-        mock_memory_manager.list_strategies.return_value = [
-            {"strategy_id": "s1", "type": "semantic"},
-        ]
+    async def test_list_strategies(self, client: AgenticPlatformClient, mock_memory_control_plane: MagicMock) -> None:
+        mock_memory_control_plane.get_memory.return_value = {
+            "memory": {
+                "id": "mem-1",
+                "strategies": [
+                    {"strategyId": "s1", "name": "semantic", "description": "semantic search"},
+                ],
+            }
+        }
 
         result = await client.list_strategies("mem-1")
 
@@ -347,9 +370,14 @@ class TestListStrategies:
 
 
 class TestAddStrategy:
-    async def test_add_strategy(self, client: AgenticPlatformClient, mock_memory_manager: MagicMock) -> None:
-        mock_memory_manager.add_strategy.return_value = {
-            "strategy_id": "s-new",
+    async def test_add_strategy(self, client: AgenticPlatformClient, mock_memory_control_plane: MagicMock) -> None:
+        mock_memory_control_plane.update_memory.return_value = {
+            "memory": {
+                "id": "mem-1",
+                "strategies": [
+                    {"strategyId": "s-new", "name": "semantic"},
+                ],
+            }
         }
 
         result = await client.add_strategy("mem-1", {"type": "semantic"})
@@ -358,7 +386,7 @@ class TestAddStrategy:
 
 
 class TestDeleteStrategy:
-    async def test_delete_strategy(self, client: AgenticPlatformClient, mock_memory_manager: MagicMock) -> None:
-        mock_memory_manager.delete_strategy.return_value = None
+    async def test_delete_strategy(self, client: AgenticPlatformClient, mock_memory_control_plane: MagicMock) -> None:
+        mock_memory_control_plane.update_memory.return_value = {"memory": {"id": "mem-1", "strategies": []}}
 
         await client.delete_strategy("mem-1", "s1")

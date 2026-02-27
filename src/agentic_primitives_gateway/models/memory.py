@@ -58,7 +58,7 @@ class EventInfo(BaseModel):
     event_id: str
     actor_id: str
     session_id: str
-    messages: list[EventMessage]
+    messages: list[EventMessage] = Field(default_factory=list)
     timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
     metadata: dict[str, Any] = Field(default_factory=dict)
 

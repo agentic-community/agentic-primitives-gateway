@@ -126,6 +126,22 @@ def mock_memory_manager():
 
 
 @pytest.fixture
+def mock_memory_control_plane():
+    """Patch ``_get_control_plane_client`` on the AgentCore memory provider.
+
+    Control plane operations (create/get/list/delete memory resource and
+    strategy management) now use a ``bedrock-agentcore-control`` boto3 client
+    instead of ``MemorySessionManager``.
+    """
+    mock_cp = MagicMock()
+    with patch(
+        "agentic_primitives_gateway.primitives.memory.agentcore.AgentCoreMemoryProvider._get_control_plane_client",
+        return_value=mock_cp,
+    ):
+        yield mock_cp
+
+
+@pytest.fixture
 def mock_identity_client():
     """Patch ``IdentityClient`` used by the AgentCore identity provider."""
     with patch("agentic_primitives_gateway.primitives.identity.agentcore.IdentityClient") as mock_cls:

@@ -6,7 +6,6 @@ AgentCoreCodeInterpreterProvider → (mocked) AgentCoreCodeInterpreter SDK.
 
 from __future__ import annotations
 
-import os
 from unittest.mock import MagicMock
 
 import pytest
@@ -92,16 +91,12 @@ class TestDownloadFile:
         mock_code_interpreter.start.return_value = "ci-sess-1"
         await client.start_code_session()
 
-        def fake_download(file_name: str, destination: str) -> None:
-            filepath = os.path.join(destination, file_name)
-            with open(filepath, "wb") as f:
-                f.write(b"output data")
-
-        mock_code_interpreter.download_file.side_effect = fake_download
+        mock_code_interpreter.download_file.return_value = b"output data"
 
         content = await client.download_file("ci-sess-1", "output.txt")
 
         assert content == b"output data"
+        mock_code_interpreter.download_file.assert_called_once_with(path="output.txt")
 
 
 # ── Session listing / retrieval ───────────────────────────────────────
