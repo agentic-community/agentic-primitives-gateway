@@ -8,6 +8,12 @@ Agentic Primitives Gateway is a Kubernetes-deployed REST API service that abstra
 +------------------------------------------------------------------------+
 |                      Agentic Primitives Gateway                        |
 |                                                                        |
+|  +------------------------------------------------------------------+  |
+|  |                     Agents Subsystem                              |  |
+|  |  (Declarative specs, CRUD API, LLM tool-call loop, auto-hooks)   |  |
+|  |  POST /api/v1/agents/{name}/chat → AgentRunner → primitives      |  |
+|  +----+------------------------------+------------------------------+  |
+|       |                              |                                 |
 |  +---------+ +---------+ +---------+ +---------+ +---------+          |
 |  | Memory  | |Identity | |  Code   | | Browser | |  Tools  |          |
 |  | Routes  | | Routes  | |Interpret| | Routes  | | Routes  |          |
@@ -31,15 +37,15 @@ Agentic Primitives Gateway is a Kubernetes-deployed REST API service that abstra
 |     |       |       |       |       |        |       |                |
 +-----+-------+-------+-------+-------+--------+-------+----------------+
       |       |       |       |       |        |       |
- +----v---+ +-v-------+ +v----+ +v----+ +v-----+ +v---+ +v----------+
- | Memory | |Identity | |Code | |Brwsr| |Obsrv.| |Gwy | |  Tools   |
- |--------| |---------| |Intrp| |-----| |------| |----| |----------|
- | Noop   | |Noop     | |Noop | |Noop | |Noop  | |Noop| | Noop     |
- | InMem  | |AgntCore | |Agnt | |Agnt | |Lang  | |    | | AgntCore |
- | Mem0   | |Keycloak | |Core | |Core | |fuse  | |    | | MCP      |
- | Agnt   | |Entra    | |     | |     | |Agnt  | |    | | Registry |
- | Core   | |Okta     | |     | |     | |Core  | |    | |          |
- +--------+ +---------+ +-----+ +-----+ +------+ +----+ +----------+
+ +----v---+ +-v-------+ +v----+ +v----+ +v-----+ +v------+ +v----------+
+ | Memory | |Identity | |Code | |Brwsr| |Obsrv.| |Gateway| |  Tools   |
+ |--------| |---------| |Intrp| |-----| |------| |-------| |----------|
+ | Noop   | |Noop     | |Noop | |Noop | |Noop  | |Noop   | | Noop     |
+ | InMem  | |AgntCore | |Agnt | |Agnt | |Lang  | |Bedrock| | AgntCore |
+ | Mem0   | |Keycloak | |Core | |Core | |fuse  | |Convrs | | MCP      |
+ | Agnt   | |Entra    | |     | |Seln | |Agnt  | |       | | Registry |
+ | Core   | |Okta     | |     | |Grid | |Core  | |       | |          |
+ +--------+ +---------+ +-----+ +-----+ +------+ +-------+ +----------+
 ```
 
 ## Primitives
@@ -49,12 +55,14 @@ Agentic Primitives Gateway is a Kubernetes-deployed REST API service that abstra
 | **Memory** | Key-value memory, conversation events, session/branch management, memory resource lifecycle, strategy management | `NoopMemoryProvider`, `InMemoryProvider`, `Mem0MemoryProvider` (Milvus), `AgentCoreMemoryProvider` |
 | **Identity** | Workload identity tokens, OAuth2 token exchange (M2M + 3LO), API key retrieval, credential provider and workload identity management | `NoopIdentityProvider`, `AgentCoreIdentityProvider`, `KeycloakIdentityProvider`, `EntraIdentityProvider`, `OktaIdentityProvider` |
 | **Code Interpreter** | Sandboxed code execution sessions with execution history | `NoopCodeInterpreterProvider`, `AgentCoreCodeInterpreterProvider` |
-| **Browser** | Cloud-based browser automation | `NoopBrowserProvider`, `AgentCoreBrowserProvider` |
+| **Browser** | Cloud-based browser automation | `NoopBrowserProvider`, `AgentCoreBrowserProvider`, `SeleniumGridBrowserProvider` |
 | **Observability** | Trace/log ingestion, LLM generation tracking, evaluation scoring, session management | `NoopObservabilityProvider`, `LangfuseObservabilityProvider`, `AgentCoreObservabilityProvider` |
-| **Gateway** | LLM request routing | `NoopGatewayProvider` |
+| **Gateway** | LLM request routing with tool_use support | `NoopGatewayProvider`, `BedrockConverseProvider` |
 | **Tools** | Tool registration, invocation, search, and MCP server management | `NoopToolsProvider`, `AgentCoreGatewayProvider`, `MCPRegistryProvider` |
 
 All seven primitives are fully implemented and wired to their respective providers.
+
+**Agents** sit above the primitives as a declarative orchestration layer. An agent is defined by a spec (system prompt, model, enabled primitives/tools, hooks) and the gateway runs the LLM tool-call loop internally. No external agent framework needed.
 
 ## API Reference
 
@@ -276,8 +284,12 @@ Trace retrieval, updates, scoring, session management, and flush endpoints retur
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/completions` | Route an LLM completion request. |
+| `POST` | `/completions` | Route an LLM completion request. Supports optional `tools`, `tool_choice`, and `system` fields. Response includes optional `tool_calls` and `stop_reason`. |
 | `GET` | `/models` | List available models. |
+
+**Available backends:**
+- `NoopGatewayProvider` -- returns empty responses (dev/test)
+- `BedrockConverseProvider` -- AWS Bedrock Converse API with full tool_use support. Config: `region`, `default_model`. Uses per-request AWS credentials via `get_boto3_session()`.
 
 ### Tools (`/api/v1/tools`)
 
@@ -301,6 +313,84 @@ Trace retrieval, updates, scoring, session management, and flush endpoints retur
 | `GET` | `/servers/{server_name}` | Get details for a specific server. Returns 404 if not found. |
 
 Tool retrieval, deletion, and server management endpoints return 501 if not supported by the configured provider. The `MCPRegistryProvider` supports all operations. The `AgentCoreGatewayProvider` supports tool retrieval only.
+
+### Agents (`/api/v1/agents`)
+
+Declarative agents that run LLM tool-call loops server-side. Define an agent with a system prompt, model, and enabled primitives -- the gateway handles tool execution, memory, and tracing automatically.
+
+**Agent CRUD:**
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/` | Create an agent from a spec. Returns 201. Returns 409 if name already exists. |
+| `GET` | `/` | List all agents. |
+| `GET` | `/{name}` | Get an agent spec. Returns 404 if not found. |
+| `PUT` | `/{name}` | Update an agent (partial update). Returns 404 if not found. |
+| `DELETE` | `/{name}` | Delete an agent. Returns 404 if not found. |
+
+**Chat:**
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/{name}/chat` | Chat with an agent. Body: `{"message": "...", "session_id": "..."}`. The gateway runs the full LLM tool-call loop and returns when done. |
+
+Chat response:
+
+```json
+{
+  "response": "The assistant's response text",
+  "session_id": "auto-generated-or-provided",
+  "agent_name": "research-assistant",
+  "turns_used": 3,
+  "tools_called": ["search_memory", "remember"],
+  "metadata": {"trace_id": "..."}
+}
+```
+
+**Agent spec fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | Unique agent identifier. |
+| `model` | string | Bedrock model ID (e.g., `us.anthropic.claude-sonnet-4-20250514-v1:0`). |
+| `system_prompt` | string | System prompt for the LLM. |
+| `description` | string | Human-readable description. |
+| `primitives` | object | Which primitives/tools to enable. Keys: `memory`, `code_interpreter`, `browser`, `tools`, `identity`. Each value has `enabled` (bool), `tools` (list of tool names or null for all), `namespace` (string with `{agent_name}`, `{session_id}` placeholders). |
+| `hooks` | object | `auto_memory` (bool): store conversation turns automatically. `auto_trace` (bool): trace LLM calls and tool executions to the observability provider. |
+| `provider_overrides` | object | Per-primitive provider routing (same as `X-Provider-*` headers). |
+| `max_turns` | int | Safety limit for the tool-call loop (default: 20). |
+| `temperature` | float | LLM temperature (default: 1.0). |
+| `max_tokens` | int | LLM max tokens (optional). |
+
+**Available tools per primitive:**
+
+| Primitive | Tools |
+|-----------|-------|
+| `memory` | `remember`, `recall`, `search_memory`, `forget`, `list_memories` |
+| `code_interpreter` | `execute_code` |
+| `browser` | `navigate`, `read_page`, `click`, `type_text`, `screenshot`, `evaluate_js` |
+| `tools` | `search_tools`, `invoke_tool` |
+| `identity` | `get_token`, `get_api_key` |
+
+**Example -- create and chat with an agent:**
+
+```bash
+# Create
+curl -X POST localhost:8000/api/v1/agents -H "Content-Type: application/json" -d '{
+  "name": "my-assistant",
+  "model": "us.anthropic.claude-sonnet-4-20250514-v1:0",
+  "system_prompt": "You are a helpful assistant with memory.",
+  "primitives": {"memory": {"enabled": true, "namespace": "agent:{agent_name}:{session_id}"}},
+  "hooks": {"auto_memory": true, "auto_trace": false}
+}'
+
+# Chat
+curl -X POST localhost:8000/api/v1/agents/my-assistant/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Remember that my favorite color is blue", "session_id": "s1"}'
+```
+
+Agents can also be defined in YAML config under the `agents.specs` key (see Configuration section).
 
 Interactive API docs are available at `/docs` (Swagger UI) when the server is running.
 
@@ -487,6 +577,38 @@ providers:
 ```
 
 When this format is detected (a `backend` key without a `backends` key), it is automatically converted to the multi-provider format with a single backend named `"default"`.
+
+### Agents Configuration
+
+Agents can be defined in YAML config and are seeded into the agent store on startup. API-created agents are persisted to the `store_path` JSON file.
+
+```yaml
+agents:
+  store_path: "agents.json"         # Persistence file for API-created agents
+  default_model: "us.anthropic.claude-sonnet-4-20250514-v1:0"
+  max_turns: 20                     # Default max tool-call loop turns
+  specs:                            # Agents seeded from config
+    research-assistant:
+      model: "us.anthropic.claude-sonnet-4-20250514-v1:0"
+      description: "Research assistant with memory and web browsing"
+      system_prompt: |
+        You are a research assistant with long-term memory.
+        Always search memory before saying you don't know something.
+      primitives:
+        memory:
+          enabled: true
+          namespace: "agent:{agent_name}:{session_id}"
+        browser:
+          enabled: true
+      hooks:
+        auto_memory: true
+        auto_trace: true
+```
+
+Pre-built agent configs are in `configs/`:
+- `agents-agentcore.yaml` -- all primitives backed by AgentCore
+- `agents-mem0-langfuse.yaml` -- mem0 + Milvus memory, Langfuse tracing, Selenium Grid browser
+- `agents-mixed.yaml` -- mem0/Langfuse for memory/observability, AgentCore for code/browser/identity/tools
 
 ---
 
@@ -1007,8 +1129,14 @@ agentic-primitives-gateway/
 │   │   ├── browser.py              # /api/v1/browser/* (11 endpoints)
 │   │   ├── observability.py        # /api/v1/observability/* (11 endpoints)
 │   │   ├── gateway.py              # /api/v1/gateway/* (2 endpoints)
-│   │   └── tools.py                # /api/v1/tools/* (9 endpoints)
+│   │   ├── tools.py                # /api/v1/tools/* (9 endpoints)
+│   │   └── agents.py               # /api/v1/agents/* (6 endpoints: CRUD + chat)
+│   ├── agents/                     # Declarative agent orchestration
+│   │   ├── runner.py               # LLM tool-call loop with auto-memory/trace hooks
+│   │   ├── tools.py                # Tool registry: 15 tools across 5 primitives
+│   │   └── store.py                # Agent spec persistence (FileAgentStore)
 │   ├── models/                     # Pydantic request/response models per primitive
+│   │   └── agents.py               # AgentSpec, ChatRequest, ChatResponse
 │   └── primitives/
 │       ├── base.py                 # Re-exports all provider ABCs
 │       ├── _sync.py                # SyncRunnerMixin (shared executor helper for sync backends)
@@ -1028,19 +1156,22 @@ agentic-primitives-gateway/
 │       │   └── agentcore.py        # AWS Bedrock AgentCore
 │       ├── browser/
 │       │   ├── noop.py
-│       │   └── agentcore.py        # AWS Bedrock AgentCore
+│       │   ├── agentcore.py        # AWS Bedrock AgentCore
+│       │   └── selenium_grid.py    # Selenium Grid (self-hosted)
 │       ├── observability/
 │       │   ├── noop.py
 │       │   ├── langfuse.py         # Langfuse (SDK v3)
 │       │   └── agentcore.py        # AWS AgentCore via OpenTelemetry
-│       ├── gateway/noop.py
+│       ├── gateway/
+│       │   ├── noop.py
+│       │   └── bedrock.py          # AWS Bedrock Converse API (tool_use support)
 │       └── tools/
 │           ├── noop.py
 │           ├── agentcore.py        # AWS AgentCore Gateway (MCP-compatible)
 │           └── mcp_registry.py     # MCP Registry
 ├── client/                         # Standalone Python client (separate package: agentic-primitives-gateway-client)
-├── tests/                          # Server tests (634 unit/system + 42 integration)
-├── configs/                        # YAML presets (local, agentcore, kitchen-sink, milvus-langfuse)
+├── tests/                          # Server tests (unit/system + integration)
+├── configs/                        # YAML presets (local, agentcore, kitchen-sink, agents-*)
 ├── deploy/helm/agentic-primitives-gateway/   # Helm chart
 ├── Dockerfile                      # Multi-stage build
 └── pyproject.toml

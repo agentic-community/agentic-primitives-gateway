@@ -22,6 +22,10 @@ def _mock_handler(request: httpx.Request) -> httpx.Response:
     if path == "/readyz":
         return httpx.Response(200, json={"status": "ok", "checks": {"memory": True}})
 
+    # Agent endpoints
+    if path.startswith("/api/v1/agents"):
+        return _handle_agents(method, path, request)
+
     # Identity data plane endpoints
     if path.startswith("/api/v1/identity"):
         return _handle_identity(method, path, request)
@@ -55,8 +59,87 @@ def _mock_handler(request: httpx.Request) -> httpx.Response:
 
 _tools_store: dict[str, dict] = {}
 
+_agents_store: dict[str, dict] = {}
 
 _ci_sessions: dict[str, dict] = {}
+
+
+def _handle_agents(method: str, path: str, request: httpx.Request) -> httpx.Response:
+    """Mock handler for agent CRUD and chat endpoints."""
+    rest = path.removeprefix("/api/v1/agents")
+
+    # POST "" (create agent)
+    if rest == "" and method == "POST":
+        body = json.loads(request.content)
+        agent = {
+            "name": body["name"],
+            "description": body.get("description", ""),
+            "model": body["model"],
+            "system_prompt": body.get("system_prompt", "You are a helpful assistant."),
+            "primitives": body.get("primitives", {}),
+            "hooks": body.get("hooks", {"auto_memory": True, "auto_trace": True}),
+            "provider_overrides": body.get("provider_overrides", {}),
+            "max_turns": body.get("max_turns", 20),
+            "temperature": body.get("temperature", 1.0),
+            "max_tokens": body.get("max_tokens"),
+        }
+        if agent["name"] in _agents_store:
+            return httpx.Response(409, json={"detail": f"Agent '{agent['name']}' already exists"})
+        _agents_store[agent["name"]] = agent
+        return httpx.Response(201, json=agent)
+
+    # GET "" (list agents)
+    if rest == "" and method == "GET":
+        return httpx.Response(200, json={"agents": list(_agents_store.values())})
+
+    # Routes with /{name}
+    if rest.startswith("/"):
+        parts = rest.lstrip("/").split("/")
+        name = parts[0]
+
+        # POST /{name}/chat
+        if len(parts) == 2 and parts[1] == "chat" and method == "POST":
+            agent = _agents_store.get(name)
+            if agent is None:
+                return httpx.Response(404, json={"detail": f"Agent '{name}' not found"})
+            body = json.loads(request.content)
+            return httpx.Response(
+                200,
+                json={
+                    "response": f"Mock response to: {body['message']}",
+                    "session_id": body.get("session_id") or "mock-session",
+                    "agent_name": name,
+                    "turns_used": 1,
+                    "tools_called": [],
+                    "metadata": {},
+                },
+            )
+
+        # Single-segment routes: GET, PUT, DELETE /{name}
+        if len(parts) == 1:
+            if method == "GET":
+                agent = _agents_store.get(name)
+                if agent is None:
+                    return httpx.Response(404, json={"detail": f"Agent '{name}' not found"})
+                return httpx.Response(200, json=agent)
+
+            if method == "PUT":
+                agent = _agents_store.get(name)
+                if agent is None:
+                    return httpx.Response(404, json={"detail": f"Agent '{name}' not found"})
+                body = json.loads(request.content)
+                for k, v in body.items():
+                    if v is not None:
+                        agent[k] = v
+                return httpx.Response(200, json=agent)
+
+            if method == "DELETE":
+                if name not in _agents_store:
+                    return httpx.Response(404, json={"detail": f"Agent '{name}' not found"})
+                del _agents_store[name]
+                return httpx.Response(200, json={"status": "deleted"})
+
+    return httpx.Response(404, json={"detail": "Not found"})
 
 
 def _handle_code_interpreter(method: str, path: str, request: httpx.Request) -> httpx.Response:
@@ -484,12 +567,14 @@ def _clear_store():
     _events.clear()
     _tools_store.clear()
     _ci_sessions.clear()
+    _agents_store.clear()
     _event_counter = 0
     yield
     _store.clear()
     _events.clear()
     _tools_store.clear()
     _ci_sessions.clear()
+    _agents_store.clear()
     _event_counter = 0
 
 

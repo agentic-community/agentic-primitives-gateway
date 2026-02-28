@@ -1024,3 +1024,72 @@ class AgenticPlatformClient:
         resp = await self._post("/api/v1/tools/servers", json=server_config)
         self._raise_for_status(resp)
         return self._json_dict(resp)
+
+    # ── Agents ─────────────────────────────────────────────────────────
+
+    async def create_agent(self, spec: dict[str, Any]) -> dict[str, Any]:
+        """Create a new agent.
+
+        Args:
+            spec: Agent specification including at minimum ``name`` and ``model``.
+        """
+        resp = await self._post("/api/v1/agents", json=spec)
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def list_agents(self) -> dict[str, Any]:
+        """List all registered agents."""
+        resp = await self._get("/api/v1/agents")
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def get_agent(self, name: str) -> dict[str, Any]:
+        """Get a single agent by name.
+
+        Args:
+            name: The agent name.
+        """
+        resp = await self._get(f"/api/v1/agents/{name}")
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def update_agent(self, name: str, updates: dict[str, Any]) -> dict[str, Any]:
+        """Update an existing agent.
+
+        Args:
+            name: The agent name.
+            updates: Fields to update (only non-None fields are applied).
+        """
+        resp = await self._request("PUT", f"/api/v1/agents/{name}", json=updates)
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def delete_agent(self, name: str) -> dict[str, Any]:
+        """Delete an agent by name.
+
+        Args:
+            name: The agent name.
+        """
+        resp = await self._delete(f"/api/v1/agents/{name}")
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def chat_with_agent(
+        self,
+        name: str,
+        message: str,
+        session_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Send a chat message to a named agent.
+
+        Args:
+            name: The agent name.
+            message: The user message.
+            session_id: Optional session ID for conversation continuity.
+        """
+        body: dict[str, Any] = {"message": message}
+        if session_id is not None:
+            body["session_id"] = session_id
+        resp = await self._post(f"/api/v1/agents/{name}/chat", json=body)
+        self._raise_for_status(resp)
+        return self._json_dict(resp)

@@ -130,9 +130,7 @@ class AgentRunner:
 
                 # Rebuild tool list if a new session was started
                 if len(session_ctx) > prev_ctx_size:
-                    tools = build_tool_list(
-                        spec.primitives, namespace=memory_ns, session_ctx=session_ctx
-                    )
+                    tools = build_tool_list(spec.primitives, namespace=memory_ns, session_ctx=session_ctx)
                     gateway_tools = to_gateway_tools(tools) if tools else None
 
                 logger.info(

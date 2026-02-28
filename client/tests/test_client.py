@@ -335,6 +335,108 @@ class TestClientTools:
             assert result["name"] == "new-server"
 
 
+class TestClientAgents:
+    @pytest.mark.asyncio
+    async def test_create_agent(self, make_client) -> None:
+        async with make_client() as client:
+            result = await client.create_agent({"name": "my-agent", "model": "claude-3"})
+            assert result["name"] == "my-agent"
+            assert result["model"] == "claude-3"
+
+    @pytest.mark.asyncio
+    async def test_create_agent_conflict(self, make_client) -> None:
+        async with make_client() as client:
+            await client.create_agent({"name": "my-agent", "model": "claude-3"})
+            with pytest.raises(AgenticPlatformError) as exc_info:
+                await client.create_agent({"name": "my-agent", "model": "claude-3"})
+            assert exc_info.value.status_code == 409
+
+    @pytest.mark.asyncio
+    async def test_list_agents(self, make_client) -> None:
+        async with make_client() as client:
+            await client.create_agent({"name": "agent-1", "model": "claude-3"})
+            await client.create_agent({"name": "agent-2", "model": "gpt-4"})
+            result = await client.list_agents()
+            assert len(result["agents"]) == 2
+
+    @pytest.mark.asyncio
+    async def test_list_agents_empty(self, make_client) -> None:
+        async with make_client() as client:
+            result = await client.list_agents()
+            assert result["agents"] == []
+
+    @pytest.mark.asyncio
+    async def test_get_agent(self, make_client) -> None:
+        async with make_client() as client:
+            await client.create_agent({"name": "my-agent", "model": "claude-3"})
+            result = await client.get_agent("my-agent")
+            assert result["name"] == "my-agent"
+            assert result["model"] == "claude-3"
+
+    @pytest.mark.asyncio
+    async def test_get_agent_not_found(self, make_client) -> None:
+        async with make_client() as client:
+            with pytest.raises(AgenticPlatformError) as exc_info:
+                await client.get_agent("nonexistent")
+            assert exc_info.value.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_update_agent(self, make_client) -> None:
+        async with make_client() as client:
+            await client.create_agent({"name": "my-agent", "model": "claude-3"})
+            result = await client.update_agent("my-agent", {"description": "updated"})
+            assert result["name"] == "my-agent"
+            assert result["description"] == "updated"
+
+    @pytest.mark.asyncio
+    async def test_update_agent_not_found(self, make_client) -> None:
+        async with make_client() as client:
+            with pytest.raises(AgenticPlatformError) as exc_info:
+                await client.update_agent("nonexistent", {"description": "nope"})
+            assert exc_info.value.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_delete_agent(self, make_client) -> None:
+        async with make_client() as client:
+            await client.create_agent({"name": "my-agent", "model": "claude-3"})
+            result = await client.delete_agent("my-agent")
+            assert result["status"] == "deleted"
+            with pytest.raises(AgenticPlatformError) as exc_info:
+                await client.get_agent("my-agent")
+            assert exc_info.value.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_delete_agent_not_found(self, make_client) -> None:
+        async with make_client() as client:
+            with pytest.raises(AgenticPlatformError) as exc_info:
+                await client.delete_agent("nonexistent")
+            assert exc_info.value.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_chat_with_agent(self, make_client) -> None:
+        async with make_client() as client:
+            await client.create_agent({"name": "my-agent", "model": "claude-3"})
+            result = await client.chat_with_agent("my-agent", "Hello!")
+            assert result["agent_name"] == "my-agent"
+            assert "Hello!" in result["response"]
+            assert "session_id" in result
+            assert result["turns_used"] == 1
+
+    @pytest.mark.asyncio
+    async def test_chat_with_agent_session_id(self, make_client) -> None:
+        async with make_client() as client:
+            await client.create_agent({"name": "my-agent", "model": "claude-3"})
+            result = await client.chat_with_agent("my-agent", "Hi", session_id="sess-42")
+            assert result["session_id"] == "sess-42"
+
+    @pytest.mark.asyncio
+    async def test_chat_with_agent_not_found(self, make_client) -> None:
+        async with make_client() as client:
+            with pytest.raises(AgenticPlatformError) as exc_info:
+                await client.chat_with_agent("nonexistent", "Hello")
+            assert exc_info.value.status_code == 404
+
+
 class TestClientCodeInterpreter:
     @pytest.mark.asyncio
     async def test_start_code_session(self, make_client) -> None:

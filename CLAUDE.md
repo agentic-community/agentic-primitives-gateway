@@ -1,6 +1,6 @@
 # Agentic Primitives Gateway
 
-FastAPI service providing pluggable primitives (memory, observability, gateway, tools, identity, code_interpreter, browser) for AI agent infrastructure. Separate async Python client in `client/`.
+FastAPI service providing pluggable primitives (memory, observability, gateway, tools, identity, code_interpreter, browser) for AI agent infrastructure. Includes a declarative agents subsystem that runs LLM tool-call loops server-side. Separate async Python client in `client/`.
 
 ## Project Structure
 
@@ -12,17 +12,20 @@ FastAPI service providing pluggable primitives (memory, observability, gateway, 
   - `metrics.py` — Prometheus MetricsProxy wrapping all providers
   - `models/` — Pydantic request/response models and StrEnum definitions (`enums.py`)
   - `primitives/` — Abstract base classes + backend implementations per primitive; `_sync.py` provides `SyncRunnerMixin` for executor-based async wrappers
-  - `routes/` — FastAPI routers, one per primitive plus health
+  - `routes/` — FastAPI routers, one per primitive plus health and agents
+  - `agents/` — Declarative agent orchestration: `runner.py` (LLM tool-call loop), `tools.py` (tool registry), `store.py` (persistence)
 - `client/` — Separate `agentic-primitives-gateway-client` package (httpx-based, no server dependency)
 - `tests/` — Server integration tests (pytest, async)
 - `client/tests/` — Client unit tests
-- `configs/` — YAML presets (local, agentcore, kitchen-sink, milvus-langfuse)
+- `configs/` — YAML presets (local, agentcore, kitchen-sink, milvus-langfuse, agents-agentcore, agents-mem0-langfuse, agents-mixed)
 - `examples/` — Example agents (langchain, strands)
 - `deploy/helm/` — Kubernetes Helm chart
 
 ## Architecture
 
 Each primitive has an abstract base class (`primitives/*/base.py`) with multiple backend implementations (noop, in_memory, agentcore, mem0, langfuse, etc.). The registry dynamically loads provider classes via `importlib` at startup from config. Requests flow through middleware that extracts credentials and provider routing headers into contextvars, then routes call `registry.{primitive}` which resolves the correct backend.
+
+The agents subsystem sits above the primitives. An agent spec (system prompt + model + enabled tools + hooks) defines a declarative agent. The `AgentRunner` runs the LLM tool-call loop using `registry.gateway.route_request()` for LLM calls and executes tool calls directly against primitives via the registry. Agent specs are stored in `FileAgentStore` (JSON persistence) and can be seeded from YAML config.
 
 ## Build & Run
 
@@ -71,6 +74,10 @@ pre-commit run --all-files # Run all hooks on entire repo
 - **Config normalization** — Legacy single-provider format (`backend` + `config`) auto-converts to multi-provider format (`default` + `backends`).
 - **SyncRunnerMixin** — `primitives/_sync.py` provides a shared `_run_sync` method. All providers wrapping synchronous client libraries inherit from it instead of duplicating the executor boilerplate.
 - **Client is independent** — `client/` has no imports from the server package. It's a thin HTTP wrapper; validation happens server-side.
+- **Agents are NOT primitives** — They're a higher-level orchestration layer in `agents/` that composes primitives. Not registered in the provider registry.
+- **Agent tool handlers** — `agents/tools.py` defines a static tool catalog with `functools.partial` to bind namespace/session_id so the LLM doesn't need to specify them.
+- **BedrockConverseProvider** — `primitives/gateway/bedrock.py` translates between internal message format and Bedrock Converse API. Supports tool_use. Uses `SyncRunnerMixin` + `get_boto3_session()`.
+- **SeleniumGridBrowserProvider** — `primitives/browser/selenium_grid.py` provides self-hosted browser automation via Selenium WebDriver.
 
 ## Style
 
