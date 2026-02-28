@@ -23,6 +23,7 @@ from agentic_primitives_gateway.context import (
 )
 from agentic_primitives_gateway.registry import PRIMITIVES, registry
 from agentic_primitives_gateway.routes import (
+    agents,
     browser,
     code_interpreter,
     gateway,
@@ -34,20 +35,20 @@ from agentic_primitives_gateway.routes import (
 )
 from agentic_primitives_gateway.watcher import ConfigWatcher
 
-
-class RequestIdFilter(logging.Filter):
-    """Inject the current request ID into every log record."""
-
-    def filter(self, record: logging.LogRecord) -> bool:
-        record.request_id = get_request_id()  # type: ignore[attr-defined]
-        return True
+_old_record_factory = logging.getLogRecordFactory()
 
 
+def _request_id_record_factory(*args: object, **kwargs: object) -> logging.LogRecord:
+    record = _old_record_factory(*args, **kwargs)
+    record.request_id = get_request_id() or "-"  # type: ignore[attr-defined]
+    return record
+
+
+logging.setLogRecordFactory(_request_id_record_factory)
 logging.basicConfig(
     level=settings.log_level.upper(),
     format="%(asctime)s %(levelname)s %(name)s [%(request_id)s] %(message)s",
 )
-logging.getLogger().addFilter(RequestIdFilter())
 logger = logging.getLogger(__name__)
 
 
@@ -126,6 +127,15 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logger.info("agentic-primitives-gateway build=%s", BUILD_REF)
     registry.initialize()
+
+    # Initialize agent store
+    from agentic_primitives_gateway.agents.store import FileAgentStore
+    from agentic_primitives_gateway.routes.agents import set_agent_store
+
+    agent_store = FileAgentStore(path=settings.agents.store_path)
+    if settings.agents.specs:
+        agent_store.seed(settings.agents.specs)
+    set_agent_store(agent_store)
 
     watcher: ConfigWatcher | None = None
     config_path = Settings.config_file_path()
@@ -209,6 +219,7 @@ app.include_router(tools.router)
 app.include_router(identity.router)
 app.include_router(code_interpreter.router)
 app.include_router(browser.router)
+app.include_router(agents.router)
 
 
 # ── Provider discovery ──────────────────────────────────────────────

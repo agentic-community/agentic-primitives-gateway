@@ -166,6 +166,15 @@ class ProvidersConfig(BaseModel):
     browser: PrimitiveProvidersConfig = PrimitiveProvidersConfig(**_DEFAULTS[Primitive.BROWSER])
 
 
+class AgentsConfig(BaseModel):
+    """Configuration for the agents subsystem."""
+
+    store_path: str = "agents.json"
+    default_model: str = "us.anthropic.claude-sonnet-4-20250514-v1:0"
+    max_turns: int = 20
+    specs: dict[str, dict[str, Any]] = Field(default_factory=dict)
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="AGENTIC_PRIMITIVES_GATEWAY_",
@@ -179,6 +188,7 @@ class Settings(BaseSettings):
     allow_server_credentials: bool = False
     cors_origins: list[str] = ["*"]
     providers: ProvidersConfig = ProvidersConfig()
+    agents: AgentsConfig = AgentsConfig()
 
     @staticmethod
     def config_file_path() -> str | None:

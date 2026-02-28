@@ -1,0 +1,98 @@
+from __future__ import annotations
+
+import json
+import logging
+from abc import ABC, abstractmethod
+from pathlib import Path
+from typing import Any
+
+from agentic_primitives_gateway.models.agents import AgentSpec
+
+logger = logging.getLogger(__name__)
+
+
+class AgentStore(ABC):
+    """Abstract base for agent spec persistence."""
+
+    @abstractmethod
+    async def get(self, name: str) -> AgentSpec | None: ...
+
+    @abstractmethod
+    async def list(self) -> list[AgentSpec]: ...
+
+    @abstractmethod
+    async def create(self, spec: AgentSpec) -> AgentSpec: ...
+
+    @abstractmethod
+    async def update(self, name: str, updates: dict[str, Any]) -> AgentSpec: ...
+
+    @abstractmethod
+    async def delete(self, name: str) -> bool: ...
+
+
+class FileAgentStore(AgentStore):
+    """JSON-file-backed agent store.
+
+    Loads from disk on init, writes on every mutation.
+    Supports seeding from config without overwriting existing agents.
+    """
+
+    def __init__(self, path: str = "agents.json") -> None:
+        self._path = Path(path)
+        self._agents: dict[str, AgentSpec] = {}
+        self._load()
+
+    def _load(self) -> None:
+        if self._path.exists():
+            try:
+                data = json.loads(self._path.read_text())
+                for name, spec_dict in data.items():
+                    self._agents[name] = AgentSpec(**spec_dict)
+                logger.info("Loaded %d agents from %s", len(self._agents), self._path)
+            except Exception:
+                logger.exception("Failed to load agents from %s", self._path)
+
+    def _save(self) -> None:
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        data = {name: spec.model_dump() for name, spec in self._agents.items()}
+        self._path.write_text(json.dumps(data, indent=2, default=str))
+
+    def seed(self, specs: dict[str, dict[str, Any]]) -> None:
+        """Seed agents from YAML config. Does not overwrite existing agents."""
+        count = 0
+        for name, spec_dict in specs.items():
+            if name not in self._agents:
+                self._agents[name] = AgentSpec(name=name, **spec_dict)
+                count += 1
+        if count:
+            self._save()
+            logger.info("Seeded %d agents from config", count)
+
+    async def get(self, name: str) -> AgentSpec | None:
+        return self._agents.get(name)
+
+    async def list(self) -> list[AgentSpec]:
+        return list(self._agents.values())
+
+    async def create(self, spec: AgentSpec) -> AgentSpec:
+        self._agents[spec.name] = spec
+        self._save()
+        return spec
+
+    async def update(self, name: str, updates: dict[str, Any]) -> AgentSpec:
+        existing = self._agents.get(name)
+        if existing is None:
+            raise KeyError(f"Agent not found: {name}")
+        updated_data = existing.model_dump()
+        updated_data.update(updates)
+        updated_spec = AgentSpec(**updated_data)
+        self._agents[name] = updated_spec
+        self._save()
+        return updated_spec
+
+    async def delete(self, name: str) -> bool:
+        if name in self._agents:
+            del self._agents[name]
+            self._save()
+            return True
+        return False

@@ -94,11 +94,16 @@ providers:
           browser: "${SELENIUM_BROWSER:=chrome}"
 
   gateway:
-    default: "noop"
+    default: "bedrock"
     backends:
       noop:
         backend: "agentic_primitives_gateway.primitives.gateway.noop.NoopGatewayProvider"
         config: {}
+      bedrock:
+        backend: "agentic_primitives_gateway.primitives.gateway.bedrock.BedrockConverseProvider"
+        config:
+          region: "${AWS_REGION:=us-east-1}"
+          default_model: "us.anthropic.claude-sonnet-4-20250514-v1:0"
 
   tools:
     default: "noop"
@@ -115,3 +120,25 @@ providers:
         config:
           base_url: "${MCP_REGISTRY_URL:=http://localhost:8080}"
           verify_ssl: false
+
+allow_server_credentials: true
+
+agents:
+  store_path: "agents.json"
+  specs:
+    research-assistant:
+      model: "us.anthropic.claude-sonnet-4-20250514-v1:0"
+      description: "A research assistant with long-term memory"
+      system_prompt: |
+        You are a research assistant with long-term memory.
+        Use the remember tool to store important information.
+        Use search_memory to find things you've stored before.
+        Use recall to retrieve a specific memory by key.
+        Always search memory before saying you don't know something.
+      primitives:
+        memory:
+          enabled: true
+          namespace: "agent:{agent_name}:{session_id}"
+      hooks:
+        auto_memory: true
+        auto_trace: false
