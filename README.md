@@ -20,9 +20,9 @@ Agentic Primitives Gateway is a Kubernetes-deployed REST API service that abstra
 |  +----+----+ +----+----+ | Routes  | +----+----+ +----+----+          |
 |       |           |      +----+----+      |           |               |
 |  +----+----+ +----+----+     |       +----+----+ +----+----+          |
-|  |Observ.  | |Gateway  |     |       |         | |         |          |
-|  | Routes  | | Routes  |     |       |         | |         |          |
-|  +----+----+ +----+----+     |       |         | |         |          |
+|  |Observ.  | |Gateway  |     |       | Policy  | | Evals   |          |
+|  | Routes  | | Routes  |     |       | Routes  | | Routes  |          |
+|  +----+----+ +----+----+     |       +----+----+ +----+----+          |
 |       |           |           |       |         | |         |          |
 |  +----v-----------v-----------v-------v---------v-v---------v--------+ |
 |  |                  RequestContextMiddleware                         | |
@@ -33,19 +33,19 @@ Agentic Primitives Gateway is a Kubernetes-deployed REST API service that abstra
 |  |                     Provider Registry                             | |
 |  |     (loads named backends from config; resolves per-request)      | |
 |  |              wrapped by MetricsProxy (Prometheus)                 | |
-|  +--+-------+-------+-------+-------+--------+-------+--------------+ |
-|     |       |       |       |       |        |       |                |
-+-----+-------+-------+-------+-------+--------+-------+----------------+
-      |       |       |       |       |        |       |
- +----v---+ +-v-------+ +v------+ +v----+ +v-----+ +v------+ +v----------+
- | Memory | |Identity | |Code   | |Brwsr| |Obsrv.| |Gateway| |  Tools   |
- |--------| |---------| |Interp | |-----| |------| |-------| |----------|
- | Noop   | |Noop     | |Noop   | |Noop | |Noop  | |Noop   | | Noop     |
- | InMem  | |AgntCore | |AgntCr | |Agnt | |Lang  | |Bedrock| | AgntCore |
- | Mem0   | |Keycloak | |Juptyr | |Core | |fuse  | |Convrs | | MCP      |
- | Agnt   | |Entra    | |       | |Seln | |Agnt  | |       | | Registry |
- | Core   | |Okta     | |       | |Grid | |Core  | |       | |          |
- +--------+ +---------+ +-------+ +-----+ +------+ +-------+ +----------+
+|  +--+-------+-------+-------+-------+--------+-------+------+-------+ |
+|     |       |       |       |       |        |       |      |         |
++-----+-------+-------+-------+-------+--------+-------+------+---------+
+      |       |       |       |       |        |       |      |
+ +----v---+ +-v-------+ +v------+ +v----+ +v-----+ +v------+ +v------+ +v------+ +v----------+
+ | Memory | |Identity | |Code   | |Brwsr| |Obsrv.| |Gateway| |Policy | | Evals | |  Tools   |
+ |--------| |---------| |Interp | |-----| |------| |-------| |-------| |-------| |----------|
+ | Noop   | |Noop     | |Noop   | |Noop | |Noop  | |Noop   | |Noop   | |Noop   | | Noop     |
+ | InMem  | |AgntCore | |AgntCr | |Agnt | |Lang  | |Bedrock| |Agnt   | |Agnt   | | AgntCore |
+ | Mem0   | |Keycloak | |Dayton | |Core | |fuse  | |Convrs | |Core   | |Core   | | MCP      |
+ | Agnt   | |Entra    | |Juptyr | |Seln | |Agnt  | |       | |       | |       | | Registry |
+ | Core   | |Okta     | |       | |Grid | |Core  | |       | |       | |       | |          |
+ +--------+ +---------+ +-------+ +-----+ +------+ +-------+ +-------+ +-------+ +----------+
 ```
 
 ## Primitives
@@ -54,13 +54,15 @@ Agentic Primitives Gateway is a Kubernetes-deployed REST API service that abstra
 |-----------|-------------|--------------------|
 | **Memory** | Key-value memory, conversation events, session/branch management, memory resource lifecycle, strategy management | `NoopMemoryProvider`, `InMemoryProvider`, `Mem0MemoryProvider` (Milvus), `AgentCoreMemoryProvider` |
 | **Identity** | Workload identity tokens, OAuth2 token exchange (M2M + 3LO), API key retrieval, credential provider and workload identity management | `NoopIdentityProvider`, `AgentCoreIdentityProvider`, `KeycloakIdentityProvider`, `EntraIdentityProvider`, `OktaIdentityProvider` |
-| **Code Interpreter** | Sandboxed code execution sessions with execution history | `NoopCodeInterpreterProvider`, `AgentCoreCodeInterpreterProvider`, `JupyterCodeInterpreterProvider` |
+| **Code Interpreter** | Sandboxed code execution sessions with execution history | `NoopCodeInterpreterProvider`, `AgentCoreCodeInterpreterProvider`, `DaytonaCodeInterpreterProvider`, `JupyterCodeInterpreterProvider` |
 | **Browser** | Cloud-based browser automation | `NoopBrowserProvider`, `AgentCoreBrowserProvider`, `SeleniumGridBrowserProvider` |
 | **Observability** | Trace/log ingestion, LLM generation tracking, evaluation scoring, session management | `NoopObservabilityProvider`, `LangfuseObservabilityProvider`, `AgentCoreObservabilityProvider` |
 | **Gateway** | LLM request routing with tool_use support | `NoopGatewayProvider`, `BedrockConverseProvider` |
 | **Tools** | Tool registration, invocation, search, and MCP server management | `NoopToolsProvider`, `AgentCoreGatewayProvider`, `MCPRegistryProvider` |
+| **Policy** | Cedar-based policy engine and policy management, optional policy generation | `NoopPolicyProvider`, `AgentCorePolicyProvider` |
+| **Evaluations** | LLM-as-a-judge evaluator management and evaluation, optional online eval configs | `NoopEvaluationsProvider`, `AgentCoreEvaluationsProvider` |
 
-All seven primitives are fully implemented and wired to their respective providers.
+All nine primitives are fully implemented and wired to their respective providers.
 
 **Agents** sit above the primitives as a declarative orchestration layer. An agent is defined by a spec (system prompt, model, enabled primitives/tools, hooks) and the gateway runs the LLM tool-call loop internally. No external agent framework needed.
 
@@ -208,7 +210,7 @@ Control plane endpoints return 501 if not supported by the configured provider.
 | `POST` | `/sessions/{session_id}/files` | Upload a file to a session (multipart). |
 | `GET` | `/sessions/{session_id}/files/{filename}` | Download a file from a session (binary). |
 
-Session details and execution history endpoints return 501 if not supported by the configured provider. Both `NoopCodeInterpreterProvider` and `AgentCoreCodeInterpreterProvider` support session details. `AgentCoreCodeInterpreterProvider` and `JupyterCodeInterpreterProvider` store execution history.
+Session details and execution history endpoints return 501 if not supported by the configured provider. Both `NoopCodeInterpreterProvider` and `AgentCoreCodeInterpreterProvider` support session details. `AgentCoreCodeInterpreterProvider`, `DaytonaCodeInterpreterProvider`, and `JupyterCodeInterpreterProvider` store execution history.
 
 ### Browser (`/api/v1/browser`)
 
@@ -313,6 +315,67 @@ Trace retrieval, updates, scoring, session management, and flush endpoints retur
 | `GET` | `/servers/{server_name}` | Get details for a specific server. Returns 404 if not found. |
 
 Tool retrieval, deletion, and server management endpoints return 501 if not supported by the configured provider. The `MCPRegistryProvider` supports all operations. The `AgentCoreGatewayProvider` supports tool retrieval only.
+
+### Policy (`/api/v1/policy`)
+
+**Policy engines:**
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/engines` | Create a policy engine. Body: `{"name": "...", "description": "...", "config": {}}`. Returns 201. |
+| `GET` | `/engines` | List policy engines. Query params: `max_results` (default 100), `next_token`. |
+| `GET` | `/engines/{engine_id}` | Get a policy engine. |
+| `DELETE` | `/engines/{engine_id}` | Delete a policy engine. Returns 204. |
+
+**Policies (Cedar):**
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/engines/{engine_id}/policies` | Create a policy. Body: `{"policy_body": "permit(...);", "description": "..."}`. Returns 201. |
+| `GET` | `/engines/{engine_id}/policies` | List policies. Query params: `max_results`, `next_token`. |
+| `GET` | `/engines/{engine_id}/policies/{policy_id}` | Get a policy. |
+| `PUT` | `/engines/{engine_id}/policies/{policy_id}` | Update a policy. Body: `{"policy_body": "...", "description": "..."}`. |
+| `DELETE` | `/engines/{engine_id}/policies/{policy_id}` | Delete a policy. Returns 204. |
+
+**Policy generation (optional):**
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/engines/{engine_id}/generations` | Start policy generation. Returns 201 or 501 if not supported. |
+| `GET` | `/engines/{engine_id}/generations` | List policy generations. Returns 501 if not supported. |
+| `GET` | `/engines/{engine_id}/generations/{generation_id}` | Get policy generation status. Returns 501 if not supported. |
+| `GET` | `/engines/{engine_id}/generations/{generation_id}/assets` | List generation assets. Returns 501 if not supported. |
+
+Policy generation endpoints return 501 if not supported by the configured provider. The `AgentCorePolicyProvider` supports all operations.
+
+### Evaluations (`/api/v1/evaluations`)
+
+**Evaluator management:**
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/evaluators` | Create an evaluator. Body: `{"name": "...", "evaluator_type": "...", "config": {}, "description": "..."}`. Returns 201. |
+| `GET` | `/evaluators` | List evaluators. Query params: `max_results` (default 100), `next_token`. |
+| `GET` | `/evaluators/{evaluator_id}` | Get an evaluator. |
+| `PUT` | `/evaluators/{evaluator_id}` | Update an evaluator. Body: `{"config": {}, "description": "..."}`. |
+| `DELETE` | `/evaluators/{evaluator_id}` | Delete an evaluator. Returns 204. |
+
+**Evaluate (data plane):**
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/evaluate` | Run evaluation. Body: `{"evaluator_id": "...", "input_data": "...", "output_data": "...", "expected_output": "...", "metadata": {}}`. Built-in evaluators: `Builtin.Helpfulness`, `Builtin.Coherence`, `Builtin.Relevance`, `Builtin.Correctness`. |
+
+**Online evaluation configs (optional):**
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/online-configs` | Create an online eval config. Returns 201 or 501 if not supported. |
+| `GET` | `/online-configs` | List online eval configs. Returns 501 if not supported. |
+| `GET` | `/online-configs/{config_id}` | Get an online eval config. Returns 501 if not supported. |
+| `DELETE` | `/online-configs/{config_id}` | Delete an online eval config. Returns 204 or 501 if not supported. |
+
+Online evaluation config endpoints return 501 if not supported by the configured provider. The `AgentCoreEvaluationsProvider` supports all operations including online eval configs.
 
 ### Agents (`/api/v1/agents`)
 
@@ -755,6 +818,27 @@ browser:
 
 AgentCore providers use **per-request credential pass-through**. The server does not use its own AWS credentials. Instead, each client request sends AWS credentials via headers, and the server forwards them to AgentCore. See [AWS Credential Pass-Through](#aws-credential-pass-through) below.
 
+### Code Interpreter: Daytona
+
+Requires the `daytona` optional dependencies:
+
+```bash
+pip install agentic-primitives-gateway[daytona]
+```
+
+```yaml
+code_interpreter:
+  default: "daytona"
+  backends:
+    daytona:
+      backend: "agentic_primitives_gateway.primitives.code_interpreter.daytona.DaytonaCodeInterpreterProvider"
+      config:
+        api_key: "${DAYTONA_API_KEY}"
+        api_url: "https://app.daytona.io/api"
+```
+
+Daytona provides sandboxed code execution via the [Daytona SDK](https://github.com/daytonaio/sdk). Each session creates a Daytona sandbox with process execution and file I/O support. Works with Daytona Cloud or self-hosted deployments.
+
 ### Code Interpreter: Jupyter
 
 Requires the `jupyter` optional dependencies:
@@ -1177,6 +1261,7 @@ agentic-primitives-gateway/
 │       ├── code_interpreter/
 │       │   ├── noop.py
 │       │   ├── agentcore.py        # AWS Bedrock AgentCore
+│       │   ├── daytona.py          # Daytona (self-hosted/cloud)
 │       │   └── jupyter.py          # Jupyter Server / Enterprise Gateway
 │       ├── browser/
 │       │   ├── noop.py

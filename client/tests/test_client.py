@@ -848,3 +848,74 @@ class TestRetryLogic:
             assert exc_info.value.status_code == 503
 
         assert call_count == 1
+
+
+class TestClientPolicy:
+    @pytest.mark.asyncio
+    async def test_create_and_get_engine(self, make_client) -> None:
+        async with make_client() as client:
+            result = await client.create_policy_engine(name="test-engine")
+            assert result["name"] == "test-engine"
+            engine_id = result["policy_engine_id"]
+            info = await client.get_policy_engine(engine_id)
+            assert info["policy_engine_id"] == engine_id
+
+    @pytest.mark.asyncio
+    async def test_list_engines(self, make_client) -> None:
+        async with make_client() as client:
+            await client.create_policy_engine(name="eng-1")
+            result = await client.list_policy_engines()
+            assert len(result["policy_engines"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_delete_engine(self, make_client) -> None:
+        async with make_client() as client:
+            result = await client.create_policy_engine(name="to-delete")
+            await client.delete_policy_engine(result["policy_engine_id"])
+
+    @pytest.mark.asyncio
+    async def test_policy_crud(self, make_client) -> None:
+        async with make_client() as client:
+            engine = await client.create_policy_engine(name="eng-for-policies")
+            eid = engine["policy_engine_id"]
+            pol = await client.create_policy(eid, policy_body="permit(...);")
+            pid = pol["policy_id"]
+            info = await client.get_policy(eid, pid)
+            assert info["policy_id"] == pid
+            listed = await client.list_policies(eid)
+            assert len(listed["policies"]) == 1
+            await client.delete_policy(eid, pid)
+
+
+class TestClientEvaluations:
+    @pytest.mark.asyncio
+    async def test_create_and_get_evaluator(self, make_client) -> None:
+        async with make_client() as client:
+            result = await client.create_evaluator(name="test-eval", evaluator_type="custom")
+            assert result["name"] == "test-eval"
+            eid = result["evaluator_id"]
+            info = await client.get_evaluator(eid)
+            assert info["evaluator_id"] == eid
+
+    @pytest.mark.asyncio
+    async def test_list_evaluators(self, make_client) -> None:
+        async with make_client() as client:
+            await client.create_evaluator(name="eval-1", evaluator_type="custom")
+            result = await client.list_evaluators()
+            assert len(result["evaluators"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_delete_evaluator(self, make_client) -> None:
+        async with make_client() as client:
+            result = await client.create_evaluator(name="to-del", evaluator_type="custom")
+            await client.delete_evaluator(result["evaluator_id"])
+
+    @pytest.mark.asyncio
+    async def test_evaluate(self, make_client) -> None:
+        async with make_client() as client:
+            result = await client.evaluate(
+                evaluator_id="Builtin.Helpfulness",
+                input_data="What is Python?",
+                output_data="Python is a programming language.",
+            )
+            assert "evaluation_results" in result

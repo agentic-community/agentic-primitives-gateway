@@ -76,6 +76,11 @@ providers:
         backend: "agentic_primitives_gateway.primitives.code_interpreter.agentcore.AgentCoreCodeInterpreterProvider"
         config:
           region: "${AWS_REGION:=us-east-1}"
+      daytona:
+        backend: "agentic_primitives_gateway.primitives.code_interpreter.daytona.DaytonaCodeInterpreterProvider"
+        config:
+          api_key: "${DAYTONA_API_KEY:=}"
+          api_url: "${DAYTONA_API_URL:=https://app.daytona.io/api}"
       jupyter:
         backend: "agentic_primitives_gateway.primitives.code_interpreter.jupyter.JupyterCodeInterpreterProvider"
         config:
@@ -100,6 +105,28 @@ providers:
         config:
           hub_url: "${SELENIUM_HUB_URL:=http://localhost:4444}"
           browser: "${SELENIUM_BROWSER:=chrome}"
+
+  policy:
+    default: "noop"
+    backends:
+      noop:
+        backend: "agentic_primitives_gateway.primitives.policy.noop.NoopPolicyProvider"
+        config: {}
+      agentcore:
+        backend: "agentic_primitives_gateway.primitives.policy.agentcore.AgentCorePolicyProvider"
+        config:
+          region: "${AWS_REGION:=us-east-1}"
+
+  evaluations:
+    default: "noop"
+    backends:
+      noop:
+        backend: "agentic_primitives_gateway.primitives.evaluations.noop.NoopEvaluationsProvider"
+        config: {}
+      agentcore:
+        backend: "agentic_primitives_gateway.primitives.evaluations.agentcore.AgentCoreEvaluationsProvider"
+        config:
+          region: "${AWS_REGION:=us-east-1}"
 
   gateway:
     default: "bedrock"

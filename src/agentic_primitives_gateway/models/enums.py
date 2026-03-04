@@ -9,6 +9,8 @@ class Primitive(StrEnum):
     IDENTITY = "identity"
     CODE_INTERPRETER = "code_interpreter"
     BROWSER = "browser"
+    POLICY = "policy"
+    EVALUATIONS = "evaluations"
 
 
 class LogLevel(StrEnum):

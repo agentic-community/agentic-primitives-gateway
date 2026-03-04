@@ -105,6 +105,14 @@ def _init_registry(_skip_without_aws_credentials):
                 "backend": "agentic_primitives_gateway.primitives.browser.agentcore.AgentCoreBrowserProvider",
                 "config": {"region": region},
             },
+            "policy": {
+                "backend": "agentic_primitives_gateway.primitives.policy.agentcore.AgentCorePolicyProvider",
+                "config": {"region": region},
+            },
+            "evaluations": {
+                "backend": "agentic_primitives_gateway.primitives.evaluations.agentcore.AgentCoreEvaluationsProvider",
+                "config": {"region": region},
+            },
         },
     )
     # Patch the global settings singleton so that get_boto3_session() and

@@ -71,11 +71,9 @@ class BedrockConverseProvider(SyncRunnerMixin, GatewayProvider):
                 tool_choice,
             )
 
-        def _call() -> dict[str, Any]:
-            return client.converse(**converse_kwargs)
-
-        response = await self._run_sync(_call)
-        return _from_bedrock_response(response, model_id)
+        response = await self._run_sync(client.converse, **converse_kwargs)
+        result: dict[str, Any] = _from_bedrock_response(response, model_id)
+        return result
 
     async def list_models(self) -> list[dict[str, Any]]:
         return [
@@ -164,7 +162,7 @@ def _to_bedrock_messages(
         # Assistant messages with tool_calls
         tool_calls = msg.get("tool_calls")
         if role == "assistant" and tool_calls:
-            content_blocks: list[dict[str, Any]] = []
+            content_blocks = []
             text_content = msg.get("content")
             if text_content:
                 content_blocks.append({"text": text_content})

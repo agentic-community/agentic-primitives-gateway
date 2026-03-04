@@ -42,6 +42,14 @@ def _mock_handler(request: httpx.Request) -> httpx.Response:
     if path.startswith("/api/v1/code-interpreter"):
         return _handle_code_interpreter(method, path, request)
 
+    # Policy endpoints
+    if path.startswith("/api/v1/policy"):
+        return _handle_policy(method, path, request)
+
+    # Evaluations endpoints
+    if path.startswith("/api/v1/evaluations"):
+        return _handle_evaluations(method, path, request)
+
     # Stub endpoints → 501
     for prefix in (
         "/api/v1/gateway",
@@ -62,6 +70,13 @@ _tools_store: dict[str, dict] = {}
 _agents_store: dict[str, dict] = {}
 
 _ci_sessions: dict[str, dict] = {}
+
+_policy_engines: dict[str, dict] = {}
+_policies: dict[str, dict[str, dict]] = {}  # engine_id -> {policy_id -> policy}
+_evaluators: dict[str, dict] = {}
+_policy_engine_counter = 0
+_policy_counter = 0
+_evaluator_counter = 0
 
 
 def _handle_agents(method: str, path: str, request: httpx.Request) -> httpx.Response:
@@ -205,6 +220,167 @@ def _handle_code_interpreter(method: str, path: str, request: httpx.Request) -> 
         # GET /sessions/{id}/files/{filename}
         if len(parts) == 3 and parts[1] == "files" and method == "GET":
             return httpx.Response(200, content=b"file content")
+
+    return httpx.Response(404, json={"detail": "Not found"})
+
+
+def _handle_policy(method: str, path: str, request: httpx.Request) -> httpx.Response:
+    """Mock handler for policy endpoints."""
+    global _policy_engine_counter, _policy_counter
+    rest = path.removeprefix("/api/v1/policy")
+
+    # POST /engines (create engine)
+    if rest == "/engines" and method == "POST":
+        body = json.loads(request.content)
+        _policy_engine_counter += 1
+        engine_id = f"engine-{_policy_engine_counter}"
+        engine = {
+            "policy_engine_id": engine_id,
+            "name": body["name"],
+            "description": body.get("description", ""),
+            "config": body.get("config", {}),
+        }
+        _policy_engines[engine_id] = engine
+        _policies[engine_id] = {}
+        return httpx.Response(201, json=engine)
+
+    # GET /engines (list engines)
+    if rest == "/engines" and method == "GET":
+        return httpx.Response(200, json={"policy_engines": list(_policy_engines.values())})
+
+    if rest.startswith("/engines/"):
+        parts = rest.removeprefix("/engines/").split("/")
+        engine_id = parts[0]
+
+        # GET /engines/{id}
+        if len(parts) == 1 and method == "GET":
+            engine = _policy_engines.get(engine_id)
+            if engine is None:
+                return httpx.Response(404, json={"detail": "Engine not found"})
+            return httpx.Response(200, json=engine)
+
+        # DELETE /engines/{id}
+        if len(parts) == 1 and method == "DELETE":
+            _policy_engines.pop(engine_id, None)
+            _policies.pop(engine_id, None)
+            return httpx.Response(204)
+
+        # POST /engines/{id}/policies (create policy)
+        if len(parts) == 2 and parts[1] == "policies" and method == "POST":
+            body = json.loads(request.content)
+            _policy_counter += 1
+            policy_id = f"policy-{_policy_counter}"
+            policy = {
+                "policy_id": policy_id,
+                "policy_engine_id": engine_id,
+                "definition": body["policy_body"],
+                "description": body.get("description", ""),
+            }
+            _policies.setdefault(engine_id, {})[policy_id] = policy
+            return httpx.Response(201, json=policy)
+
+        # GET /engines/{id}/policies (list policies)
+        if len(parts) == 2 and parts[1] == "policies" and method == "GET":
+            engine_policies = _policies.get(engine_id, {})
+            return httpx.Response(200, json={"policies": list(engine_policies.values())})
+
+        # GET /engines/{id}/policies/{pid}
+        if len(parts) == 3 and parts[1] == "policies" and method == "GET":
+            policy_id = parts[2]
+            policy = _policies.get(engine_id, {}).get(policy_id)
+            if policy is None:
+                return httpx.Response(404, json={"detail": "Policy not found"})
+            return httpx.Response(200, json=policy)
+
+        # PUT /engines/{id}/policies/{pid}
+        if len(parts) == 3 and parts[1] == "policies" and method == "PUT":
+            policy_id = parts[2]
+            policy = _policies.get(engine_id, {}).get(policy_id)
+            if policy is None:
+                return httpx.Response(404, json={"detail": "Policy not found"})
+            body = json.loads(request.content)
+            policy["policy_body"] = body["policy_body"]
+            if "description" in body:
+                policy["description"] = body["description"]
+            return httpx.Response(200, json=policy)
+
+        # DELETE /engines/{id}/policies/{pid}
+        if len(parts) == 3 and parts[1] == "policies" and method == "DELETE":
+            policy_id = parts[2]
+            _policies.get(engine_id, {}).pop(policy_id, None)
+            return httpx.Response(204)
+
+        # Generations endpoints → 501
+        if len(parts) >= 2 and parts[1] == "generations":
+            return httpx.Response(501, json={"detail": "Not implemented"})
+
+    return httpx.Response(404, json={"detail": "Not found"})
+
+
+def _handle_evaluations(method: str, path: str, request: httpx.Request) -> httpx.Response:
+    """Mock handler for evaluations endpoints."""
+    global _evaluator_counter
+    rest = path.removeprefix("/api/v1/evaluations")
+
+    # POST /evaluators (create evaluator)
+    if rest == "/evaluators" and method == "POST":
+        body = json.loads(request.content)
+        _evaluator_counter += 1
+        evaluator_id = f"evaluator-{_evaluator_counter}"
+        evaluator = {
+            "evaluator_id": evaluator_id,
+            "name": body["name"],
+            "evaluator_type": body["evaluator_type"],
+            "config": body.get("config", {}),
+            "description": body.get("description", ""),
+        }
+        _evaluators[evaluator_id] = evaluator
+        return httpx.Response(201, json=evaluator)
+
+    # GET /evaluators (list evaluators)
+    if rest == "/evaluators" and method == "GET":
+        return httpx.Response(200, json={"evaluators": list(_evaluators.values())})
+
+    # POST /evaluate
+    if rest == "/evaluate" and method == "POST":
+        body = json.loads(request.content)
+        return httpx.Response(
+            200,
+            json={
+                "evaluation_results": [{"evaluator_id": body.get("evaluator_id", ""), "value": 0.85, "label": "good"}],
+            },
+        )
+
+    if rest.startswith("/evaluators/"):
+        parts = rest.removeprefix("/evaluators/").split("/")
+        evaluator_id = parts[0]
+
+        # GET /evaluators/{id}
+        if len(parts) == 1 and method == "GET":
+            evaluator = _evaluators.get(evaluator_id)
+            if evaluator is None:
+                return httpx.Response(404, json={"detail": "Evaluator not found"})
+            return httpx.Response(200, json=evaluator)
+
+        # PUT /evaluators/{id}
+        if len(parts) == 1 and method == "PUT":
+            evaluator = _evaluators.get(evaluator_id)
+            if evaluator is None:
+                return httpx.Response(404, json={"detail": "Evaluator not found"})
+            body = json.loads(request.content)
+            for k, v in body.items():
+                if v is not None:
+                    evaluator[k] = v
+            return httpx.Response(200, json=evaluator)
+
+        # DELETE /evaluators/{id}
+        if len(parts) == 1 and method == "DELETE":
+            _evaluators.pop(evaluator_id, None)
+            return httpx.Response(204)
+
+    # Online eval configs → 501
+    if rest.startswith("/online-configs"):
+        return httpx.Response(501, json={"detail": "Not implemented"})
 
     return httpx.Response(404, json={"detail": "Not found"})
 
@@ -562,20 +738,32 @@ def _handle_memory(method: str, path: str, request: httpx.Request) -> httpx.Resp
 
 @pytest.fixture(autouse=True)
 def _clear_store():
-    global _event_counter
+    global _event_counter, _policy_engine_counter, _policy_counter, _evaluator_counter
     _store.clear()
     _events.clear()
     _tools_store.clear()
     _ci_sessions.clear()
     _agents_store.clear()
+    _policy_engines.clear()
+    _policies.clear()
+    _evaluators.clear()
     _event_counter = 0
+    _policy_engine_counter = 0
+    _policy_counter = 0
+    _evaluator_counter = 0
     yield
     _store.clear()
     _events.clear()
     _tools_store.clear()
     _ci_sessions.clear()
     _agents_store.clear()
+    _policy_engines.clear()
+    _policies.clear()
+    _evaluators.clear()
     _event_counter = 0
+    _policy_engine_counter = 0
+    _policy_counter = 0
+    _evaluator_counter = 0
 
 
 @pytest.fixture

@@ -153,6 +153,22 @@ _DEFAULTS: dict[str, dict[str, Any]] = {
             }
         },
     },
+    Primitive.POLICY: {
+        "default": "noop",
+        "backends": {
+            "noop": {
+                "backend": "agentic_primitives_gateway.primitives.policy.noop.NoopPolicyProvider",
+            }
+        },
+    },
+    Primitive.EVALUATIONS: {
+        "default": "noop",
+        "backends": {
+            "noop": {
+                "backend": "agentic_primitives_gateway.primitives.evaluations.noop.NoopEvaluationsProvider",
+            }
+        },
+    },
 }
 
 
@@ -164,6 +180,8 @@ class ProvidersConfig(BaseModel):
     identity: PrimitiveProvidersConfig = PrimitiveProvidersConfig(**_DEFAULTS[Primitive.IDENTITY])
     code_interpreter: PrimitiveProvidersConfig = PrimitiveProvidersConfig(**_DEFAULTS[Primitive.CODE_INTERPRETER])
     browser: PrimitiveProvidersConfig = PrimitiveProvidersConfig(**_DEFAULTS[Primitive.BROWSER])
+    policy: PrimitiveProvidersConfig = PrimitiveProvidersConfig(**_DEFAULTS[Primitive.POLICY])
+    evaluations: PrimitiveProvidersConfig = PrimitiveProvidersConfig(**_DEFAULTS[Primitive.EVALUATIONS])
 
 
 class AgentsConfig(BaseModel):

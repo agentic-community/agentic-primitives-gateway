@@ -46,6 +46,9 @@ okta = [
 selenium = [
     "selenium>=4.15.0",
 ]
+daytona = [
+    "daytona-sdk>=0.1.0",
+]
 jupyter = [
     "websockets>=13.0",
     "httpx>=0.27.0",
@@ -122,6 +125,7 @@ module = [
     "botocore.*",
     "amazon.*",
     "selenium.*",
+    "daytona_sdk.*",
     "websockets.*",
 ]
 ignore_missing_imports = true

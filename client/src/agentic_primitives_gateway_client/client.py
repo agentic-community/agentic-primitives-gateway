@@ -880,6 +880,265 @@ class AgenticPlatformClient:
         self._raise_for_status(resp)
         return self._json_dict(resp)
 
+    # ── Policy ─────────────────────────────────────────────────────────
+
+    async def create_policy_engine(
+        self,
+        name: str,
+        description: str = "",
+        config: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        resp = await self._post(
+            "/api/v1/policy/engines",
+            json={"name": name, "description": description, "config": config or {}},
+        )
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def get_policy_engine(self, engine_id: str) -> dict[str, Any]:
+        resp = await self._get(f"/api/v1/policy/engines/{engine_id}")
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def delete_policy_engine(self, engine_id: str) -> None:
+        resp = await self._delete(f"/api/v1/policy/engines/{engine_id}")
+        if resp.status_code == 204:
+            return
+        self._raise_for_status(resp)
+
+    async def list_policy_engines(
+        self,
+        max_results: int = 100,
+        next_token: str | None = None,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {"max_results": max_results}
+        if next_token:
+            params["next_token"] = next_token
+        resp = await self._get("/api/v1/policy/engines", params=params)
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def create_policy(
+        self,
+        engine_id: str,
+        policy_body: str,
+        description: str = "",
+    ) -> dict[str, Any]:
+        resp = await self._post(
+            f"/api/v1/policy/engines/{engine_id}/policies",
+            json={"policy_body": policy_body, "description": description},
+        )
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def get_policy(self, engine_id: str, policy_id: str) -> dict[str, Any]:
+        resp = await self._get(f"/api/v1/policy/engines/{engine_id}/policies/{policy_id}")
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def update_policy(
+        self,
+        engine_id: str,
+        policy_id: str,
+        policy_body: str,
+        description: str | None = None,
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {"policy_body": policy_body}
+        if description is not None:
+            body["description"] = description
+        resp = await self._request(
+            "PUT",
+            f"/api/v1/policy/engines/{engine_id}/policies/{policy_id}",
+            json=body,
+        )
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def delete_policy(self, engine_id: str, policy_id: str) -> None:
+        resp = await self._delete(f"/api/v1/policy/engines/{engine_id}/policies/{policy_id}")
+        if resp.status_code == 204:
+            return
+        self._raise_for_status(resp)
+
+    async def list_policies(
+        self,
+        engine_id: str,
+        max_results: int = 100,
+        next_token: str | None = None,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {"max_results": max_results}
+        if next_token:
+            params["next_token"] = next_token
+        resp = await self._get(f"/api/v1/policy/engines/{engine_id}/policies", params=params)
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def start_policy_generation(
+        self,
+        engine_id: str,
+        config: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        resp = await self._post(
+            f"/api/v1/policy/engines/{engine_id}/generations",
+            json={"config": config or {}},
+        )
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def list_policy_generations(
+        self,
+        engine_id: str,
+        max_results: int = 100,
+        next_token: str | None = None,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {"max_results": max_results}
+        if next_token:
+            params["next_token"] = next_token
+        resp = await self._get(f"/api/v1/policy/engines/{engine_id}/generations", params=params)
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def get_policy_generation(self, engine_id: str, generation_id: str) -> dict[str, Any]:
+        resp = await self._get(f"/api/v1/policy/engines/{engine_id}/generations/{generation_id}")
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def list_policy_generation_assets(
+        self,
+        engine_id: str,
+        generation_id: str,
+        max_results: int = 100,
+        next_token: str | None = None,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {"max_results": max_results}
+        if next_token:
+            params["next_token"] = next_token
+        resp = await self._get(
+            f"/api/v1/policy/engines/{engine_id}/generations/{generation_id}/assets",
+            params=params,
+        )
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    # ── Evaluations ────────────────────────────────────────────────────
+
+    async def create_evaluator(
+        self,
+        name: str,
+        evaluator_type: str,
+        config: dict[str, Any] | None = None,
+        description: str = "",
+    ) -> dict[str, Any]:
+        resp = await self._post(
+            "/api/v1/evaluations/evaluators",
+            json={
+                "name": name,
+                "evaluator_type": evaluator_type,
+                "config": config or {},
+                "description": description,
+            },
+        )
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def get_evaluator(self, evaluator_id: str) -> dict[str, Any]:
+        resp = await self._get(f"/api/v1/evaluations/evaluators/{evaluator_id}")
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def update_evaluator(
+        self,
+        evaluator_id: str,
+        config: dict[str, Any] | None = None,
+        description: str | None = None,
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {}
+        if config is not None:
+            body["config"] = config
+        if description is not None:
+            body["description"] = description
+        resp = await self._request("PUT", f"/api/v1/evaluations/evaluators/{evaluator_id}", json=body)
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def delete_evaluator(self, evaluator_id: str) -> None:
+        resp = await self._delete(f"/api/v1/evaluations/evaluators/{evaluator_id}")
+        if resp.status_code == 204:
+            return
+        self._raise_for_status(resp)
+
+    async def list_evaluators(
+        self,
+        max_results: int = 100,
+        next_token: str | None = None,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {"max_results": max_results}
+        if next_token:
+            params["next_token"] = next_token
+        resp = await self._get("/api/v1/evaluations/evaluators", params=params)
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def evaluate(
+        self,
+        evaluator_id: str,
+        target: str | None = None,
+        input_data: str | None = None,
+        output_data: str | None = None,
+        expected_output: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {"evaluator_id": evaluator_id}
+        if target is not None:
+            body["target"] = target
+        if input_data is not None:
+            body["input_data"] = input_data
+        if output_data is not None:
+            body["output_data"] = output_data
+        if expected_output is not None:
+            body["expected_output"] = expected_output
+        if metadata:
+            body["metadata"] = metadata
+        resp = await self._post("/api/v1/evaluations/evaluate", json=body)
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def create_online_eval_config(
+        self,
+        name: str,
+        evaluator_ids: list[str],
+        config: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        resp = await self._post(
+            "/api/v1/evaluations/online-configs",
+            json={"name": name, "evaluator_ids": evaluator_ids, "config": config or {}},
+        )
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def get_online_eval_config(self, config_id: str) -> dict[str, Any]:
+        resp = await self._get(f"/api/v1/evaluations/online-configs/{config_id}")
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def delete_online_eval_config(self, config_id: str) -> None:
+        resp = await self._delete(f"/api/v1/evaluations/online-configs/{config_id}")
+        if resp.status_code == 204:
+            return
+        self._raise_for_status(resp)
+
+    async def list_online_eval_configs(
+        self,
+        max_results: int = 100,
+        next_token: str | None = None,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {"max_results": max_results}
+        if next_token:
+            params["next_token"] = next_token
+        resp = await self._get("/api/v1/evaluations/online-configs", params=params)
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
     # ── Observability ───────────────────────────────────────────────────
 
     async def ingest_trace(self, trace: dict[str, Any]) -> dict[str, Any]:

@@ -619,7 +619,8 @@ class AgentCoreMemoryProvider(SyncRunnerMixin, MemoryProvider):
                 "arn": mem.get("arn", ""),
             }
 
-        return await self._run_sync(_create)
+        result: dict[str, Any] = await self._run_sync(_create)
+        return result
 
     async def get_memory_resource(self, memory_id: str) -> dict[str, Any]:
         cp = self._get_control_plane_client()
@@ -634,7 +635,8 @@ class AgentCoreMemoryProvider(SyncRunnerMixin, MemoryProvider):
                 "arn": mem.get("arn", ""),
             }
 
-        return await self._run_sync(_get)
+        result: dict[str, Any] = await self._run_sync(_get)
+        return result
 
     async def list_memory_resources(self) -> list[dict[str, Any]]:
         cp = self._get_control_plane_client()
@@ -653,7 +655,8 @@ class AgentCoreMemoryProvider(SyncRunnerMixin, MemoryProvider):
                 )
             return result
 
-        return await self._run_sync(_list)
+        result: list[dict[str, Any]] = await self._run_sync(_list)
+        return result
 
     async def delete_memory_resource(self, memory_id: str) -> None:
         cp = self._get_control_plane_client()
@@ -682,7 +685,8 @@ class AgentCoreMemoryProvider(SyncRunnerMixin, MemoryProvider):
                 )
             return result
 
-        return await self._run_sync(_list)
+        strat_result: list[dict[str, Any]] = await self._run_sync(_list)
+        return strat_result
 
     async def add_strategy(
         self,
@@ -709,7 +713,8 @@ class AgentCoreMemoryProvider(SyncRunnerMixin, MemoryProvider):
                 }
             return {"strategy_id": ""}
 
-        return await self._run_sync(_add)
+        result: dict[str, Any] = await self._run_sync(_add)
+        return result
 
     async def delete_strategy(self, memory_id: str, strategy_id: str) -> None:
         cp = self._get_control_plane_client()

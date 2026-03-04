@@ -1,6 +1,6 @@
 # Agentic Primitives Gateway
 
-FastAPI service providing pluggable primitives (memory, observability, gateway, tools, identity, code_interpreter, browser) for AI agent infrastructure. Includes a declarative agents subsystem that runs LLM tool-call loops server-side. Separate async Python client in `client/`.
+FastAPI service providing pluggable primitives (memory, observability, gateway, tools, identity, code_interpreter, browser, policy, evaluations) for AI agent infrastructure. Includes a declarative agents subsystem that runs LLM tool-call loops server-side. Separate async Python client in `client/`.
 
 ## Project Structure
 
@@ -78,7 +78,10 @@ pre-commit run --all-files # Run all hooks on entire repo
 - **Agent tool handlers** — `agents/tools.py` defines a static tool catalog with `functools.partial` to bind namespace/session_id so the LLM doesn't need to specify them.
 - **BedrockConverseProvider** — `primitives/gateway/bedrock.py` translates between internal message format and Bedrock Converse API. Supports tool_use. Uses `SyncRunnerMixin` + `get_boto3_session()`.
 - **SeleniumGridBrowserProvider** — `primitives/browser/selenium_grid.py` provides self-hosted browser automation via Selenium WebDriver.
+- **DaytonaCodeInterpreterProvider** — `primitives/code_interpreter/daytona.py` provides sandboxed code execution via the Daytona SDK. Uses `SyncRunnerMixin`.
 - **JupyterCodeInterpreterProvider** — `primitives/code_interpreter/jupyter.py` provides code execution via Jupyter Server or Enterprise Gateway. Uses WebSocket for execution and kernel-based file I/O (works without the Contents REST API).
+- **AgentCorePolicyProvider** — `primitives/policy/agentcore.py` provides Cedar-based policy management via `bedrock-agentcore-control`. Supports engine CRUD, policy CRUD, and policy generation. Uses `SyncRunnerMixin` + `get_boto3_session()`.
+- **AgentCoreEvaluationsProvider** — `primitives/evaluations/agentcore.py` provides LLM-as-a-judge evaluations via dual clients: `bedrock-agentcore-control` for evaluator CRUD and `bedrock-agentcore` for runtime evaluation. Uses `SyncRunnerMixin`.
 
 ## Style
 

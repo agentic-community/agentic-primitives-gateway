@@ -81,6 +81,8 @@ class TestProviderDiscovery:
             "identity",
             "code_interpreter",
             "browser",
+            "policy",
+            "evaluations",
         }
         assert set(data.keys()) == expected
 

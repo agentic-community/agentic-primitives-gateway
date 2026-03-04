@@ -26,11 +26,13 @@ from agentic_primitives_gateway.routes import (
     agents,
     browser,
     code_interpreter,
+    evaluations,
     gateway,
     health,
     identity,
     memory,
     observability,
+    policy,
     tools,
 )
 from agentic_primitives_gateway.watcher import ConfigWatcher
@@ -219,6 +221,8 @@ app.include_router(tools.router)
 app.include_router(identity.router)
 app.include_router(code_interpreter.router)
 app.include_router(browser.router)
+app.include_router(policy.router)
+app.include_router(evaluations.router)
 app.include_router(agents.router)
 
 

@@ -11,10 +11,12 @@ from agentic_primitives_gateway.models.enums import Primitive
 from agentic_primitives_gateway.primitives.base import (
     BrowserProvider,
     CodeInterpreterProvider,
+    EvaluationsProvider,
     GatewayProvider,
     IdentityProvider,
     MemoryProvider,
     ObservabilityProvider,
+    PolicyProvider,
     ToolsProvider,
 )
 
@@ -30,6 +32,8 @@ _EXPECTED_TYPES: dict[str, type] = {
     Primitive.IDENTITY: IdentityProvider,
     Primitive.CODE_INTERPRETER: CodeInterpreterProvider,
     Primitive.BROWSER: BrowserProvider,
+    Primitive.POLICY: PolicyProvider,
+    Primitive.EVALUATIONS: EvaluationsProvider,
 }
 
 
@@ -215,6 +219,16 @@ class ProviderRegistry:
     @property
     def browser(self) -> BrowserProvider:
         provider: BrowserProvider = self.get_primitive(Primitive.BROWSER).get()
+        return provider
+
+    @property
+    def policy(self) -> PolicyProvider:
+        provider: PolicyProvider = self.get_primitive(Primitive.POLICY).get()
+        return provider
+
+    @property
+    def evaluations(self) -> EvaluationsProvider:
+        provider: EvaluationsProvider = self.get_primitive(Primitive.EVALUATIONS).get()
         return provider
 
 
