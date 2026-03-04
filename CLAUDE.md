@@ -78,6 +78,7 @@ pre-commit run --all-files # Run all hooks on entire repo
 - **Agent tool handlers** — `agents/tools.py` defines a static tool catalog with `functools.partial` to bind namespace/session_id so the LLM doesn't need to specify them.
 - **BedrockConverseProvider** — `primitives/gateway/bedrock.py` translates between internal message format and Bedrock Converse API. Supports tool_use. Uses `SyncRunnerMixin` + `get_boto3_session()`.
 - **SeleniumGridBrowserProvider** — `primitives/browser/selenium_grid.py` provides self-hosted browser automation via Selenium WebDriver.
+- **JupyterCodeInterpreterProvider** — `primitives/code_interpreter/jupyter.py` provides code execution via Jupyter Server or Enterprise Gateway. Uses WebSocket for execution and kernel-based file I/O (works without the Contents REST API).
 
 ## Style
 

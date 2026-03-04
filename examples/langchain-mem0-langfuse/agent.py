@@ -20,6 +20,11 @@ through the open-source stack:
     - Navigate, screenshot, read page content
     - Click elements, type into inputs, run JavaScript
 
+  Code Interpreter (Jupyter):
+    - Execute Python code in a live Jupyter kernel
+    - State persists across calls (variables, imports, data frames)
+    - View execution history
+
 Server config:
     ./run.sh milvus-langfuse
 
@@ -31,6 +36,9 @@ Prerequisites:
 
     # Selenium Grid for browser
     docker run -d --name selenium -p 4444:4444 -p 7900:7900 --shm-size="2g" selenium/standalone-chrome:latest
+
+    # Jupyter (Enterprise Gateway or full Server)
+    docker run -d --name jupyter -p 8888:8888 jupyter/base-notebook:latest
 
 Usage:
     export LANGFUSE_PUBLIC_KEY=pk-lf-...
@@ -49,7 +57,7 @@ from langchain.agents import create_agent
 from langchain_aws import ChatBedrock
 from langchain_core.tools import tool
 
-from agentic_primitives_gateway_client import AgenticPlatformClient, Browser, Memory, Observability
+from agentic_primitives_gateway_client import AgenticPlatformClient, Browser, CodeInterpreter, Memory, Observability
 
 # ── Platform client ─────────────────────────────────────────────────
 
@@ -105,6 +113,8 @@ memory = Memory(
 )
 
 browser = Browser(platform)
+
+code = CodeInterpreter(platform)
 
 
 # ── Memory: key-value tools ────────────────────────────────────────
@@ -307,6 +317,34 @@ async def run_js(expression: str) -> str:
     return result
 
 
+# ── Code interpreter (Jupyter kernel) ─────────────────────────────
+
+
+@tool
+async def execute_code(python_code: str) -> str:
+    """Execute Python code in a live Jupyter kernel.
+
+    State persists across calls — variables, imports, and data frames
+    survive between executions. Build up analysis step by step.
+
+    Args:
+        python_code: The Python code to execute.
+    """
+    result = await code.execute(python_code)
+    await obs.trace("code:execute", {"code": python_code[:200]}, result[:500])
+    return result
+
+
+@tool
+async def execution_history(limit: int = 10) -> str:
+    """View recent code execution history for the current session.
+
+    Args:
+        limit: Maximum number of entries to return.
+    """
+    return await code.history(limit)
+
+
 # ── Observability: Langfuse features ──────────────────────────────
 
 
@@ -384,7 +422,8 @@ async def view_sessions(limit: int = 10) -> str:
 
 SYSTEM_PROMPT = """\
 You are a research assistant with persistent memory backed by mem0 + \
-Milvus, a browser via Selenium Grid, and full observability through Langfuse.
+Milvus, a browser via Selenium Grid, a Jupyter kernel for code execution, \
+and full observability through Langfuse.
 
 **Memory** (mem0 + Milvus vector search):
 - `remember` — store with semantic indexing
@@ -395,6 +434,12 @@ Milvus, a browser via Selenium Grid, and full observability through Langfuse.
 - `add_message`, `get_conversation_history` — event-based conversation log
 - `list_sessions` — see all conversation sessions
 - `fork_conversation`, `list_branches` — branch conversations
+
+**Code Interpreter** (Jupyter kernel):
+- `execute_code` — run Python in a live kernel; state persists across calls
+- `execution_history` — view recent executions
+- Build up analysis step by step: import, load, transform, visualize
+- Variables, imports, and data frames survive between calls
 
 **Browser** (Selenium Grid — self-hosted):
 - `open_browser` — start a browser session
@@ -441,6 +486,9 @@ async def main():
             # Memory: branching
             fork_conversation,
             list_branches,
+            # Code interpreter (Jupyter)
+            execute_code,
+            execution_history,
             # Browser (Selenium Grid)
             open_browser,
             close_browser,
@@ -460,7 +508,7 @@ async def main():
         system_prompt=SYSTEM_PROMPT,
     )
 
-    print("LangChain + mem0/Milvus + Selenium + Langfuse agent ready.")
+    print("LangChain + mem0/Milvus + Jupyter + Selenium + Langfuse agent ready.")
     print(f"Namespace: {AGENT_NAMESPACE}")
     print(f"Session: {SESSION_ID}")
     print(f"Langfuse session: {obs.session_id}")
@@ -534,6 +582,7 @@ async def main():
         else:
             print("\nAssistant: (no response)\n")
 
+    await code.close()
     await browser.close()
     await obs.flush()
     await obs.log("info", "LangChain mem0+langfuse agent stopped")

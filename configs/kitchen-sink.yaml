@@ -76,6 +76,14 @@ providers:
         backend: "agentic_primitives_gateway.primitives.code_interpreter.agentcore.AgentCoreCodeInterpreterProvider"
         config:
           region: "${AWS_REGION:=us-east-1}"
+      jupyter:
+        backend: "agentic_primitives_gateway.primitives.code_interpreter.jupyter.JupyterCodeInterpreterProvider"
+        config:
+          base_url: "${JUPYTER_URL:=http://localhost:8888}"
+          token: "${JUPYTER_TOKEN:=}"
+          kernel_name: "${JUPYTER_KERNEL:=python3}"
+          execution_timeout: 30.0
+          file_root: "${JUPYTER_FILE_ROOT:=/tmp}"
 
   browser:
     default: "noop"
