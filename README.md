@@ -1,6 +1,6 @@
 # Agentic Primitives Gateway -- Operator Manual
 
-Agentic Primitives Gateway is a Kubernetes-deployed REST API service that abstracts agent infrastructure primitives behind a unified API. Agent developers call this service without knowing backend implementations. Platform operators swap backends via configuration. Requests can dynamically select which backend to use via header-based provider routing.
+Agentic Primitives Gateway is a REST API service that abstracts agent infrastructure primitives behind a unified API. Agent developers call this service without knowing backend implementations. Platform operators swap backends via configuration. Requests can dynamically select which backend to use via header-based provider routing.
 
 ## Architecture
 
@@ -42,8 +42,8 @@ Agentic Primitives Gateway is a Kubernetes-deployed REST API service that abstra
  |--------| |---------| |Interp | |-----| |------| |-------| |-------| |-------| |----------|
  | Noop   | |Noop     | |Noop   | |Noop | |Noop  | |Noop   | |Noop   | |Noop   | | Noop     |
  | InMem  | |AgntCore | |AgntCr | |Agnt | |Lang  | |Bedrock| |Agnt   | |Agnt   | | AgntCore |
- | Mem0   | |Keycloak | |Dayton | |Core | |fuse  | |Convrs | |Core   | |Core   | | MCP      |
- | Agnt   | |Entra    | |Juptyr | |Seln | |Agnt  | |       | |       | |       | | Registry |
+ | Mem0   | |Keycloak | |Juptyr | |Core | |fuse  | |Convrs | |Core   | |Core   | | MCP      |
+ | Agnt   | |Entra    | |       | |Seln | |Agnt  | |       | |       | |       | | Registry |
  | Core   | |Okta     | |       | |Grid | |Core  | |       | |       | |       | |          |
  +--------+ +---------+ +-------+ +-----+ +------+ +-------+ +-------+ +-------+ +----------+
 ```
@@ -54,7 +54,7 @@ Agentic Primitives Gateway is a Kubernetes-deployed REST API service that abstra
 |-----------|-------------|--------------------|
 | **Memory** | Key-value memory, conversation events, session/branch management, memory resource lifecycle, strategy management | `NoopMemoryProvider`, `InMemoryProvider`, `Mem0MemoryProvider` (Milvus), `AgentCoreMemoryProvider` |
 | **Identity** | Workload identity tokens, OAuth2 token exchange (M2M + 3LO), API key retrieval, credential provider and workload identity management | `NoopIdentityProvider`, `AgentCoreIdentityProvider`, `KeycloakIdentityProvider`, `EntraIdentityProvider`, `OktaIdentityProvider` |
-| **Code Interpreter** | Sandboxed code execution sessions with execution history | `NoopCodeInterpreterProvider`, `AgentCoreCodeInterpreterProvider`, `DaytonaCodeInterpreterProvider`, `JupyterCodeInterpreterProvider` |
+| **Code Interpreter** | Sandboxed code execution sessions with execution history | `NoopCodeInterpreterProvider`, `AgentCoreCodeInterpreterProvider`, `JupyterCodeInterpreterProvider` |
 | **Browser** | Cloud-based browser automation | `NoopBrowserProvider`, `AgentCoreBrowserProvider`, `SeleniumGridBrowserProvider` |
 | **Observability** | Trace/log ingestion, LLM generation tracking, evaluation scoring, session management | `NoopObservabilityProvider`, `LangfuseObservabilityProvider`, `AgentCoreObservabilityProvider` |
 | **Gateway** | LLM request routing with tool_use support | `NoopGatewayProvider`, `BedrockConverseProvider` |
@@ -210,7 +210,7 @@ Control plane endpoints return 501 if not supported by the configured provider.
 | `POST` | `/sessions/{session_id}/files` | Upload a file to a session (multipart). |
 | `GET` | `/sessions/{session_id}/files/{filename}` | Download a file from a session (binary). |
 
-Session details and execution history endpoints return 501 if not supported by the configured provider. Both `NoopCodeInterpreterProvider` and `AgentCoreCodeInterpreterProvider` support session details. `AgentCoreCodeInterpreterProvider`, `DaytonaCodeInterpreterProvider`, and `JupyterCodeInterpreterProvider` store execution history.
+Session details and execution history endpoints return 501 if not supported by the configured provider. Both `NoopCodeInterpreterProvider` and `AgentCoreCodeInterpreterProvider` support session details. `AgentCoreCodeInterpreterProvider`, and `JupyterCodeInterpreterProvider` store execution history.
 
 ### Browser (`/api/v1/browser`)
 
@@ -818,27 +818,6 @@ browser:
 
 AgentCore providers use **per-request credential pass-through**. The server does not use its own AWS credentials. Instead, each client request sends AWS credentials via headers, and the server forwards them to AgentCore. See [AWS Credential Pass-Through](#aws-credential-pass-through) below.
 
-### Code Interpreter: Daytona
-
-Requires the `daytona` optional dependencies:
-
-```bash
-pip install agentic-primitives-gateway[daytona]
-```
-
-```yaml
-code_interpreter:
-  default: "daytona"
-  backends:
-    daytona:
-      backend: "agentic_primitives_gateway.primitives.code_interpreter.daytona.DaytonaCodeInterpreterProvider"
-      config:
-        api_key: "${DAYTONA_API_KEY}"
-        api_url: "https://app.daytona.io/api"
-```
-
-Daytona provides sandboxed code execution via the [Daytona SDK](https://github.com/daytonaio/sdk). Each session creates a Daytona sandbox with process execution and file I/O support. Works with Daytona Cloud or self-hosted deployments.
-
 ### Code Interpreter: Jupyter
 
 Requires the `jupyter` optional dependencies:
@@ -1261,7 +1240,6 @@ agentic-primitives-gateway/
 │       ├── code_interpreter/
 │       │   ├── noop.py
 │       │   ├── agentcore.py        # AWS Bedrock AgentCore
-│       │   ├── daytona.py          # Daytona (self-hosted/cloud)
 │       │   └── jupyter.py          # Jupyter Server / Enterprise Gateway
 │       ├── browser/
 │       │   ├── noop.py
