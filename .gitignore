@@ -39,6 +39,7 @@ htmlcov/
 # Distribution
 *.whl
 *.tar.gz
+*.pdf
 
 # Environment / secrets
 .env

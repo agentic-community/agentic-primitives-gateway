@@ -1,4 +1,4 @@
-.PHONY: lint format typecheck check test test-client install install-hooks
+.PHONY: lint format typecheck check test test-client install install-hooks pdf
 
 lint:
 	ruff check .
@@ -25,3 +25,6 @@ install:
 
 install-hooks:
 	pre-commit install
+
+pdf:
+	python scripts/md2pdf.py

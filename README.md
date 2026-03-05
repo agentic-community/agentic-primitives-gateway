@@ -826,118 +826,317 @@ If an unknown provider name is specified, the server returns HTTP 400 with the l
 
 To change which backend a primitive uses, update the config. The platform dynamically imports provider classes at startup. With the multi-provider format, you can configure multiple backends and switch between them at runtime via headers, or set a different default.
 
-### Memory: In-Memory (dev/test)
+All AgentCore providers require `pip install agentic-primitives-gateway[agentcore]` and use **per-request credential pass-through** -- the server forwards client-supplied `X-AWS-*` headers to AgentCore. See [AWS Credential Pass-Through](#aws-credential-pass-through).
+
+### Memory
+
+#### In-Memory (dev/test)
 
 ```yaml
 memory:
-  default: "in_memory"
-  backends:
-    in_memory:
-      backend: "agentic_primitives_gateway.primitives.memory.in_memory.InMemoryProvider"
-      config: {}
+  backend: "agentic_primitives_gateway.primitives.memory.in_memory.InMemoryProvider"
+  config: {}
 ```
 
-No external dependencies. Data lives in process memory and is lost on restart.
+No external dependencies. Data lives in process memory and is lost on restart. Supports key-value operations, conversation events, session management, and branch forking.
 
-### Memory: mem0 + Milvus (production)
+#### mem0 + Milvus
 
-Requires the `mem0` optional dependencies:
-
-```bash
-pip install agentic-primitives-gateway[mem0]
-```
+Requires: `pip install agentic-primitives-gateway[mem0]`
 
 ```yaml
 memory:
-  default: "mem0"
-  backends:
-    mem0:
-      backend: "agentic_primitives_gateway.primitives.memory.mem0_provider.Mem0MemoryProvider"
+  backend: "agentic_primitives_gateway.primitives.memory.mem0_provider.Mem0MemoryProvider"
+  config:
+    vector_store:
+      provider: milvus
       config:
-        vector_store:
-          provider: milvus
-          config:
-            collection_name: agentic_memories
-            url: "http://milvus:19530"
-        llm:
-          provider: aws_bedrock
-          config:
-            model: us.anthropic.claude-sonnet-4-20250514-v1:0
-        embedder:
-          provider: aws_bedrock
-          config:
-            model: amazon.titan-embed-text-v2:0
+        collection_name: agentic_memories
+        url: "http://milvus:19530"
+    llm:
+      provider: aws_bedrock
+      config:
+        model: us.anthropic.claude-sonnet-4-20250514-v1:0
+    embedder:
+      provider: aws_bedrock
+      config:
+        model: amazon.titan-embed-text-v2:0
 ```
 
-mem0 uses Bedrock for its LLM calls (memory extraction, deduplication). AWS credentials are forwarded from the client via the `X-AWS-*` headers. The `vector_store.provider` can be changed to `weaviate`, `qdrant`, `chroma`, or any other backend that mem0 supports -- the platform does not need to change.
+mem0 provides semantic memory with automatic extraction and deduplication. Uses Bedrock for LLM calls and Milvus for vector storage. The `vector_store.provider` can be changed to `weaviate`, `qdrant`, `chroma`, or any other backend that mem0 supports.
 
-### Memory / Identity / Code Interpreter / Browser / Observability: AWS Bedrock AgentCore
-
-Requires the `agentcore` optional dependencies:
-
-```bash
-pip install agentic-primitives-gateway[agentcore]
-```
+#### AgentCore
 
 ```yaml
 memory:
-  default: "agentcore"
-  backends:
-    agentcore:
-      backend: "agentic_primitives_gateway.primitives.memory.agentcore.AgentCoreMemoryProvider"
-      config:
-        memory_id: "your-memory-id"
-        region: "us-east-1"
+  backend: "agentic_primitives_gateway.primitives.memory.agentcore.AgentCoreMemoryProvider"
+  config:
+    region: "us-east-1"
+```
 
+AWS-managed memory with full support for all operations including memory resource lifecycle and strategy management. The `memory_id` can be set per-request via `X-Cred-Agentcore-Memory-Id` header or in provider config.
+
+### Identity
+
+#### AgentCore
+
+```yaml
 identity:
-  default: "agentcore"
-  backends:
-    agentcore:
-      backend: "agentic_primitives_gateway.primitives.identity.agentcore.AgentCoreIdentityProvider"
-      config:
-        region: "us-east-1"
-
-code_interpreter:
-  default: "agentcore"
-  backends:
-    agentcore:
-      backend: "agentic_primitives_gateway.primitives.code_interpreter.agentcore.AgentCoreCodeInterpreterProvider"
-      config:
-        region: "us-east-1"
-
-browser:
-  default: "agentcore"
-  backends:
-    agentcore:
-      backend: "agentic_primitives_gateway.primitives.browser.agentcore.AgentCoreBrowserProvider"
-      config:
-        region: "us-east-1"
+  backend: "agentic_primitives_gateway.primitives.identity.agentcore.AgentCoreIdentityProvider"
+  config:
+    region: "us-east-1"
 ```
 
-AgentCore providers use **per-request credential pass-through**. The server does not use its own AWS credentials. Instead, each client request sends AWS credentials via headers, and the server forwards them to AgentCore. See [AWS Credential Pass-Through](#aws-credential-pass-through) below.
+AWS-managed identity with workload tokens, credential provider CRUD, and workload identity management. Supports M2M and 3-legged OAuth flows.
 
-### Code Interpreter: Jupyter
+#### Keycloak
 
-Requires the `jupyter` optional dependencies:
+Requires: `pip install agentic-primitives-gateway[keycloak]`
 
-```bash
-pip install agentic-primitives-gateway[jupyter]
+```yaml
+identity:
+  backend: "agentic_primitives_gateway.primitives.identity.keycloak.KeycloakIdentityProvider"
+  config:
+    server_url: "http://keycloak:8080"
+    realm: "agents"
+    client_id: "agentic-gateway"
+    client_secret: "${KEYCLOAK_CLIENT_SECRET}"
 ```
+
+OpenID Connect identity provider using Keycloak. Supports token exchange, API keys via custom attributes, credential provider CRUD via Admin REST API, and workload identity management.
+
+#### Microsoft Entra ID (Azure AD)
+
+Requires: `pip install agentic-primitives-gateway[entra]`
+
+```yaml
+identity:
+  backend: "agentic_primitives_gateway.primitives.identity.entra.EntraIdentityProvider"
+  config:
+    tenant_id: "${AZURE_TENANT_ID}"
+    client_id: "${AZURE_CLIENT_ID}"
+    client_secret: "${AZURE_CLIENT_SECRET}"
+```
+
+Microsoft Entra ID identity provider using MSAL and Microsoft Graph API. Supports client credential flows, token exchange, and application/service principal management.
+
+#### Okta
+
+Requires: `pip install agentic-primitives-gateway[okta]`
+
+```yaml
+identity:
+  backend: "agentic_primitives_gateway.primitives.identity.okta.OktaIdentityProvider"
+  config:
+    domain: "${OKTA_DOMAIN}"
+    client_id: "${OKTA_CLIENT_ID}"
+    client_secret: "${OKTA_CLIENT_SECRET}"
+    api_token: "${OKTA_API_TOKEN}"
+    auth_server: "default"
+```
+
+Okta identity provider using OAuth2 endpoints and the Okta Management API. Supports token exchange, API key retrieval via user profiles, and application management.
+
+### Code Interpreter
+
+#### AgentCore
 
 ```yaml
 code_interpreter:
-  default: "jupyter"
-  backends:
-    jupyter:
-      backend: "agentic_primitives_gateway.primitives.code_interpreter.jupyter.JupyterCodeInterpreterProvider"
-      config:
-        base_url: "${JUPYTER_URL:=http://localhost:8888}"
-        token: "${JUPYTER_TOKEN:=}"
-        kernel_name: "python3"
-        execution_timeout: 30.0
+  backend: "agentic_primitives_gateway.primitives.code_interpreter.agentcore.AgentCoreCodeInterpreterProvider"
+  config:
+    region: "us-east-1"
 ```
 
-Jupyter provides code execution via a Jupyter Server or Enterprise Gateway. Each session creates a kernel with persistent state across calls. Uses WebSocket for execution and kernel-based file I/O.
+AWS-managed sandboxed code execution with session management, execution history, and file I/O.
+
+#### Jupyter
+
+Requires: `pip install agentic-primitives-gateway[jupyter]`
+
+```yaml
+code_interpreter:
+  backend: "agentic_primitives_gateway.primitives.code_interpreter.jupyter.JupyterCodeInterpreterProvider"
+  config:
+    base_url: "${JUPYTER_URL:=http://localhost:8888}"
+    token: "${JUPYTER_TOKEN:=}"
+    kernel_name: "python3"
+    execution_timeout: 30.0
+    file_root: "/tmp"
+```
+
+Code execution via a Jupyter Server or Enterprise Gateway. Each session creates a kernel with persistent state across calls. Uses WebSocket for execution and kernel-based file I/O (works without the Jupyter Contents REST API).
+
+### Browser
+
+#### AgentCore
+
+```yaml
+browser:
+  backend: "agentic_primitives_gateway.primitives.browser.agentcore.AgentCoreBrowserProvider"
+  config:
+    region: "us-east-1"
+```
+
+AWS-managed browser automation using Playwright over CDP. Supports session lifecycle, navigation, screenshots, clicking, typing, JavaScript evaluation, and live view URLs.
+
+#### Selenium Grid
+
+Requires: `pip install agentic-primitives-gateway[selenium]`
+
+```yaml
+browser:
+  backend: "agentic_primitives_gateway.primitives.browser.selenium_grid.SeleniumGridBrowserProvider"
+  config:
+    hub_url: "${SELENIUM_HUB_URL:=http://localhost:4444}"
+    browser: "chrome"
+```
+
+Self-hosted browser automation via Selenium WebDriver. Connects to a Selenium Grid hub and creates browser sessions on demand. Supports Chrome, Firefox, and Edge. Good for air-gapped environments where cloud browser services are not available.
+
+### Observability
+
+#### Langfuse
+
+Requires: `pip install agentic-primitives-gateway[langfuse]`
+
+```yaml
+observability:
+  backend: "agentic_primitives_gateway.primitives.observability.langfuse.LangfuseObservabilityProvider"
+  config:
+    public_key: "${LANGFUSE_PUBLIC_KEY:=}"
+    secret_key: "${LANGFUSE_SECRET_KEY:=}"
+    base_url: "${LANGFUSE_BASE_URL:=https://cloud.langfuse.com}"
+```
+
+Full observability via Langfuse. Supports trace/log ingestion, LLM generation tracking, evaluation scoring, session management, trace retrieval, and flush. Credentials can be overridden per-request via `X-Cred-Langfuse-*` headers.
+
+#### AgentCore
+
+```yaml
+observability:
+  backend: "agentic_primitives_gateway.primitives.observability.agentcore.AgentCoreObservabilityProvider"
+  config:
+    region: "us-east-1"
+    service_name: "agentic-primitives-gateway"
+    agent_id: "my-agent"
+```
+
+AWS-managed observability using ADOT (AWS Distro for OpenTelemetry) to send traces to CloudWatch/X-Ray. Supports trace ingestion, LLM generation logging, and flush.
+
+### Gateway
+
+#### Bedrock Converse
+
+```yaml
+gateway:
+  backend: "agentic_primitives_gateway.primitives.gateway.bedrock.BedrockConverseProvider"
+  config:
+    region: "us-east-1"
+    default_model: "us.anthropic.claude-sonnet-4-20250514-v1:0"
+```
+
+LLM request routing via the AWS Bedrock Converse API. Supports tool_use, system prompts, and multi-turn conversations. The model can be overridden per-request in the completion body. Uses per-request AWS credential pass-through.
+
+### Tools
+
+#### AgentCore Gateway
+
+```yaml
+tools:
+  backend: "agentic_primitives_gateway.primitives.tools.agentcore.AgentCoreGatewayProvider"
+  config:
+    region: "us-east-1"
+    gateway_id: "${AGENTCORE_GATEWAY_ID:=}"
+    gateway_url: "${AGENTCORE_GATEWAY_URL:=}"
+```
+
+Tool discovery and invocation via AWS Bedrock AgentCore Gateway using the MCP protocol. Provide either `gateway_id` (resolved to a URL at runtime) or `gateway_url` (direct endpoint). Can also be set per-request via `X-Cred-Agentcore-Gateway-Id` or `X-Cred-Agentcore-Gateway-Url` headers.
+
+#### MCP Registry
+
+```yaml
+tools:
+  backend: "agentic_primitives_gateway.primitives.tools.mcp_registry.MCPRegistryProvider"
+  config:
+    base_url: "${MCP_REGISTRY_URL:=http://localhost:8080}"
+    token: "${MCP_REGISTRY_TOKEN:=}"
+    verify_ssl: true
+```
+
+Centralized tool discovery and invocation via an MCP Gateway Registry. Supports tool registration, search, invocation, deletion, and MCP server management. The registry URL and auth token can be overridden per-request via `X-Cred-Mcp-Registry-Url` and `X-Cred-Mcp-Registry-Token` headers.
+
+### Policy
+
+#### AgentCore
+
+```yaml
+policy:
+  backend: "agentic_primitives_gateway.primitives.policy.agentcore.AgentCorePolicyProvider"
+  config:
+    region: "us-east-1"
+```
+
+Cedar-based policy management via AWS Bedrock AgentCore. Supports policy engine CRUD, policy CRUD, and optional policy generation (auto-generate policies from agent behavior). Policy definitions are normalized to raw Cedar strings on read.
+
+#### Noop (In-Memory)
+
+```yaml
+policy:
+  backend: "agentic_primitives_gateway.primitives.policy.noop.NoopPolicyProvider"
+  config: {}
+```
+
+In-memory policy store for development and testing. Supports all CRUD operations but data is lost on restart. Policy generation is not supported.
+
+### Evaluations
+
+#### AgentCore
+
+```yaml
+evaluations:
+  backend: "agentic_primitives_gateway.primitives.evaluations.agentcore.AgentCoreEvaluationsProvider"
+  config:
+    region: "us-east-1"
+```
+
+LLM-as-a-judge evaluations via AWS Bedrock AgentCore. Uses `bedrock-agentcore-control` for evaluator CRUD and `bedrock-agentcore` for runtime evaluation. Supports built-in evaluators (`Builtin.Helpfulness`, `Builtin.Coherence`, etc.), custom evaluators, and online evaluation configs.
+
+#### Noop (In-Memory)
+
+```yaml
+evaluations:
+  backend: "agentic_primitives_gateway.primitives.evaluations.noop.NoopEvaluationsProvider"
+  config: {}
+```
+
+In-memory evaluator store for development and testing. Returns placeholder evaluation results. Online evaluation configs are not supported.
+
+### Enforcement
+
+#### Cedar (cedarpy)
+
+Requires: `pip install agentic-primitives-gateway[cedar]`
+
+```yaml
+enforcement:
+  backend: "agentic_primitives_gateway.enforcement.cedar.CedarPolicyEnforcer"
+  config:
+    policy_refresh_interval: 30
+    engine_id: "my-engine"   # optional: scope to a single policy engine
+```
+
+Local Cedar policy evaluation via the Rust-backed `cedarpy` library. Reads policies from whichever `PolicyProvider` is configured (noop, AgentCore) and evaluates authorization requests at sub-millisecond latency. Background task refreshes policies every N seconds. Default-deny when active: no loaded policies = all requests blocked. See the [Policy Enforcement](#policy-enforcement) section for details.
+
+#### Noop (default)
+
+```yaml
+enforcement:
+  backend: "agentic_primitives_gateway.enforcement.noop.NoopPolicyEnforcer"
+  config: {}
+```
+
+No enforcement -- all requests are allowed. This is the default when no enforcement is configured. The gateway behaves identically to before enforcement was added.
 
 ---
 
@@ -1292,6 +1491,58 @@ The `AgentCoreMemoryProvider` resolves `memory_id` per-request in this order:
 1. **Client header** `X-Cred-Agentcore-Memory-Id` (via `set_service_credentials("agentcore", {"memory_id": "..."})`)
 2. **Config default** -- if `memory_id` is set in the provider's config block
 3. **Error** -- raises a clear error instructing the user to provide a memory_id. AgentCore memory IDs must be created via the AgentCore console or API first.
+
+---
+
+## Multi-Tenancy
+
+The gateway can serve multiple agents, users, or teams from a single deployment. Some isolation mechanisms work out of the box; others require additional configuration or an authenticating reverse proxy.
+
+### What works today
+
+**Request-scoped credential isolation.** AWS credentials (`X-AWS-*`), service credentials (`X-Cred-*`), and provider routing (`X-Provider-*`) are stored in Python `contextvars` scoped to the current request. One tenant's credentials never leak to another tenant's request, even under concurrent load. This is the foundation of the gateway's multi-tenancy model.
+
+**Per-request provider routing.** Different tenants can route to different backends on the same request via `X-Provider-*` headers. For example, tenant A can use `mem0` for memory while tenant B uses `agentcore`, without any server-side configuration changes.
+
+**Cedar policy enforcement.** When the `CedarPolicyEnforcer` is active, each request is evaluated against Cedar policies using the caller's principal (`X-Agent-Id`). Policies can scope access per agent, per action, and per resource. Cedar's `forbid` overrides `permit`, so you can grant broad access and then carve out restrictions. See [Policy Enforcement](#policy-enforcement).
+
+**Memory namespace isolation.** Memory operations are scoped by namespace (`/api/v1/memory/{namespace}`). Tenants using different namespaces (e.g., `agent:tenant-a:session-1` vs `agent:tenant-b:session-1`) cannot read each other's data. This is a convention -- the gateway does not enforce namespace boundaries unless Cedar policies are configured to do so.
+
+**Per-request AWS identity.** AgentCore providers create a fresh `boto3.Session` per request using the caller's credentials. Each agent authenticates with its own AWS identity -- there are no shared service credentials (unless `allow_server_credentials` is enabled as a fallback).
+
+**Stateless server.** The gateway holds no tenant-specific state in memory between requests (aside from the in-memory providers, which are dev-only). In Kubernetes, any replica can serve any tenant's request.
+
+### What requires configuration
+
+**Policy enforcement must be explicitly enabled.** The default is `NoopPolicyEnforcer` (all requests allowed). To enforce per-tenant access control, configure `CedarPolicyEnforcer` and create policies that scope access by principal. Without enforcement, any caller can access any primitive with any namespace.
+
+**External backend providers are recommended.** The in-memory providers (`InMemoryProvider`, `NoopPolicyProvider`, `NoopEvaluationsProvider`) share a single process-global store -- all tenants see the same data. For multi-tenant deployments, use external backends (AgentCore, mem0+Milvus, Langfuse) where data isolation is handled by the backend itself.
+
+**Agent definitions are shared.** The `FileAgentStore` exposes all agent specs to all callers via the `/api/v1/agents` API. Any caller can create, read, update, or delete any agent. To restrict agent management, use Cedar policies scoping `agents:create_agent`, `agents:update_agent`, and `agents:delete_agent` to specific principals.
+
+### What does NOT work today (known gaps)
+
+**No built-in authentication.** The gateway does not verify caller identity. Headers like `X-Agent-Id`, `X-AWS-*`, and `X-Cred-*` are trusted as-is. In a multi-tenant production deployment, place an authenticating reverse proxy (e.g., AWS ALB with Cognito, Envoy with OAuth2, or an API gateway with JWT validation) in front of the gateway to validate identity before requests reach it. The reverse proxy should set `X-Agent-Id` based on the verified identity.
+
+**No tenant-scoped metrics.** Prometheus metrics (`/metrics`) are aggregated across all tenants. There is no per-tenant breakdown of request counts, latencies, or error rates. If you need tenant-level observability, use the `X-Agent-Id` header in your proxy's access logs or configure per-tenant Langfuse projects via `X-Cred-Langfuse-*` headers.
+
+**No tenant-level rate limiting or quotas.** The gateway does not limit requests per tenant. Rate limiting should be handled by the reverse proxy or API gateway in front of the gateway.
+
+**No tenant-scoped agent store.** Agent specs are global -- there is no concept of "tenant A's agents" vs "tenant B's agents" at the storage level. Cedar policies can restrict who can manage which agents, but the underlying store is shared.
+
+### Deployment patterns
+
+**Single-tenant (simplest).** One gateway instance per tenant. No authentication needed. Each instance has its own config, agent store, and credentials. Suitable for development, single-team use, or when each tenant runs in a separate Kubernetes namespace.
+
+**Multi-tenant with authenticating proxy.** One shared gateway behind a reverse proxy that validates identity (JWT, OAuth2, mTLS) and sets `X-Agent-Id`. Cedar policies enforce per-tenant access. External backends (AgentCore, Langfuse) provide data isolation. This is the recommended production pattern.
+
+```
+Client → Auth Proxy (validate JWT, set X-Agent-Id)
+       → Gateway (Cedar enforcement, provider routing)
+       → External backends (AgentCore, Milvus, Langfuse)
+```
+
+**Multi-tenant with per-tenant credentials.** Each tenant sends their own AWS credentials (`X-AWS-*`) or service credentials (`X-Cred-*`). The gateway forwards them to backends. Tenants are isolated at the backend level (separate AWS accounts, separate Langfuse projects). No Cedar enforcement needed if backend-level isolation is sufficient.
 
 ---
 
