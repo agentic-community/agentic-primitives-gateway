@@ -76,11 +76,6 @@ providers:
         backend: "agentic_primitives_gateway.primitives.code_interpreter.agentcore.AgentCoreCodeInterpreterProvider"
         config:
           region: "${AWS_REGION:=us-east-1}"
-      daytona:
-        backend: "agentic_primitives_gateway.primitives.code_interpreter.daytona.DaytonaCodeInterpreterProvider"
-        config:
-          api_key: "${DAYTONA_API_KEY:=}"
-          api_url: "${DAYTONA_API_URL:=https://app.daytona.io/api}"
       jupyter:
         backend: "agentic_primitives_gateway.primitives.code_interpreter.jupyter.JupyterCodeInterpreterProvider"
         config:
@@ -156,10 +151,19 @@ providers:
           base_url: "${MCP_REGISTRY_URL:=http://localhost:8080}"
           verify_ssl: false
 
+## Policy enforcement via Cedar. The CedarPolicyEnforcer evaluates every
+## request against Cedar policies loaded from the policy provider above.
+## Default-deny: when enabled with no policies, all non-exempt requests
+## are blocked. Policies are refreshed from the store every N seconds.
+##
+## Actions are auto-discovered from route definitions:
+##   memory:store_memory, memory:retrieve_memory, gateway:route_completion, etc.
+##
+## Test with: python examples/enforcement_demo.py
 enforcement:
   backend: "agentic_primitives_gateway.enforcement.cedar.CedarPolicyEnforcer"
   config:
-    policy_refresh_interval: 30
+    policy_refresh_interval: 5   # short interval for demo; use 30+ in production
 
 allow_server_credentials: true
 
