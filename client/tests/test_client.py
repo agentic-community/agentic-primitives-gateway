@@ -579,6 +579,7 @@ class TestAWSCredentials:
         client._aws_from_environment = False
         client._provider_headers = {}
         client._service_cred_headers = {}
+        client._agent_id_header = {}
         client.set_aws_credentials(
             access_key_id="AKIA_TEST",
             secret_access_key="SECRET_TEST",
@@ -597,6 +598,7 @@ class TestAWSCredentials:
         client._aws_from_environment = False
         client._provider_headers = {}
         client._service_cred_headers = {}
+        client._agent_id_header = {}
         client.clear_aws_credentials()
         assert client._headers == {}
 
@@ -606,6 +608,7 @@ class TestAWSCredentials:
         client._aws_from_environment = False
         client._provider_headers = {}
         client._service_cred_headers = {}
+        client._agent_id_header = {}
         assert client._headers == {}
 
     def test_aws_from_environment_resolves_credentials(self) -> None:
@@ -631,6 +634,7 @@ class TestAWSCredentials:
         client._aws_env_region = None
         client._provider_headers = {}
         client._service_cred_headers = {}
+        client._agent_id_header = {}
 
         with patch("boto3.Session", return_value=mock_session):
             headers = client._headers
@@ -663,6 +667,7 @@ class TestAWSCredentials:
         client._aws_env_region = "eu-west-1"  # explicit override
         client._provider_headers = {}
         client._service_cred_headers = {}
+        client._agent_id_header = {}
 
         with patch("boto3.Session", return_value=mock_session):
             headers = client._headers
@@ -684,6 +689,7 @@ class TestAWSCredentials:
         client._aws_env_region = None
         client._provider_headers = {}
         client._service_cred_headers = {}
+        client._agent_id_header = {}
 
         with patch("boto3.Session", return_value=mock_session):
             headers = client._headers
@@ -919,3 +925,43 @@ class TestClientEvaluations:
                 output_data="Python is a programming language.",
             )
             assert "evaluation_results" in result
+
+
+class TestAgentId:
+    def _make_client(self) -> AgenticPlatformClient:
+        client = AgenticPlatformClient.__new__(AgenticPlatformClient)
+        client._aws_headers = {}
+        client._aws_from_environment = False
+        client._provider_headers = {}
+        client._service_cred_headers = {}
+        client._agent_id_header = {}
+        return client
+
+    def test_set_agent_id(self) -> None:
+        client = self._make_client()
+        client.set_agent_id("my-agent")
+        assert client._headers["x-agent-id"] == "my-agent"
+
+    def test_clear_agent_id(self) -> None:
+        client = self._make_client()
+        client.set_agent_id("my-agent")
+        client.clear_agent_id()
+        assert "x-agent-id" not in client._headers
+
+    def test_agent_id_in_constructor(self) -> None:
+        """agent_id constructor param sets the header."""
+        client = self._make_client()
+        client._agent_id_header = {}
+        client.set_agent_id("init-agent")
+        assert client._headers["x-agent-id"] == "init-agent"
+
+    def test_agent_id_coexists_with_aws_headers(self) -> None:
+        client = self._make_client()
+        client.set_aws_credentials(
+            access_key_id="AKIA_TEST",
+            secret_access_key="SECRET",
+        )
+        client.set_agent_id("my-agent")
+        headers = client._headers
+        assert headers["x-agent-id"] == "my-agent"
+        assert headers["x-aws-access-key-id"] == "AKIA_TEST"

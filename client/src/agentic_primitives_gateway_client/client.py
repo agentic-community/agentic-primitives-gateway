@@ -77,6 +77,7 @@ class AgenticPlatformClient:
         aws_region: str | None = None,
         aws_from_environment: bool = False,
         aws_profile: str | None = None,
+        agent_id: str | None = None,
         provider: str | None = None,
         max_retries: int = 3,
         retry_backoff: float = 0.5,
@@ -93,7 +94,10 @@ class AgenticPlatformClient:
         self._aws_env_region = aws_region
         self._provider_headers: dict[str, str] = {}
         self._service_cred_headers: dict[str, str] = {}
+        self._agent_id_header: dict[str, str] = {}
 
+        if agent_id:
+            self.set_agent_id(agent_id)
         if provider:
             self.set_provider(provider)
 
@@ -209,6 +213,19 @@ class AgenticPlatformClient:
                 k: v for k, v in self._service_cred_headers.items() if not k.startswith(f"x-cred-{service}-")
             }
 
+    def set_agent_id(self, agent_id: str) -> None:
+        """Set the agent identity for policy enforcement.
+
+        The server uses this ``X-Agent-Id`` header to resolve the Cedar
+        principal when evaluating access policies. Takes precedence over
+        service credentials and AWS keys for principal resolution.
+        """
+        self._agent_id_header = {"x-agent-id": agent_id}
+
+    def clear_agent_id(self) -> None:
+        """Remove agent ID from future requests."""
+        self._agent_id_header = {}
+
     async def __aenter__(self) -> AgenticPlatformClient:
         return self
 
@@ -243,6 +260,7 @@ class AgenticPlatformClient:
                 headers.update(self._aws_headers)
             headers.update(self._provider_headers)
             headers.update(self._service_cred_headers)
+            headers.update(self._agent_id_header)
             return headers
         except AttributeError:
             return {}

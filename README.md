@@ -25,6 +25,11 @@ Agentic Primitives Gateway is a REST API service that abstracts agent infrastruc
 |  +----+----+ +----+----+     |       +----+----+ +----+----+          |
 |       |           |           |       |         | |         |          |
 |  +----v-----------v-----------v-------v---------v-v---------v--------+ |
+|  |              PolicyEnforcementMiddleware                          | |
+|  |  (Cedar evaluation via PolicyEnforcer ABC; exempt: health/docs)  | |
+|  +----+----------+-----------+-------+---------+----------+----------+ |
+|       |          |           |       |         |          |            |
+|  +----v-----------v-----------v-------v---------v---------v----------+ |
 |  |                  RequestContextMiddleware                         | |
 |  |          (AWS creds + provider routing from headers)              | |
 |  +----+----------+-----------+-------+---------+----------+----------+ |
@@ -456,6 +461,99 @@ curl -X POST localhost:8000/api/v1/agents/my-assistant/chat \
 Agents can also be defined in YAML config under the `agents.specs` key (see Configuration section).
 
 Interactive API docs are available at `/docs` (Swagger UI) when the server is running.
+
+---
+
+## Policy Enforcement
+
+The gateway includes a pluggable policy enforcement layer that evaluates every primitive call against Cedar policies. This is separate from the Policy CRUD primitive (`/api/v1/policy`) -- the CRUD routes are the **write path** (manage policies), the enforcer is the **read path** (evaluate at request time).
+
+### How It Works
+
+1. `RequestContextMiddleware` extracts identity from headers (`X-Agent-Id`, `X-Cred-*`, `X-AWS-*`)
+2. `PolicyEnforcementMiddleware` maps the request to a Cedar principal/action/resource
+3. The configured `PolicyEnforcer` evaluates the authorization request
+4. If denied, the middleware returns 403; if allowed, the request proceeds to the route
+
+### Enforcers
+
+| Enforcer | Behavior |
+|----------|----------|
+| `NoopPolicyEnforcer` (default) | All requests allowed -- gateway works as before |
+| `CedarPolicyEnforcer` | Local Cedar evaluation via `cedarpy`. Default-deny: no policies loaded = all denied |
+
+### Configuration
+
+```yaml
+# Default: no enforcement
+enforcement:
+  backend: "agentic_primitives_gateway.enforcement.noop.NoopPolicyEnforcer"
+  config: {}
+
+# Cedar enforcement
+enforcement:
+  backend: "agentic_primitives_gateway.enforcement.cedar.CedarPolicyEnforcer"
+  config:
+    policy_refresh_interval: 30   # seconds between policy refreshes
+    engine_id: "my-engine"        # optional: scope to a single policy engine
+```
+
+Requires the `cedar` optional dependencies:
+
+```bash
+pip install agentic-primitives-gateway[cedar]
+```
+
+### Principal Resolution
+
+The middleware derives the Cedar principal from request headers in this order:
+
+| Priority | Header | Cedar Principal |
+|----------|--------|-----------------|
+| 1 | `X-Agent-Id: my-agent` | `Agent::"my-agent"` |
+| 2 | `X-Cred-{Service}-*` | `Service::"{service}"` |
+| 3 | `X-AWS-Access-Key-Id: AKIA...` | `AWSPrincipal::"AKIA..."` |
+| 4 | (none) | `Agent::"anonymous"` |
+
+### Action Mapping
+
+Actions are **auto-discovered from the app's registered routes** at startup. The middleware introspects every FastAPI route under `/api/v1/` and derives the Cedar action as `{primitive}:{endpoint_function_name}`. This means new routes are automatically enforced -- no static table to maintain.
+
+Examples of auto-discovered actions:
+
+| Route | Endpoint function | Cedar Action |
+|-------|-------------------|-------------|
+| `POST /api/v1/memory/{namespace}` | `store_memory` | `memory:store_memory` |
+| `POST /api/v1/memory/{namespace}/search` | `search_memories` | `memory:search_memories` |
+| `GET /api/v1/memory/{namespace}/{key}` | `retrieve_memory` | `memory:retrieve_memory` |
+| `POST /api/v1/gateway/completions` | `route_completion` | `gateway:route_completion` |
+| `POST /api/v1/tools/{name}/invoke` | `invoke_tool` | `tools:invoke_tool` |
+| `POST /api/v1/agents/{name}/chat` | `chat_with_agent` | `agents:chat_with_agent` |
+
+Routes outside `/api/v1/` are not enforced. The action rule cache is built once on the first request and reused for the lifetime of the process.
+
+### Exempt Paths
+
+These paths are never enforced: `/healthz`, `/readyz`, `/metrics`, `/docs`, `/redoc`, `/openapi.json`, `/api/v1/providers`, `/api/v1/policy`.
+
+### Example Cedar Policies
+
+```cedar
+// Allow all agents to read memory
+permit(principal, action == Action::"memory:retrieve_memory", resource);
+
+// Allow a specific agent to do everything
+permit(principal == Agent::"research-assistant", action, resource);
+
+// Block a specific agent from code execution
+forbid(principal == Agent::"untrusted", action == Action::"code_interpreter:execute_code", resource);
+```
+
+### Multi-Tenancy
+
+- Policy evaluation is shared across all tenants. Cedar's principal/action/resource matching naturally scopes policies.
+- `X-Agent-Id` is trusted as-is. In production multi-tenant deployments, validate it via an authenticating reverse proxy.
+- Each pod runs its own enforcer reading from the same policy store. Updates propagate within one refresh interval.
 
 ---
 
@@ -1134,6 +1232,7 @@ The server **does not use its own AWS credentials** for AgentCore calls. Instead
 | `X-AWS-Secret-Access-Key` | Yes (for AgentCore) | AWS secret access key |
 | `X-AWS-Session-Token` | No | STS session token (for temporary credentials) |
 | `X-AWS-Region` | No | Override the provider's default region |
+| `X-Agent-Id` | No | Agent identity for policy enforcement (Cedar principal) |
 
 **How it works:**
 

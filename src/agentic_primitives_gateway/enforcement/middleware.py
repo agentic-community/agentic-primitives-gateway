@@ -6,6 +6,7 @@ import re
 from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.responses import JSONResponse, Response
+from starlette.routing import Route
 
 from agentic_primitives_gateway.enforcement.base import PolicyEnforcer
 
@@ -23,75 +24,74 @@ _EXEMPT_PREFIXES = (
     "/api/v1/policy",
 )
 
-# Pre-compiled action mapping table: (method, regex) → action string
-# Order matters — first match wins.
-_ACTION_RULES: list[tuple[str, re.Pattern[str], str]] = [
-    # memory
-    ("POST", re.compile(r"^/api/v1/memory/[^/]+/search$"), "memory:search"),
-    ("POST", re.compile(r"^/api/v1/memory/[^/]+$"), "memory:store"),
-    ("GET", re.compile(r"^/api/v1/memory/[^/]+/[^/]+$"), "memory:recall"),
-    ("GET", re.compile(r"^/api/v1/memory/[^/]+$"), "memory:list"),
-    ("DELETE", re.compile(r"^/api/v1/memory/"), "memory:delete"),
-    ("GET", re.compile(r"^/api/v1/memory/"), "memory:read"),
-    ("POST", re.compile(r"^/api/v1/memory/"), "memory:write"),
-    # gateway
-    ("POST", re.compile(r"^/api/v1/gateway/completions$"), "gateway:completions"),
-    ("GET", re.compile(r"^/api/v1/gateway/models$"), "gateway:models"),
-    # tools
-    ("POST", re.compile(r"^/api/v1/tools/.+/invoke$"), "tools:invoke"),
-    ("GET", re.compile(r"^/api/v1/tools/search$"), "tools:search"),
-    ("POST", re.compile(r"^/api/v1/tools$"), "tools:register"),
-    ("GET", re.compile(r"^/api/v1/tools$"), "tools:list"),
-    ("GET", re.compile(r"^/api/v1/tools/"), "tools:get"),
-    ("DELETE", re.compile(r"^/api/v1/tools/"), "tools:delete"),
-    # identity
-    ("POST", re.compile(r"^/api/v1/identity/token$"), "identity:token"),
-    ("POST", re.compile(r"^/api/v1/identity/api-key$"), "identity:api_key"),
-    ("POST", re.compile(r"^/api/v1/identity/workload-token$"), "identity:workload_token"),
-    ("POST", re.compile(r"^/api/v1/identity/auth/complete$"), "identity:auth_complete"),
-    ("GET", re.compile(r"^/api/v1/identity/"), "identity:read"),
-    ("POST", re.compile(r"^/api/v1/identity/"), "identity:write"),
-    ("PUT", re.compile(r"^/api/v1/identity/"), "identity:write"),
-    ("DELETE", re.compile(r"^/api/v1/identity/"), "identity:delete"),
-    # code_interpreter
-    ("POST", re.compile(r"^/api/v1/code-interpreter/sessions/[^/]+/execute$"), "code_interpreter:execute"),
-    ("POST", re.compile(r"^/api/v1/code-interpreter/sessions/[^/]+/files$"), "code_interpreter:upload"),
-    ("GET", re.compile(r"^/api/v1/code-interpreter/sessions/[^/]+/files/"), "code_interpreter:download"),
-    ("POST", re.compile(r"^/api/v1/code-interpreter/sessions$"), "code_interpreter:create_session"),
-    ("DELETE", re.compile(r"^/api/v1/code-interpreter/sessions/"), "code_interpreter:delete_session"),
-    ("GET", re.compile(r"^/api/v1/code-interpreter/"), "code_interpreter:read"),
-    # browser
-    ("POST", re.compile(r"^/api/v1/browser/sessions/[^/]+/navigate$"), "browser:navigate"),
-    ("POST", re.compile(r"^/api/v1/browser/sessions/[^/]+/click$"), "browser:click"),
-    ("POST", re.compile(r"^/api/v1/browser/sessions/[^/]+/type$"), "browser:type"),
-    ("POST", re.compile(r"^/api/v1/browser/sessions/[^/]+/evaluate$"), "browser:evaluate"),
-    ("GET", re.compile(r"^/api/v1/browser/sessions/[^/]+/screenshot$"), "browser:screenshot"),
-    ("GET", re.compile(r"^/api/v1/browser/sessions/[^/]+/content$"), "browser:content"),
-    ("POST", re.compile(r"^/api/v1/browser/sessions$"), "browser:create_session"),
-    ("DELETE", re.compile(r"^/api/v1/browser/sessions/"), "browser:delete_session"),
-    ("GET", re.compile(r"^/api/v1/browser/"), "browser:read"),
-    # observability
-    ("POST", re.compile(r"^/api/v1/observability/flush$"), "observability:flush"),
-    ("POST", re.compile(r"^/api/v1/observability/traces/[^/]+/generations$"), "observability:generation"),
-    ("POST", re.compile(r"^/api/v1/observability/traces/[^/]+/scores$"), "observability:score"),
-    ("POST", re.compile(r"^/api/v1/observability/traces$"), "observability:trace"),
-    ("POST", re.compile(r"^/api/v1/observability/logs$"), "observability:log"),
-    ("GET", re.compile(r"^/api/v1/observability/"), "observability:read"),
-    ("PUT", re.compile(r"^/api/v1/observability/"), "observability:write"),
-    # evaluations
-    ("POST", re.compile(r"^/api/v1/evaluations/evaluate$"), "evaluations:evaluate"),
-    ("POST", re.compile(r"^/api/v1/evaluations/"), "evaluations:write"),
-    ("GET", re.compile(r"^/api/v1/evaluations/"), "evaluations:read"),
-    ("PUT", re.compile(r"^/api/v1/evaluations/"), "evaluations:write"),
-    ("DELETE", re.compile(r"^/api/v1/evaluations/"), "evaluations:delete"),
-    # agents
-    ("POST", re.compile(r"^/api/v1/agents/[^/]+/chat$"), "agents:chat"),
-    ("POST", re.compile(r"^/api/v1/agents$"), "agents:create"),
-    ("GET", re.compile(r"^/api/v1/agents$"), "agents:list"),
-    ("GET", re.compile(r"^/api/v1/agents/"), "agents:get"),
-    ("PUT", re.compile(r"^/api/v1/agents/"), "agents:update"),
-    ("DELETE", re.compile(r"^/api/v1/agents/"), "agents:delete"),
-]
+
+def _build_action_rules(
+    routes: list[Route],
+) -> list[tuple[str, re.Pattern[str], str]]:
+    """Build action rules from the app's registered routes.
+
+    Introspects FastAPI/Starlette routes and derives Cedar actions from
+    the router prefix (primitive) and endpoint function name. This means
+    new routes are automatically enforced without updating a static list.
+
+    Each route ``/api/v1/{primitive}/...`` with endpoint ``my_func``
+    produces action ``{primitive}:my_func``.
+    """
+    rules: list[tuple[str, re.Pattern[str], str]] = []
+    for route in routes:
+        if not isinstance(route, Route):
+            # Skip Mount, WebSocket, etc. — recurse into sub-applications
+            sub_routes = getattr(route, "routes", None)
+            if sub_routes:
+                rules.extend(_build_action_rules(sub_routes))
+            continue
+
+        path = route.path
+        if not path.startswith("/api/v1/"):
+            continue
+
+        methods = route.methods or set()
+        endpoint = route.endpoint
+        if endpoint is None:
+            continue
+
+        # Derive primitive from path: /api/v1/{primitive}/...
+        remainder = path.removeprefix("/api/v1/")
+        primitive_segment = remainder.split("/", 1)[0]
+        # Normalize: "code-interpreter" → "code_interpreter"
+        primitive = primitive_segment.replace("-", "_")
+
+        # Action = primitive:endpoint_name (e.g., "memory:store_memory")
+        action = f"{primitive}:{endpoint.__name__}"
+
+        # Convert FastAPI path params to regex: {param} → [^/]+, {param:path} → .+
+        pattern_str = re.sub(r"\{[^}]+:path\}", ".+", path)
+        pattern_str = re.sub(r"\{[^}]+\}", "[^/]+", pattern_str)
+        pattern = re.compile(f"^{pattern_str}$")
+
+        for method in methods:
+            if method in ("HEAD", "OPTIONS"):
+                continue
+            rules.append((method, pattern, action))
+
+    return rules
+
+
+# Module-level cache: built once per app on first request
+_cached_rules: list[tuple[str, re.Pattern[str], str]] | None = None
+_cached_app_id: int | None = None
+
+
+def _get_action_rules(app: object) -> list[tuple[str, re.Pattern[str], str]]:
+    """Return cached action rules, rebuilding if the app instance changed."""
+    global _cached_rules, _cached_app_id  # noqa: PLW0603
+    app_id = id(app)
+    if _cached_rules is None or _cached_app_id != app_id:
+        routes = getattr(app, "routes", [])
+        _cached_rules = _build_action_rules(routes)
+        _cached_app_id = app_id
+        logger.info("Built %d enforcement action rules from app routes", len(_cached_rules))
+    return _cached_rules
 
 
 def _resolve_principal(request: Request) -> str:
@@ -114,9 +114,9 @@ def _resolve_principal(request: Request) -> str:
     return 'Agent::"anonymous"'
 
 
-def _resolve_action(method: str, path: str) -> str | None:
+def _resolve_action(app: object, method: str, path: str) -> str | None:
     """Map HTTP method + path to a Cedar action string, or None if unmapped."""
-    for rule_method, pattern, action in _ACTION_RULES:
+    for rule_method, pattern, action in _get_action_rules(app):
         if method == rule_method and pattern.match(path):
             return action
     return None
@@ -137,6 +137,10 @@ class PolicyEnforcementMiddleware(BaseHTTPMiddleware):
     inside the request context stack.  Looks up the enforcer from
     ``request.app.state.enforcer``.
 
+    Action rules are built automatically from the app's registered routes
+    on the first request.  New routes added to the app are picked up
+    without any changes to this middleware.
+
     Exempt paths (health, docs, policy CRUD, provider discovery) are
     never enforced.  Unknown routes (no action mapping) pass through.
     """
@@ -151,7 +155,7 @@ class PolicyEnforcementMiddleware(BaseHTTPMiddleware):
             if path.startswith(prefix):
                 return await call_next(request)
 
-        action = _resolve_action(request.method, path)
+        action = _resolve_action(request.app, request.method, path)
         if action is None:
             # Unknown route — not enforced
             return await call_next(request)

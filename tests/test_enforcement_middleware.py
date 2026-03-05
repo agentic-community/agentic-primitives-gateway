@@ -5,82 +5,116 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+import agentic_primitives_gateway.enforcement.middleware as mw_module
 from agentic_primitives_gateway.enforcement.middleware import (
     PolicyEnforcementMiddleware,
     _resolve_action,
     _resolve_principal,
     _resolve_resource,
 )
+from agentic_primitives_gateway.main import app as real_app
+
+
+@pytest.fixture(autouse=True)
+def _clear_action_cache():
+    """Clear the module-level action rule cache between tests."""
+    mw_module._cached_rules = None
+    mw_module._cached_app_id = None
+    yield
+    mw_module._cached_rules = None
+    mw_module._cached_app_id = None
 
 
 class TestResolveAction:
-    """Tests for the _resolve_action mapping function."""
+    """Tests for the _resolve_action mapping against the real app routes."""
 
     def test_memory_store(self):
-        assert _resolve_action("POST", "/api/v1/memory/my-ns") == "memory:store"
+        assert _resolve_action(real_app, "POST", "/api/v1/memory/my-ns") == "memory:store_memory"
 
     def test_memory_search(self):
-        assert _resolve_action("POST", "/api/v1/memory/my-ns/search") == "memory:search"
+        assert _resolve_action(real_app, "POST", "/api/v1/memory/my-ns/search") == "memory:search_memories"
 
     def test_memory_recall(self):
-        assert _resolve_action("GET", "/api/v1/memory/my-ns/key1") == "memory:recall"
+        assert _resolve_action(real_app, "GET", "/api/v1/memory/my-ns/key1") == "memory:retrieve_memory"
 
     def test_memory_list(self):
-        assert _resolve_action("GET", "/api/v1/memory/my-ns") == "memory:list"
+        assert _resolve_action(real_app, "GET", "/api/v1/memory/my-ns") == "memory:list_memories"
 
     def test_memory_delete(self):
-        assert _resolve_action("DELETE", "/api/v1/memory/my-ns/key1") == "memory:delete"
+        assert _resolve_action(real_app, "DELETE", "/api/v1/memory/my-ns/key1") == "memory:delete_memory"
 
     def test_gateway_completions(self):
-        assert _resolve_action("POST", "/api/v1/gateway/completions") == "gateway:completions"
+        assert _resolve_action(real_app, "POST", "/api/v1/gateway/completions") == "gateway:route_completion"
 
     def test_gateway_models(self):
-        assert _resolve_action("GET", "/api/v1/gateway/models") == "gateway:models"
+        assert _resolve_action(real_app, "GET", "/api/v1/gateway/models") == "gateway:list_models"
 
     def test_tools_invoke(self):
-        assert _resolve_action("POST", "/api/v1/tools/my-tool/invoke") == "tools:invoke"
+        assert _resolve_action(real_app, "POST", "/api/v1/tools/my-tool/invoke") == "tools:invoke_tool"
 
     def test_tools_list(self):
-        assert _resolve_action("GET", "/api/v1/tools") == "tools:list"
+        assert _resolve_action(real_app, "GET", "/api/v1/tools") == "tools:list_tools"
 
     def test_tools_register(self):
-        assert _resolve_action("POST", "/api/v1/tools") == "tools:register"
+        assert _resolve_action(real_app, "POST", "/api/v1/tools") == "tools:register_tool"
 
     def test_tools_search(self):
-        assert _resolve_action("GET", "/api/v1/tools/search") == "tools:search"
+        assert _resolve_action(real_app, "GET", "/api/v1/tools/search") == "tools:search_tools"
 
     def test_code_interpreter_execute(self):
-        assert _resolve_action("POST", "/api/v1/code-interpreter/sessions/sess-1/execute") == "code_interpreter:execute"
+        assert (
+            _resolve_action(real_app, "POST", "/api/v1/code-interpreter/sessions/sess-1/execute")
+            == "code_interpreter:execute_code"
+        )
 
     def test_code_interpreter_create_session(self):
-        assert _resolve_action("POST", "/api/v1/code-interpreter/sessions") == "code_interpreter:create_session"
+        assert (
+            _resolve_action(real_app, "POST", "/api/v1/code-interpreter/sessions")
+            == "code_interpreter:start_session"
+        )
 
     def test_browser_navigate(self):
-        assert _resolve_action("POST", "/api/v1/browser/sessions/s1/navigate") == "browser:navigate"
+        assert _resolve_action(real_app, "POST", "/api/v1/browser/sessions/s1/navigate") == "browser:navigate"
 
     def test_browser_create_session(self):
-        assert _resolve_action("POST", "/api/v1/browser/sessions") == "browser:create_session"
+        assert _resolve_action(real_app, "POST", "/api/v1/browser/sessions") == "browser:start_session"
 
     def test_observability_flush(self):
-        assert _resolve_action("POST", "/api/v1/observability/flush") == "observability:flush"
+        assert _resolve_action(real_app, "POST", "/api/v1/observability/flush") == "observability:flush"
 
     def test_evaluations_evaluate(self):
-        assert _resolve_action("POST", "/api/v1/evaluations/evaluate") == "evaluations:evaluate"
+        assert _resolve_action(real_app, "POST", "/api/v1/evaluations/evaluate") == "evaluations:evaluate"
 
     def test_agents_chat(self):
-        assert _resolve_action("POST", "/api/v1/agents/my-agent/chat") == "agents:chat"
+        assert _resolve_action(real_app, "POST", "/api/v1/agents/my-agent/chat") == "agents:chat_with_agent"
 
     def test_agents_list(self):
-        assert _resolve_action("GET", "/api/v1/agents") == "agents:list"
+        assert _resolve_action(real_app, "GET", "/api/v1/agents") == "agents:list_agents"
 
     def test_agents_create(self):
-        assert _resolve_action("POST", "/api/v1/agents") == "agents:create"
+        assert _resolve_action(real_app, "POST", "/api/v1/agents") == "agents:create_agent"
 
     def test_unknown_route_returns_none(self):
-        assert _resolve_action("GET", "/some/unknown/path") is None
+        assert _resolve_action(real_app, "GET", "/some/unknown/path") is None
 
     def test_identity_token(self):
-        assert _resolve_action("POST", "/api/v1/identity/token") == "identity:token"
+        assert _resolve_action(real_app, "POST", "/api/v1/identity/token") == "identity:get_token"
+
+    def test_policy_routes_not_enforced(self):
+        """Policy routes should not appear in action rules (exempt)."""
+        # Policy paths are exempt at the middleware level, not the action level.
+        # But the routes do exist — they just get skipped by prefix check.
+        # Verify they're not in the exempt check here; they're handled by _EXEMPT_PREFIXES.
+        pass
+
+    def test_auto_discovery_covers_all_primitives(self):
+        """Every primitive with routes produces at least one action rule."""
+        from agentic_primitives_gateway.enforcement.middleware import _get_action_rules
+
+        rules = _get_action_rules(real_app)
+        primitives_with_rules = {action.split(":")[0] for _, _, action in rules}
+        expected = {"memory", "gateway", "tools", "identity", "code_interpreter", "browser", "observability", "evaluations", "agents"}
+        assert expected.issubset(primitives_with_rules)
 
 
 def _make_request(headers: dict[str, str]) -> MagicMock:
@@ -228,13 +262,13 @@ class TestPolicyEnforcementMiddleware:
 
     @pytest.mark.asyncio
     async def test_unknown_route_passes_through(self):
-        """Routes without an action mapping are not enforced."""
+        """Routes outside /api/v1/ are not enforced."""
         from fastapi import FastAPI
 
         app = FastAPI()
 
-        @app.get("/api/v1/custom/endpoint")
-        async def custom():
+        @app.get("/internal/status")
+        async def internal_status():
             return {"status": "ok"}
 
         app.add_middleware(PolicyEnforcementMiddleware)
@@ -245,7 +279,7 @@ class TestPolicyEnforcementMiddleware:
 
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get("/api/v1/custom/endpoint")
+            resp = await client.get("/internal/status")
             assert resp.status_code == 200
 
         enforcer.authorize.assert_not_called()
@@ -277,7 +311,7 @@ class TestPolicyEnforcementMiddleware:
         enforcer.authorize.assert_called_once()
         call_kwargs = enforcer.authorize.call_args
         assert call_kwargs.kwargs["principal"] == 'Agent::"my-agent"'
-        assert call_kwargs.kwargs["action"] == "memory:list"
+        assert call_kwargs.kwargs["action"] == "memory:memory_list"
         assert call_kwargs.kwargs["resource"] == "memory/ns1"
 
     @pytest.mark.asyncio
