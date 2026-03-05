@@ -156,6 +156,11 @@ providers:
           base_url: "${MCP_REGISTRY_URL:=http://localhost:8080}"
           verify_ssl: false
 
+enforcement:
+  backend: "agentic_primitives_gateway.enforcement.cedar.CedarPolicyEnforcer"
+  config:
+    policy_refresh_interval: 30
+
 allow_server_credentials: true
 
 agents:

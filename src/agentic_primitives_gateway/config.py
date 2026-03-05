@@ -184,6 +184,13 @@ class ProvidersConfig(BaseModel):
     evaluations: PrimitiveProvidersConfig = PrimitiveProvidersConfig(**_DEFAULTS[Primitive.EVALUATIONS])
 
 
+class EnforcementConfig(BaseModel):
+    """Configuration for the policy enforcement layer."""
+
+    backend: str = "agentic_primitives_gateway.enforcement.noop.NoopPolicyEnforcer"
+    config: dict[str, Any] = Field(default_factory=dict)
+
+
 class AgentsConfig(BaseModel):
     """Configuration for the agents subsystem."""
 
@@ -206,6 +213,7 @@ class Settings(BaseSettings):
     allow_server_credentials: bool = False
     cors_origins: list[str] = ["*"]
     providers: ProvidersConfig = ProvidersConfig()
+    enforcement: EnforcementConfig = EnforcementConfig()
     agents: AgentsConfig = AgentsConfig()
 
     @staticmethod

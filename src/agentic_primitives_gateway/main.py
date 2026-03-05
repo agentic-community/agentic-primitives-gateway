@@ -21,7 +21,8 @@ from agentic_primitives_gateway.context import (
     set_request_id,
     set_service_credentials,
 )
-from agentic_primitives_gateway.registry import PRIMITIVES, registry
+from agentic_primitives_gateway.enforcement.middleware import PolicyEnforcementMiddleware
+from agentic_primitives_gateway.registry import PRIMITIVES, _load_class, registry
 from agentic_primitives_gateway.routes import (
     agents,
     browser,
@@ -66,6 +67,9 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
     Service credential headers (generic, for any service):
         X-Cred-{Service}-{Key}    e.g. X-Cred-Langfuse-Public-Key
         Parsed into: {"langfuse": {"public_key": "..."}}
+
+    Agent identity header:
+        X-Agent-Id                (agent principal for policy enforcement)
 
     Provider routing headers:
         X-Provider                (default provider for all primitives)
@@ -139,6 +143,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         agent_store.seed(settings.agents.specs)
     set_agent_store(agent_store)
 
+    # Initialize policy enforcer
+    from agentic_primitives_gateway.enforcement.base import PolicyEnforcer
+
+    enforcer_cfg = settings.enforcement
+    enforcer_cls = _load_class(enforcer_cfg.backend)
+    enforcer: PolicyEnforcer = enforcer_cls(**enforcer_cfg.config)
+    await enforcer.load_policies()
+    if hasattr(enforcer, "start_refresh"):
+        enforcer.start_refresh()
+    app.state.enforcer = enforcer
+
     watcher: ConfigWatcher | None = None
     config_path = Settings.config_file_path()
     if config_path:
@@ -150,6 +165,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if watcher is not None:
         await watcher.stop()
 
+    await enforcer.close()
+
 
 app = FastAPI(
     title="Agentic Primitives Gateway",
@@ -159,6 +176,7 @@ app = FastAPI(
 )
 
 app.add_middleware(RequestContextMiddleware)
+app.add_middleware(PolicyEnforcementMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,

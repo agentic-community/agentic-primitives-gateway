@@ -26,6 +26,29 @@ def _normalize(data: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def _extract_cedar_statement(data: dict[str, Any]) -> dict[str, Any]:
+    """Normalize ``definition`` to a raw Cedar string if it's a dict.
+
+    AgentCore returns ``{"cedar": {"statement": "..."}}``.  Extract the
+    raw string so all consumers receive ``definition`` as ``str``.
+    """
+    defn = data.get("definition")
+    if isinstance(defn, dict):
+        cedar = defn.get("cedar")
+        if isinstance(cedar, dict):
+            stmt = cedar.get("statement")
+            if isinstance(stmt, str):
+                data["definition"] = stmt
+    return data
+
+
+def _normalize_policies_list(data: dict[str, Any]) -> dict[str, Any]:
+    """Normalize ``definition`` for each policy in a list response."""
+    for p in data.get("policies", []):
+        _extract_cedar_statement(p)
+    return data
+
+
 class AgentCorePolicyProvider(SyncRunnerMixin, PolicyProvider):
     """Policy provider backed by Amazon Bedrock AgentCore.
 
@@ -102,7 +125,7 @@ class AgentCorePolicyProvider(SyncRunnerMixin, PolicyProvider):
         if description:
             params["description"] = description
         result = await self._run_sync(client.create_policy, **params)
-        return _normalize(result)
+        return _extract_cedar_statement(_normalize(result))
 
     async def get_policy(
         self,
@@ -115,7 +138,7 @@ class AgentCorePolicyProvider(SyncRunnerMixin, PolicyProvider):
             policyEngineId=engine_id,
             policyId=policy_id,
         )
-        return _normalize(result)
+        return _extract_cedar_statement(_normalize(result))
 
     async def update_policy(
         self,
@@ -133,7 +156,7 @@ class AgentCorePolicyProvider(SyncRunnerMixin, PolicyProvider):
         if description is not None:
             params["description"] = description
         result = await self._run_sync(client.update_policy, **params)
-        return _normalize(result)
+        return _extract_cedar_statement(_normalize(result))
 
     async def delete_policy(
         self,
@@ -158,7 +181,7 @@ class AgentCorePolicyProvider(SyncRunnerMixin, PolicyProvider):
         if next_token is not None:
             params["nextToken"] = next_token
         result = await self._run_sync(client.list_policies, **params)
-        return _normalize(result)
+        return _normalize_policies_list(_normalize(result))
 
     # ── Policy generation ─────────────────────────────────────────────
 
