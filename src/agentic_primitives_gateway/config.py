@@ -184,11 +184,19 @@ class ProvidersConfig(BaseModel):
     evaluations: PrimitiveProvidersConfig = PrimitiveProvidersConfig(**_DEFAULTS[Primitive.EVALUATIONS])
 
 
+class SeedPolicyConfig(BaseModel):
+    """A Cedar policy to seed into the policy provider at startup."""
+
+    description: str = ""
+    policy_body: str
+
+
 class EnforcementConfig(BaseModel):
     """Configuration for the policy enforcement layer."""
 
     backend: str = "agentic_primitives_gateway.enforcement.noop.NoopPolicyEnforcer"
     config: dict[str, Any] = Field(default_factory=dict)
+    seed_policies: list[SeedPolicyConfig] = Field(default_factory=list)
 
 
 class AgentsConfig(BaseModel):

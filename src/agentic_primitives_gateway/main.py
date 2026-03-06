@@ -3,10 +3,13 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 from uuid import uuid4
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.responses import Response
@@ -129,6 +132,34 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
         return response
 
 
+async def _seed_policies() -> None:
+    """Seed Cedar policies from config into the policy provider.
+
+    Creates a 'seed' engine and populates it with policies defined in
+    ``enforcement.seed_policies``.  Runs once at startup so that the
+    noop (in-memory) provider always has a baseline policy set.
+    """
+    seed = settings.enforcement.seed_policies
+    if not seed:
+        return
+
+    policy_provider = registry.policy
+    engine = await policy_provider.create_policy_engine(
+        name="seed",
+        description="Auto-seeded from config",
+    )
+    engine_id = engine["policy_engine_id"]
+
+    for sp in seed:
+        await policy_provider.create_policy(
+            engine_id=engine_id,
+            policy_body=sp.policy_body,
+            description=sp.description,
+        )
+
+    logger.info("Seeded %d policies into engine %s", len(seed), engine_id)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logger.info("agentic-primitives-gateway build=%s", BUILD_REF)
@@ -142,6 +173,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if settings.agents.specs:
         agent_store.seed(settings.agents.specs)
     set_agent_store(agent_store)
+
+    # Seed policies from config into the policy provider
+    await _seed_policies()
 
     # Initialize policy enforcer
     from agentic_primitives_gateway.enforcement.base import PolicyEnforcer
@@ -251,3 +285,21 @@ app.include_router(agents.router)
 async def list_providers() -> dict:
     """List available providers for each primitive."""
     return registry.list_providers()
+
+
+# ── Web UI (served from production build) ───────────────────────────
+
+_STATIC_DIR = Path(__file__).parent / "static"
+if _STATIC_DIR.exists():
+    app.mount("/ui/assets", StaticFiles(directory=_STATIC_DIR / "assets"), name="ui-assets")
+
+    @app.get("/ui", include_in_schema=False)
+    async def ui_root() -> FileResponse:
+        return FileResponse(_STATIC_DIR / "index.html")
+
+    @app.get("/ui/{full_path:path}", include_in_schema=False)
+    async def ui_spa(full_path: str) -> FileResponse:
+        file_path = _STATIC_DIR / full_path
+        if file_path.is_file():
+            return FileResponse(file_path)
+        return FileResponse(_STATIC_DIR / "index.html")

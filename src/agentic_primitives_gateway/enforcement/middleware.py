@@ -20,6 +20,7 @@ _EXEMPT_PREFIXES = (
     "/docs",
     "/redoc",
     "/openapi.json",
+    "/ui",
     "/api/v1/providers",
     "/api/v1/policy",
 )
@@ -84,7 +85,7 @@ _cached_app_id: int | None = None
 
 def _get_action_rules(app: object) -> list[tuple[str, re.Pattern[str], str]]:
     """Return cached action rules, rebuilding if the app instance changed."""
-    global _cached_rules, _cached_app_id  # noqa: PLW0603
+    global _cached_rules, _cached_app_id
     app_id = id(app)
     if _cached_rules is None or _cached_app_id != app_id:
         routes = getattr(app, "routes", [])

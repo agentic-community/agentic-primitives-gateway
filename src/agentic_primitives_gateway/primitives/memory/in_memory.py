@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import UTC, datetime
 from typing import Any
 
 from agentic_primitives_gateway.models.memory import MemoryRecord, SearchResult
 from agentic_primitives_gateway.primitives.memory.base import MemoryProvider
+
+logger = logging.getLogger(__name__)
 
 
 class InMemoryProvider(MemoryProvider):
@@ -166,6 +169,9 @@ class InMemoryProvider(MemoryProvider):
         return turns[-k:]
 
     # ── Session management ───────────────────────────────────────────
+
+    async def list_namespaces(self) -> list[str]:
+        return list(self._store.keys())
 
     async def list_actors(self) -> list[dict[str, Any]]:
         return [{"actor_id": aid, "metadata": {}} for aid in self._events]

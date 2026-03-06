@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+from collections.abc import AsyncIterator
 from typing import Any
 
 from agentic_primitives_gateway.context import get_boto3_session
@@ -74,6 +76,117 @@ class BedrockConverseProvider(SyncRunnerMixin, GatewayProvider):
         response = await self._run_sync(client.converse, **converse_kwargs)
         result: dict[str, Any] = _from_bedrock_response(response, model_id)
         return result
+
+    async def route_request_stream(self, model_request: dict[str, Any]) -> AsyncIterator[dict[str, Any]]:
+        client = self._get_client()
+        model_id = model_request.get("model", self._default_model)
+
+        system_prompts, messages = _to_bedrock_messages(model_request)
+        converse_kwargs: dict[str, Any] = {
+            "modelId": model_id,
+            "messages": messages,
+        }
+        if system_prompts:
+            converse_kwargs["system"] = system_prompts
+
+        inference_config: dict[str, Any] = {}
+        if model_request.get("temperature") is not None:
+            inference_config["temperature"] = model_request["temperature"]
+        if model_request.get("max_tokens") is not None:
+            inference_config["maxTokens"] = model_request["max_tokens"]
+        if inference_config:
+            converse_kwargs["inferenceConfig"] = inference_config
+
+        tools = model_request.get("tools")
+        if tools:
+            converse_kwargs["toolConfig"] = {"tools": _to_bedrock_tools(tools)}
+
+        tool_choice = model_request.get("tool_choice")
+        if tool_choice and tools:
+            converse_kwargs["toolConfig"]["toolChoice"] = _to_bedrock_tool_choice(tool_choice)
+
+        response = await self._run_sync(client.converse_stream, **converse_kwargs)
+        stream = response.get("stream")
+        if stream is None:
+            return
+
+        # Use a queue to bridge the sync boto3 iterator to async iteration.
+        # A background thread reads events one at a time and puts them on the
+        # queue; the async generator awaits each one without buffering.
+        queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
+        loop = asyncio.get_event_loop()
+
+        def _drain_stream() -> None:
+            try:
+                for ev in stream:
+                    loop.call_soon_threadsafe(queue.put_nowait, ev)
+            finally:
+                loop.call_soon_threadsafe(queue.put_nowait, None)  # sentinel
+
+        loop.run_in_executor(None, _drain_stream)
+
+        # Track tool use state for reassembly
+        current_tool_id = ""
+        current_tool_name = ""
+        current_tool_input_json = ""
+
+        while True:
+            event = await queue.get()
+            if event is None:
+                break  # stream exhausted
+            if "contentBlockStart" in event:
+                start = event["contentBlockStart"].get("start", {})
+                if "toolUse" in start:
+                    tu = start["toolUse"]
+                    current_tool_id = tu.get("toolUseId", "")
+                    current_tool_name = tu.get("name", "")
+                    current_tool_input_json = ""
+                    yield {
+                        "type": "tool_use_start",
+                        "id": current_tool_id,
+                        "name": current_tool_name,
+                    }
+
+            elif "contentBlockDelta" in event:
+                delta = event["contentBlockDelta"].get("delta", {})
+                if "text" in delta:
+                    yield {"type": "content_delta", "delta": delta["text"]}
+                elif "toolUse" in delta:
+                    current_tool_input_json += delta["toolUse"].get("input", "")
+
+            elif "contentBlockStop" in event:
+                # If we were accumulating tool input JSON, emit the complete tool call
+                if current_tool_name:
+                    try:
+                        parsed_input = json.loads(current_tool_input_json) if current_tool_input_json else {}
+                    except json.JSONDecodeError:
+                        parsed_input = {"raw": current_tool_input_json}
+                    yield {
+                        "type": "tool_use_complete",
+                        "id": current_tool_id,
+                        "name": current_tool_name,
+                        "input": parsed_input,
+                    }
+                    current_tool_name = ""
+                    current_tool_input_json = ""
+
+            elif "messageStop" in event:
+                stop_reason = event["messageStop"].get("stopReason", "end_turn")
+                yield {
+                    "type": "message_stop",
+                    "stop_reason": stop_reason,
+                    "model": model_id,
+                }
+
+            elif "metadata" in event:
+                usage = event["metadata"].get("usage", {})
+                yield {
+                    "type": "metadata",
+                    "usage": {
+                        "input_tokens": usage.get("inputTokens", 0),
+                        "output_tokens": usage.get("outputTokens", 0),
+                    },
+                }
 
     async def list_models(self) -> list[dict[str, Any]]:
         return [

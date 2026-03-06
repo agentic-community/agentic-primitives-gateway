@@ -15,6 +15,10 @@ FastAPI service providing pluggable primitives (memory, observability, gateway, 
   - `routes/` — FastAPI routers, one per primitive plus health and agents
   - `enforcement/` — Policy enforcement layer: `base.py` (PolicyEnforcer ABC), `noop.py` (default allow-all), `cedar.py` (local Cedar evaluation via cedarpy), `middleware.py` (Starlette middleware mapping requests to Cedar principals/actions/resources)
   - `agents/` — Declarative agent orchestration: `runner.py` (LLM tool-call loop), `tools.py` (tool registry), `store.py` (persistence)
+- `ui/` — React + Vite + TypeScript + Tailwind CSS web UI (dashboard, agent chat)
+  - `src/` — React source (pages, components, hooks, API client)
+  - Production build outputs to `src/agentic_primitives_gateway/static/`
+  - FastAPI serves the built SPA at `/ui/` with client-side routing fallback
 - `client/` — Separate `agentic-primitives-gateway-client` package (httpx-based, no server dependency)
 - `tests/` — Server integration tests (pytest, async)
 - `client/tests/` — Client unit tests
@@ -93,3 +97,21 @@ pre-commit run --all-files # Run all hooks on entire repo
 - **Ruff** for linting + formatting, **mypy** for type checking (configured in root `pyproject.toml`)
 - Pre-commit hooks enforce Ruff on every commit: `pre-commit install`
 - `make lint` to check, `make format` to auto-fix, `make typecheck` for mypy
+
+## Web UI
+
+React + Vite SPA served at `/ui/`. Three pages: Dashboard (health, providers, agents), Agent List (CRUD), Agent Chat (interactive chat with tool call display).
+
+```bash
+# Development (hot reload, proxies API to :8000)
+cd ui && npm install && npm run dev   # http://localhost:5173/ui/
+
+# Production build (served by FastAPI)
+cd ui && npm run build                # http://localhost:8000/ui/
+
+# Makefile shortcuts
+make ui-install    # npm install
+make ui-dev        # vite dev server
+make ui-build      # production build
+make ui-clean      # remove build artifacts and node_modules
+```

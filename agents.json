@@ -1,0 +1,30 @@
+{
+  "research-assistant": {
+    "name": "research-assistant",
+    "description": "A research assistant with long-term memory",
+    "model": "us.anthropic.claude-sonnet-4-20250514-v1:0",
+    "system_prompt": "You are a research assistant with long-term memory.\nUse the remember tool to store important information.\nUse search_memory to find things you've stored before.\nUse recall to retrieve a specific memory by key.\nAlways search memory before saying you don't know something.\n",
+    "primitives": {
+      "memory": {
+        "enabled": true,
+        "tools": null,
+        "namespace": "agent:{agent_name}:{session_id}"
+      },
+      "browser": {
+        "enabled": true,
+        "tools": null,
+        "namespace": null
+      }
+    },
+    "hooks": {
+      "auto_memory": true,
+      "auto_trace": false
+    },
+    "provider_overrides": {
+      "browser": "selenium_grid"
+    },
+    "max_turns": 20,
+    "temperature": 1.0,
+    "max_tokens": null
+  }
+}

@@ -155,5 +155,13 @@ class MemoryProvider(ABC):
     async def delete_strategy(self, memory_id: str, strategy_id: str) -> None:
         raise NotImplementedError
 
+    async def list_namespaces(self) -> list[str]:
+        """List all known memory namespaces.
+
+        Returns namespace identifiers that have stored memories.
+        Providers that cannot enumerate namespaces should return an empty list.
+        """
+        return []
+
     async def healthcheck(self) -> bool:
         return True

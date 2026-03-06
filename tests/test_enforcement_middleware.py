@@ -69,8 +69,7 @@ class TestResolveAction:
 
     def test_code_interpreter_create_session(self):
         assert (
-            _resolve_action(real_app, "POST", "/api/v1/code-interpreter/sessions")
-            == "code_interpreter:start_session"
+            _resolve_action(real_app, "POST", "/api/v1/code-interpreter/sessions") == "code_interpreter:start_session"
         )
 
     def test_browser_navigate(self):
@@ -113,7 +112,17 @@ class TestResolveAction:
 
         rules = _get_action_rules(real_app)
         primitives_with_rules = {action.split(":")[0] for _, _, action in rules}
-        expected = {"memory", "gateway", "tools", "identity", "code_interpreter", "browser", "observability", "evaluations", "agents"}
+        expected = {
+            "memory",
+            "gateway",
+            "tools",
+            "identity",
+            "code_interpreter",
+            "browser",
+            "observability",
+            "evaluations",
+            "agents",
+        }
         assert expected.issubset(primitives_with_rules)
 
 

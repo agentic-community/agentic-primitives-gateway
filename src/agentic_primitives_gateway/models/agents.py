@@ -86,3 +86,36 @@ class AgentListResponse(BaseModel):
     """Response for GET /api/v1/agents."""
 
     agents: list[AgentSpec]
+
+
+class AgentToolInfo(BaseModel):
+    """Info about a single tool available to an agent."""
+
+    name: str
+    description: str
+    primitive: str
+    provider: str
+
+
+class AgentToolsResponse(BaseModel):
+    """Response for GET /api/v1/agents/{name}/tools."""
+
+    agent_name: str
+    tools: list[AgentToolInfo] = Field(default_factory=list)
+
+
+class MemoryStoreInfo(BaseModel):
+    """Info about a single memory namespace/store."""
+
+    namespace: str
+    memory_count: int = 0
+    memories: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class AgentMemoryResponse(BaseModel):
+    """Response for GET /api/v1/agents/{name}/memory."""
+
+    agent_name: str
+    memory_enabled: bool
+    namespace: str
+    stores: list[MemoryStoreInfo] = Field(default_factory=list)

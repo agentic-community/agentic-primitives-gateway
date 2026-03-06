@@ -159,12 +159,19 @@ providers:
 ## Actions are auto-discovered from route definitions:
 ##   memory:store_memory, memory:retrieve_memory, gateway:route_completion, etc.
 ##
-## Test with: python examples/enforcement_demo.py
+## Seed policies are loaded into the policy provider at startup so that
+## enforcement works out of the box even with the noop (in-memory) provider.
 enforcement:
   backend: "agentic_primitives_gateway.enforcement.cedar.CedarPolicyEnforcer"
   config:
     policy_refresh_interval: 5   # short interval for demo; use 30+ in production
-
+  seed_policies:
+    - description: "Allow anyone to list agents"
+      policy_body: 'permit(principal, action == Action::"agents:list_agents", resource);'
+    - description: "Allow anyone to view individual agents"
+      policy_body: 'permit(principal, action == Action::"agents:get_agent", resource);'
+    - description: "Allow anyone to view anything"
+      policy_body: 'permit(principal, action, resource);'
 allow_server_credentials: true
 
 agents:
@@ -183,6 +190,10 @@ agents:
         memory:
           enabled: true
           namespace: "agent:{agent_name}:{session_id}"
+        browser:
+          enabled: true
+      provider_overrides:
+        browser: "selenium_grid"
       hooks:
         auto_memory: true
         auto_trace: false

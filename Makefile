@@ -1,4 +1,4 @@
-.PHONY: lint format typecheck check test test-client install install-hooks pdf
+.PHONY: lint format typecheck check test test-client install install-hooks pdf ui-install ui-dev ui-build ui-clean
 
 lint:
 	ruff check .
@@ -28,3 +28,15 @@ install-hooks:
 
 pdf:
 	python scripts/md2pdf.py
+
+ui-install:
+	cd ui && npm install
+
+ui-dev:
+	cd ui && npm run dev
+
+ui-build:
+	cd ui && npm run build
+
+ui-clean:
+	rm -rf src/agentic_primitives_gateway/static ui/node_modules

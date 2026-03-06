@@ -1,12 +1,42 @@
-# Agentic Primitives Gateway -- Operator Manual
+# Agentic Primitives Gateway
 
-Agentic Primitives Gateway is a REST API service that abstracts agent infrastructure primitives behind a unified API. Agent developers call this service without knowing backend implementations. Platform operators swap backends via configuration. Requests can dynamically select which backend to use via header-based provider routing.
+## Why This Exists
+
+AI agents need infrastructure: memory to persist context across conversations, identity to authenticate with external services, sandboxed environments to execute code, browsers to navigate the web, observability to trace what happened and why, tools to extend their capabilities, policies to constrain what they're allowed to do, and evaluations to measure whether they're doing it well.
+
+Today, every agent framework reimplements these capabilities or hard-codes them to a specific vendor. A LangChain agent with mem0 memory, Langfuse tracing, and Selenium browsers has deep import dependencies on all three. Switching memory from mem0 to AWS Bedrock AgentCore means rewriting agent code. Running the same agent in a different environment (local dev vs staging vs production) means maintaining multiple configurations inside the agent itself. The agent developer becomes a platform engineer.
+
+The Agentic Primitives Gateway solves this by extracting these infrastructure concerns into a standalone service with a stable REST API. Agent developers code against the API. Platform operators choose backends via configuration. The two concerns are fully decoupled.
+
+## Why This Architecture
+
+**Agents should not know about infrastructure.** An agent that needs to remember something calls `POST /api/v1/memory/{namespace}`. It doesn't know whether that memory is stored in an in-memory dict, a Milvus vector database, or AWS Bedrock AgentCore. It doesn't import `mem0` or `boto3`. It doesn't manage connection pools, credentials, or retry logic. It sends an HTTP request and gets a response.
+
+**Platform operators should not touch agent code.** Switching from Langfuse to AgentCore for observability is a YAML config change -- not a code change, not a redeployment of agents, not a coordination exercise across teams. The gateway hot-reloads provider config via Kubernetes ConfigMap watches.
+
+**Per-request routing enables gradual migration.** With header-based provider routing (`X-Provider-Memory: mem0` vs `X-Provider-Memory: agentcore`), operators can run both backends simultaneously and migrate agents one at a time. No big-bang cutover. No feature flags inside agent code.
+
+**Credential pass-through preserves identity.** The gateway does not use shared service credentials. Each request carries the caller's own AWS credentials, Langfuse keys, or service tokens via headers. The gateway forwards them to backends. This means each agent authenticates with its own identity -- critical for audit trails, access control, and blast radius containment.
+
+**Policy enforcement is transparent to agents.** Agents don't implement authorization checks. The `PolicyEnforcementMiddleware` evaluates every request against Cedar policies before it reaches the route handler. An agent that isn't permitted to execute code gets a 403 -- it doesn't need to know why or how the policy was authored. Operators manage policies via the `/api/v1/policy` CRUD API independently of agent code.
+
+**The primitives are the right abstraction layer.** Memory, identity, code execution, browser automation, observability, gateway (LLM routing), tools, policy, and evaluations are the nine capabilities that recur across every agent system. They are stable enough to standardize (the operations don't change when backends change) but varied enough in implementation that abstraction pays for itself. Adding a tenth primitive means implementing one ABC and registering it in config -- the middleware, metrics, routing, and enforcement all work automatically.
+
+**Framework-agnostic by design.** The gateway is a REST API. Any agent framework (LangChain, Strands, CrewAI, custom) in any language (Python, TypeScript, Go, Rust) can call it. The Python client library is a convenience, not a requirement. This avoids the lock-in problem where infrastructure abstractions are coupled to a specific framework's plugin system.
+
+## How It Works
+
+Agentic Primitives Gateway is a FastAPI service. Agent developers call it via REST. Platform operators configure backends via YAML. Requests can dynamically select which backend to use via header-based provider routing.
 
 ## Architecture
 
 ```
 +------------------------------------------------------------------------+
 |                      Agentic Primitives Gateway                        |
+|                                                                        |
+|  +------------------------------------------------------------------+  |
+|  |  Web UI (React SPA at /ui/) — Dashboard, Agent List, Agent Chat  |  |
+|  +------------------------------------------------------------------+  |
 |                                                                        |
 |  +------------------------------------------------------------------+  |
 |  |                     Agents Subsystem                              |  |
@@ -1232,6 +1262,42 @@ The test suite contains 634 unit/system tests plus 42 integration tests covering
 
 ---
 
+## Web UI
+
+The gateway includes a React-based web UI served at `/ui/`. It provides a dashboard with health status and provider overview, an agent list with CRUD operations, and interactive agent chat with tool call display.
+
+### Development
+
+```bash
+# Terminal 1: Start the gateway
+./run.sh local
+
+# Terminal 2: Start the UI dev server (hot reload)
+cd ui && npm install && npm run dev
+# Open http://localhost:5173/ui/
+```
+
+The Vite dev server proxies API requests to the gateway running on port 8000.
+
+### Production Build
+
+```bash
+cd ui && npm run build
+# Build outputs to src/agentic_primitives_gateway/static/
+# Served by FastAPI at http://localhost:8000/ui/
+```
+
+### Makefile Targets
+
+```bash
+make ui-install    # Install npm dependencies
+make ui-dev        # Start Vite dev server
+make ui-build      # Production build
+make ui-clean      # Remove build artifacts and node_modules
+```
+
+---
+
 ## Client Library
 
 The client is a separate package located at `client/` in the repository. Install it with:
@@ -1606,6 +1672,9 @@ agentic-primitives-gateway/
 │           ├── noop.py
 │           ├── agentcore.py        # AWS AgentCore Gateway (MCP-compatible)
 │           └── mcp_registry.py     # MCP Registry
+├── ui/                             # React + Vite + TypeScript web UI (Dashboard, Agent Chat)
+│   ├── src/                        # Pages, components, hooks, API client
+│   └── vite.config.ts              # Dev proxy to :8000, prod build to static/
 ├── client/                         # Standalone Python client (separate package: agentic-primitives-gateway-client)
 ├── tests/                          # Server tests (unit/system + integration)
 ├── configs/                        # YAML presets (local, agentcore, kitchen-sink, agents-*)

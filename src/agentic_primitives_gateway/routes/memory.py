@@ -26,6 +26,17 @@ from agentic_primitives_gateway.registry import registry
 router = APIRouter(prefix="/api/v1/memory", tags=[Primitive.MEMORY])
 
 
+# ── Namespace discovery ──────────────────────────────────────────────
+# Must be registered before /{namespace} catch-all routes.
+
+
+@router.get("/namespaces")
+async def list_namespaces() -> Any:
+    """List all known memory namespaces that contain stored memories."""
+    namespaces = await registry.memory.list_namespaces()
+    return {"namespaces": namespaces}
+
+
 # ── Conversation events ─────────────────────────────────────────────
 # These must be registered before /{namespace} catch-all routes.
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import uuid
+from collections.abc import AsyncIterator
 from typing import Any
 
 from agentic_primitives_gateway.agents.tools import (
@@ -36,20 +37,35 @@ class AgentRunner:
         session_id = session_id or uuid.uuid4().hex[:16]
         trace_id = uuid.uuid4().hex
 
-        # Resolve memory namespace
-        memory_ns = self._resolve_namespace(spec, session_id)
+        # Resolve agent-scoped knowledge namespace (no session_id) for memory tools
+        # so memories persist across sessions. Conversation history uses (actor_id, session_id)
+        # directly via _load_history/_store_turn.
+        knowledge_ns = self._resolve_knowledge_namespace(spec)
 
         # Session context for code_interpreter / browser (lazily populated)
         session_ctx: dict[str, str] = {}
 
-        # Build tool list
-        tools = build_tool_list(spec.primitives, namespace=memory_ns, session_ctx=session_ctx)
+        # Build tool list — bind memory tools to the agent-scoped namespace
+        tools = build_tool_list(spec.primitives, namespace=knowledge_ns, session_ctx=session_ctx)
         gateway_tools = to_gateway_tools(tools) if tools else None
 
         # Build messages with conversation history
         messages: list[dict[str, Any]] = []
         if spec.hooks.auto_memory:
             messages = await self._load_history(spec.name, session_id)
+
+        # Auto-retrieve stored memories and inject as context on first message
+        if not messages and "memory" in spec.primitives and spec.primitives["memory"].enabled:
+            memory_context = await self._load_memory_context(knowledge_ns)
+            if memory_context:
+                messages.append({"role": "user", "content": memory_context})
+                messages.append(
+                    {
+                        "role": "assistant",
+                        "content": "I've reviewed my stored memories and will use them in our conversation.",
+                    }
+                )
+
         messages.append({"role": "user", "content": message})
 
         # Tool-call loop
@@ -130,7 +146,7 @@ class AgentRunner:
 
                 # Rebuild tool list if a new session was started
                 if len(session_ctx) > prev_ctx_size:
-                    tools = build_tool_list(spec.primitives, namespace=memory_ns, session_ctx=session_ctx)
+                    tools = build_tool_list(spec.primitives, namespace=knowledge_ns, session_ctx=session_ctx)
                     gateway_tools = to_gateway_tools(tools) if tools else None
 
                 logger.info(
@@ -182,11 +198,217 @@ class AgentRunner:
             metadata={"trace_id": trace_id},
         )
 
+    async def run_stream(
+        self,
+        spec: AgentSpec,
+        message: str,
+        session_id: str | None = None,
+    ) -> AsyncIterator[dict[str, Any]]:
+        """Streaming variant of run(). Yields SSE-friendly event dicts."""
+        session_id = session_id or uuid.uuid4().hex[:16]
+        trace_id = uuid.uuid4().hex
+        knowledge_ns = self._resolve_knowledge_namespace(spec)
+        session_ctx: dict[str, str] = {}
+
+        tools = build_tool_list(spec.primitives, namespace=knowledge_ns, session_ctx=session_ctx)
+        gateway_tools = to_gateway_tools(tools) if tools else None
+
+        messages: list[dict[str, Any]] = []
+        if spec.hooks.auto_memory:
+            messages = await self._load_history(spec.name, session_id)
+
+        if not messages and "memory" in spec.primitives and spec.primitives["memory"].enabled:
+            memory_context = await self._load_memory_context(knowledge_ns)
+            if memory_context:
+                messages.append({"role": "user", "content": memory_context})
+                messages.append(
+                    {
+                        "role": "assistant",
+                        "content": "I've reviewed my stored memories and will use them in our conversation.",
+                    }
+                )
+
+        messages.append({"role": "user", "content": message})
+
+        turns_used = 0
+        tools_called: list[str] = []
+        content = ""
+
+        yield {"type": "stream_start", "session_id": session_id}
+
+        while turns_used < spec.max_turns:
+            turns_used += 1
+
+            request_dict: dict[str, Any] = {
+                "model": spec.model,
+                "messages": messages,
+                "system": spec.system_prompt,
+                "temperature": spec.temperature,
+            }
+            if spec.max_tokens is not None:
+                request_dict["max_tokens"] = spec.max_tokens
+            if gateway_tools:
+                request_dict["tools"] = gateway_tools
+
+            # Stream LLM response
+            turn_content = ""
+            turn_tool_calls: list[dict[str, Any]] = []
+            stop_reason = "end_turn"
+
+            async for event in registry.gateway.route_request_stream(request_dict):
+                etype = event.get("type")
+
+                if etype == "content_delta":
+                    delta = event["delta"]
+                    turn_content += delta
+                    yield {"type": "token", "content": delta}
+
+                elif etype == "tool_use_start":
+                    yield {
+                        "type": "tool_call_start",
+                        "name": event.get("name", ""),
+                        "id": event.get("id", ""),
+                    }
+
+                elif etype == "tool_use_complete":
+                    turn_tool_calls.append(
+                        {
+                            "id": event.get("id", ""),
+                            "name": event["name"],
+                            "input": event.get("input", {}),
+                        }
+                    )
+
+                elif etype == "message_stop":
+                    stop_reason = event.get("stop_reason", "end_turn")
+
+            if turn_content:
+                content = turn_content
+
+            # No tool calls — we're done
+            if stop_reason != "tool_use" or not turn_tool_calls:
+                messages.append({"role": "assistant", "content": content})
+                break
+
+            # Append assistant message with tool calls to history
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": content,
+                    "tool_calls": turn_tool_calls,
+                }
+            )
+
+            # Execute tool calls
+            tool_results: list[dict[str, Any]] = []
+            for tc in turn_tool_calls:
+                tool_name = tc["name"]
+                tool_input = tc.get("input", {})
+                tool_id = tc.get("id", uuid.uuid4().hex[:8])
+                tools_called.append(tool_name)
+
+                prev_ctx_size = len(session_ctx)
+                await self._ensure_session(tool_name, tools, session_ctx)
+                if len(session_ctx) > prev_ctx_size:
+                    tools = build_tool_list(spec.primitives, namespace=knowledge_ns, session_ctx=session_ctx)
+                    gateway_tools = to_gateway_tools(tools) if tools else None
+
+                try:
+                    result = await execute_tool(tool_name, tool_input, tools)
+                except Exception as e:
+                    result = f"Error: {type(e).__name__}: {e}"
+
+                tool_results.append({"tool_use_id": tool_id, "content": result})
+                yield {
+                    "type": "tool_call_result",
+                    "name": tool_name,
+                    "id": tool_id,
+                    "result": result[:500],
+                }
+
+            messages.append({"role": "user", "tool_results": tool_results})
+        else:
+            content = (
+                f"I've reached the maximum number of turns ({spec.max_turns}). Here's what I have so far: {content}"
+            )
+            messages.append({"role": "assistant", "content": content})
+
+        await self._cleanup_sessions(session_ctx)
+
+        if spec.hooks.auto_memory:
+            await self._store_turn(spec.name, session_id, message, content)
+        if spec.hooks.auto_trace:
+            await self._trace_conversation(trace_id, spec, session_id, message, content, turns_used, tools_called)
+
+        yield {
+            "type": "done",
+            "response": content,
+            "session_id": session_id,
+            "agent_name": spec.name,
+            "turns_used": turns_used,
+            "tools_called": tools_called,
+            "metadata": {"trace_id": trace_id},
+        }
+
     def _resolve_namespace(self, spec: AgentSpec, session_id: str) -> str:
-        """Resolve memory namespace, substituting placeholders."""
+        """Resolve memory namespace with all placeholders, including session_id."""
         mem_config = spec.primitives.get("memory")
         ns = mem_config.namespace if mem_config and mem_config.namespace else "agent:{agent_name}"
         return ns.replace("{agent_name}", spec.name).replace("{session_id}", session_id)
+
+    def _resolve_knowledge_namespace(self, spec: AgentSpec) -> str:
+        """Resolve the agent-scoped knowledge namespace (no session_id).
+
+        Memory tools (remember/recall/search) use this namespace so that
+        stored facts persist across sessions. The {session_id} placeholder
+        is stripped — session scoping is only for conversation history.
+        """
+        mem_config = spec.primitives.get("memory")
+        ns = mem_config.namespace if mem_config and mem_config.namespace else "agent:{agent_name}"
+        # Strip the session_id portion: "agent:{agent_name}:{session_id}" → "agent:{agent_name}"
+        ns = ns.replace(":{session_id}", "").replace("{session_id}", "")
+        return ns.replace("{agent_name}", spec.name).rstrip(":")
+
+    async def _load_memory_context(self, namespace: str) -> str:
+        """Load stored memories from the namespace (and related namespaces) as context."""
+        all_records = []
+        try:
+            # First check the primary (knowledge) namespace
+            records = await registry.memory.list_memories(namespace=namespace, limit=20)
+            all_records.extend(records)
+
+            # Also search session-scoped sub-namespaces for this agent in case
+            # memories were stored before the knowledge/session split.
+            # Use "namespace:" prefix to avoid matching other agents whose names
+            # share a prefix (e.g. "agent:bot" must not match "agent:bot-2").
+            if not all_records:
+                try:
+                    child_prefix = namespace + ":"
+                    all_namespaces = await registry.memory.list_namespaces()
+                    for ns in all_namespaces:
+                        if ns.startswith(child_prefix):
+                            ns_records = await registry.memory.list_memories(namespace=ns, limit=20)
+                            all_records.extend(ns_records)
+                except Exception:
+                    pass  # list_namespaces is optional
+
+            if not all_records:
+                return ""
+            # Dedupe by key, preferring the most recently updated
+            seen: dict[str, Any] = {}
+            for r in all_records:
+                if r.key not in seen or r.updated_at > seen[r.key].updated_at:
+                    seen[r.key] = r
+            lines = [
+                "[System: The following memories were previously stored in your memory. "
+                "Use them to maintain continuity across conversations.]",
+            ]
+            for r in seen.values():
+                lines.append(f"- {r.key}: {r.content}")
+            return "\n".join(lines)
+        except Exception:
+            logger.debug("Failed to load memory context for namespace %s", namespace)
+            return ""
 
     async def _load_history(self, agent_name: str, session_id: str) -> list[dict[str, Any]]:
         """Load conversation history from memory primitive."""

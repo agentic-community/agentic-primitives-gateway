@@ -55,3 +55,8 @@ volumes/
 
 # OS
 Thumbs.db
+
+# UI
+ui/node_modules/
+ui/*.tsbuildinfo
+src/agentic_primitives_gateway/static/
