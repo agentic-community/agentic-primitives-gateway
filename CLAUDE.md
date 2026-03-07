@@ -5,32 +5,45 @@ FastAPI service providing pluggable primitives (memory, observability, gateway, 
 ## Project Structure
 
 - `src/agentic_primitives_gateway/` — Server package
-  - `main.py` — FastAPI app, RequestContextMiddleware, router registration
+  - `main.py` — FastAPI app creation, lifespan, error handlers, router registration, UI serving
+  - `middleware.py` — `RequestContextMiddleware` (extracts AWS creds, service creds, provider routing from headers)
   - `config.py` — Pydantic-settings, YAML config loading with env var expansion
   - `registry.py` — Dynamic provider loading, per-request resolution via context
   - `context.py` — Request-scoped contextvars (AWS creds, service creds, provider overrides)
   - `metrics.py` — Prometheus MetricsProxy wrapping all providers
+  - `watcher.py` — Config file hot-reload watcher
   - `models/` — Pydantic request/response models and StrEnum definitions (`enums.py`)
   - `primitives/` — Abstract base classes + backend implementations per primitive; `_sync.py` provides `SyncRunnerMixin` for executor-based async wrappers
-  - `routes/` — FastAPI routers, one per primitive plus health and agents
+  - `routes/` — FastAPI routers, one per primitive plus health and agents; `_helpers.py` provides `@handle_provider_errors` decorator
   - `enforcement/` — Policy enforcement layer: `base.py` (PolicyEnforcer ABC), `noop.py` (default allow-all), `cedar.py` (local Cedar evaluation via cedarpy), `middleware.py` (Starlette middleware mapping requests to Cedar principals/actions/resources)
-  - `agents/` — Declarative agent orchestration: `runner.py` (LLM tool-call loop), `tools.py` (tool registry), `store.py` (persistence)
-- `ui/` — React + Vite + TypeScript + Tailwind CSS web UI (dashboard, agent chat)
-  - `src/` — React source (pages, components, hooks, API client)
+  - `agents/` — Declarative agent orchestration
+    - `runner.py` — `AgentRunner` with `_RunContext` dataclass; `run()` (non-streaming) and `run_stream()` (SSE) share init/request/finalize via helpers
+    - `store.py` — `FileAgentStore` (JSON persistence, YAML seed with overwrite)
+    - `namespace.py` — Shared namespace resolution for agent memory (knowledge vs session scoping)
+    - `tools/` — Tool system package
+      - `handlers.py` — Handler functions per primitive (memory, browser, code_interpreter, tools, identity)
+      - `catalog.py` — `ToolDefinition`, `_TOOL_CATALOG`, `build_tool_list`, `to_gateway_tools`, `execute_tool`
+      - `delegation.py` — Agent-as-tool delegation (`_build_agent_tools`, `MAX_AGENT_DEPTH`)
+- `ui/` — React + Vite + TypeScript + Tailwind CSS web UI
+  - `src/components/` — Reusable components (ChatMessage, ToolCallBlock, SubAgentBlock, ArtifactBlock, MemoryPanel, ToolsPanel, CollapsibleSection, etc.)
+  - `src/pages/` — Dashboard, AgentList (CRUD + edit), AgentChat (streaming + sub-agents), PolicyManager, PrimitiveExplorer
+  - `src/hooks/` — Data fetching hooks built on generic `useFetch<T>`
+  - `src/lib/` — Shared utilities (cn, theme with CODE_THEME/PROSE_CLASSES, SSE parser)
+  - `src/api/` — API client + TypeScript types
   - Production build outputs to `src/agentic_primitives_gateway/static/`
   - FastAPI serves the built SPA at `/ui/` with client-side routing fallback
 - `client/` — Separate `agentic-primitives-gateway-client` package (httpx-based, no server dependency)
-- `tests/` — Server integration tests (pytest, async)
-- `client/tests/` — Client unit tests
+- `tests/` — Server unit/system tests (pytest, async); 893+ tests
+- `client/tests/` — Client unit tests (100 tests)
 - `configs/` — YAML presets (local, agentcore, kitchen-sink, milvus-langfuse, agents-agentcore, agents-mem0-langfuse, agents-mixed)
 - `examples/` — Example agents (langchain, strands)
 - `deploy/helm/` — Kubernetes Helm chart
 
 ## Architecture
 
-Each primitive has an abstract base class (`primitives/*/base.py`) with multiple backend implementations (noop, in_memory, agentcore, mem0, langfuse, etc.). The registry dynamically loads provider classes via `importlib` at startup from config. Requests flow through middleware that extracts credentials and provider routing headers into contextvars, then routes call `registry.{primitive}` which resolves the correct backend.
+Each primitive has an abstract base class (`primitives/*/base.py`) with multiple backend implementations (noop, in_memory, agentcore, mem0, langfuse, etc.). The registry dynamically loads provider classes via `importlib` at startup from config. Requests flow through `RequestContextMiddleware` (in `middleware.py`) that extracts credentials and provider routing headers into contextvars, then through `PolicyEnforcementMiddleware` for Cedar policy evaluation, then routes call `registry.{primitive}` which resolves the correct backend.
 
-The agents subsystem sits above the primitives. An agent spec (system prompt + model + enabled tools + hooks) defines a declarative agent. The `AgentRunner` runs the LLM tool-call loop using `registry.gateway.route_request()` for LLM calls and executes tool calls directly against primitives via the registry. Agent specs are stored in `FileAgentStore` (JSON persistence) and can be seeded from YAML config.
+The agents subsystem sits above the primitives. An agent spec (system prompt + model + enabled tools + hooks) defines a declarative agent. The `AgentRunner` (in `agents/runner.py`) uses a `_RunContext` dataclass to share state across phases. `run()` and `run_stream()` share initialization, request building, session management, and finalization — only LLM calling and tool execution differ. Streaming uses SSE with token-by-token delivery and real-time sub-agent event forwarding. Tool calls within a turn execute in parallel via `asyncio.gather` (non-streaming) or `asyncio.Queue` (streaming). Agents can delegate to other agents as tools (agent-as-tool pattern) with configurable depth limiting (`MAX_AGENT_DEPTH=3`). Agent specs are stored in `FileAgentStore` (JSON persistence) and seeded from YAML config on startup (config overwrites existing agents).
 
 ## Build & Run
 
@@ -51,10 +64,10 @@ python -m pytest tests/ -v
 ## Test Commands
 
 ```bash
-# All server tests (634 unit/system + 42 integration)
+# All server tests (893+ unit/system + integration)
 python -m pytest tests/ -v
 
-# All client tests (30 tests)
+# All client tests (100 tests)
 cd client && python -m pytest tests/ -v
 ```
 
@@ -81,8 +94,13 @@ pre-commit run --all-files # Run all hooks on entire repo
 - **Client is independent** — `client/` has no imports from the server package. It's a thin HTTP wrapper; validation happens server-side.
 - **Enforcement is NOT a primitive** — `enforcement/` is a separate subsystem (like `agents/`) that evaluates requests against policies at the middleware level. `PolicyEnforcementMiddleware` maps requests to Cedar principals/actions/resources and delegates to a `PolicyEnforcer` implementation. Default is `NoopPolicyEnforcer` (all allowed). `CedarPolicyEnforcer` uses `cedarpy` for local evaluation with background policy refresh from `registry.policy`. Default-deny when Cedar is active: no loaded policies = all denied.
 - **Agents are NOT primitives** — They're a higher-level orchestration layer in `agents/` that composes primitives. Not registered in the provider registry.
-- **Agent tool handlers** — `agents/tools.py` defines a static tool catalog with `functools.partial` to bind namespace/session_id so the LLM doesn't need to specify them.
-- **BedrockConverseProvider** — `primitives/gateway/bedrock.py` translates between internal message format and Bedrock Converse API. Supports tool_use. Uses `SyncRunnerMixin` + `get_boto3_session()`.
+- **Agent tool system** — `agents/tools/` is a package: `handlers.py` (primitive handler functions), `catalog.py` (ToolDefinition + _TOOL_CATALOG + builder/executor), `delegation.py` (agent-as-tool with depth limiting). `functools.partial` binds namespace/session_id so the LLM doesn't specify them.
+- **Agent-as-tool delegation** — Agents can call other agents as tools. A coordinator agent with `primitives.agents.tools: ["researcher", "coder"]` gets `call_researcher` and `call_coder` tools. Sub-agent runs are full `run()`/`run_stream()` calls with depth tracking. `MAX_AGENT_DEPTH=3` prevents infinite recursion.
+- **Streaming** — `run_stream()` yields SSE events (`token`, `tool_call_start`, `tool_call_result`, `sub_agent_token`, `sub_agent_tool`, `done`). Bedrock streaming uses `converse_stream()` with an `asyncio.Queue` bridge for async iteration. Sub-agent events are forwarded to the parent stream in real-time.
+- **Provider overrides in runner** — `_apply_overrides`/`_restore_overrides` save and restore the parent's provider overrides around sub-agent execution so each agent uses its own configured providers.
+- **Knowledge vs session namespace** — `agents/namespace.py` provides `resolve_knowledge_namespace()` which strips `{session_id}` from the template. Memory tools use the agent-scoped namespace; conversation history uses `(actor_id, session_id)` directly.
+- **Route error handling** — `routes/_helpers.py` provides `@handle_provider_errors(detail, not_found=)` decorator to convert `NotImplementedError` → 501 and `KeyError` → 404. Used on ~31 endpoints; endpoints with Pydantic request bodies use manual try/except (FastAPI signature inspection limitation).
+- **BedrockConverseProvider** — `primitives/gateway/bedrock.py` translates between internal message format and Bedrock Converse API. Supports tool_use and streaming via `converse_stream()`. Uses `SyncRunnerMixin` + `get_boto3_session()`.
 - **SeleniumGridBrowserProvider** — `primitives/browser/selenium_grid.py` provides self-hosted browser automation via Selenium WebDriver.
 - **JupyterCodeInterpreterProvider** — `primitives/code_interpreter/jupyter.py` provides code execution via Jupyter Server or Enterprise Gateway. Uses WebSocket for execution and kernel-based file I/O (works without the Contents REST API).
 - **AgentCorePolicyProvider** — `primitives/policy/agentcore.py` provides Cedar-based policy management via `bedrock-agentcore-control`. Supports engine CRUD, policy CRUD, and policy generation. Uses `SyncRunnerMixin` + `get_boto3_session()`.
@@ -100,7 +118,7 @@ pre-commit run --all-files # Run all hooks on entire repo
 
 ## Web UI
 
-React + Vite SPA served at `/ui/`. Three pages: Dashboard (health, providers, agents), Agent List (CRUD), Agent Chat (interactive chat with tool call display).
+React + Vite SPA served at `/ui/`. Pages: Dashboard (health, providers, agents), Agent List (CRUD with inline edit), Agent Chat (token-streaming, sub-agent activity, tool artifacts), Policy Manager, Primitive Explorer. Shared `useFetch<T>` hook, `CollapsibleSection` component, and centralized theme constants (`CODE_THEME`, `PROSE_CLASSES`) reduce duplication.
 
 ```bash
 # Development (hot reload, proxies API to :8000)

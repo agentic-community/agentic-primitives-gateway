@@ -99,7 +99,13 @@ Agentic Primitives Gateway is a FastAPI service. Agent developers call it via RE
 
 All nine primitives are fully implemented and wired to their respective providers.
 
-**Agents** sit above the primitives as a declarative orchestration layer. An agent is defined by a spec (system prompt, model, enabled primitives/tools, hooks) and the gateway runs the LLM tool-call loop internally. No external agent framework needed.
+**Agents** sit above the primitives as a declarative orchestration layer. An agent is defined by a spec (system prompt, model, enabled primitives/tools, hooks) and the gateway runs the LLM tool-call loop internally. No external agent framework needed. Key agent capabilities:
+- **Token streaming** — `POST /api/v1/agents/{name}/chat/stream` returns SSE events for real-time token delivery
+- **Agent teams** — Agents can delegate to other agents as tools (agent-as-tool pattern with depth limiting)
+- **Parallel tool execution** — Multiple tool calls in a single turn run concurrently via `asyncio.gather`
+- **Tool artifacts** — Code execution outputs and sub-agent results are captured and returned to the coordinator
+- **Memory persistence** — Agent-scoped knowledge namespace persists across sessions; conversation history is session-scoped
+- **Provider overrides** — Each agent can specify which provider to use per primitive, with proper save/restore for nested delegation
 
 ## API Reference
 
@@ -430,7 +436,16 @@ Declarative agents that run LLM tool-call loops server-side. Define an agent wit
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/{name}/chat` | Chat with an agent. Body: `{"message": "...", "session_id": "..."}`. The gateway runs the full LLM tool-call loop and returns when done. |
+| `POST` | `/{name}/chat` | Chat with an agent. Body: `{"message": "...", "session_id": "..."}`. Runs the full tool-call loop and returns when done. |
+| `POST` | `/{name}/chat/stream` | Streaming chat. Returns SSE events: `stream_start`, `token`, `tool_call_start`, `tool_call_result`, `sub_agent_token`, `sub_agent_tool`, `done`. |
+
+**Introspection:**
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/{name}/tools` | List tools available to an agent with provider info. |
+| `GET` | `/{name}/memory` | Introspect memory stores for an agent (namespaces + contents). |
+| `GET` | `/tool-catalog` | List all available primitives and their tools for the agent builder UI. |
 
 Chat response:
 
@@ -441,6 +456,7 @@ Chat response:
   "agent_name": "research-assistant",
   "turns_used": 3,
   "tools_called": ["search_memory", "remember"],
+  "artifacts": [{"tool_name": "execute_code", "tool_input": {...}, "output": "..."}],
   "metadata": {"trace_id": "..."}
 }
 ```
@@ -796,10 +812,30 @@ agents:
         auto_trace: true
 ```
 
+**Agent teams (agent-as-tool delegation):**
+
+```yaml
+    coordinator:
+      model: "us.anthropic.claude-sonnet-4-20250514-v1:0"
+      description: "Delegates to specialized agents"
+      system_prompt: |
+        You are a coordinator. Delegate tasks to specialized agents.
+        Call multiple agents in parallel when tasks are independent.
+      primitives:
+        memory:
+          enabled: true
+        agents:
+          enabled: true
+          tools: ["researcher", "coder"]  # Names of other agents
+```
+
+The coordinator gets `call_researcher(message)` and `call_coder(message)` tools. Sub-agents run their own full tool-call loops. Depth is tracked to prevent infinite recursion (`MAX_AGENT_DEPTH=3`).
+
 Pre-built agent configs are in `configs/`:
 - `agents-agentcore.yaml` -- all primitives backed by AgentCore
 - `agents-mem0-langfuse.yaml` -- mem0 + Milvus memory, Langfuse tracing, Selenium Grid browser
 - `agents-mixed.yaml` -- mem0/Langfuse for memory/observability, AgentCore for code/browser/identity/tools
+- `kitchen-sink.yaml` -- all providers + coordinator/researcher/coder agent team example
 
 ---
 
@@ -1617,34 +1653,48 @@ Client → Auth Proxy (validate JWT, set X-Agent-Id)
 ```
 agentic-primitives-gateway/
 ├── src/agentic_primitives_gateway/
-│   ├── main.py                     # FastAPI app, RequestContextMiddleware, provider discovery
+│   ├── main.py                     # FastAPI app, lifespan, error handlers, router registration, UI serving
+│   ├── middleware.py               # RequestContextMiddleware (AWS creds + provider routing from headers)
 │   ├── config.py                   # Settings (pydantic-settings), multi-provider config parsing
 │   ├── context.py                  # Request-scoped AWS credentials and provider routing context vars
 │   ├── registry.py                 # Provider registry -- loads named backends, resolves per-request
 │   ├── metrics.py                  # Prometheus MetricsProxy wrapper for all providers
 │   ├── watcher.py                  # Config file watcher for hot-reload (K8s ConfigMap aware)
 │   ├── routes/
+│   │   ├── _helpers.py             # @handle_provider_errors decorator (NotImplementedError → 501)
 │   │   ├── health.py               # /healthz, /readyz
-│   │   ├── memory.py               # /api/v1/memory/* (22 endpoints)
+│   │   ├── memory.py               # /api/v1/memory/* (23 endpoints incl. /namespaces)
 │   │   ├── identity.py             # /api/v1/identity/* (14 endpoints)
 │   │   ├── code_interpreter.py     # /api/v1/code-interpreter/* (8 endpoints)
 │   │   ├── browser.py              # /api/v1/browser/* (11 endpoints)
 │   │   ├── observability.py        # /api/v1/observability/* (11 endpoints)
 │   │   ├── gateway.py              # /api/v1/gateway/* (2 endpoints)
 │   │   ├── tools.py                # /api/v1/tools/* (9 endpoints)
-│   │   └── agents.py               # /api/v1/agents/* (6 endpoints: CRUD + chat)
+│   │   ├── policy.py               # /api/v1/policy/* (12 endpoints)
+│   │   ├── evaluations.py          # /api/v1/evaluations/* (8 endpoints)
+│   │   └── agents.py               # /api/v1/agents/* (CRUD, chat, stream, tools, memory, tool-catalog)
 │   ├── agents/                     # Declarative agent orchestration
-│   │   ├── runner.py               # LLM tool-call loop with auto-memory/trace hooks
-│   │   ├── tools.py                # Tool registry: 15 tools across 5 primitives
-│   │   └── store.py                # Agent spec persistence (FileAgentStore)
+│   │   ├── runner.py               # AgentRunner + _RunContext: run() and run_stream() with shared helpers
+│   │   ├── namespace.py            # Shared knowledge namespace resolution (no session_id)
+│   │   ├── store.py                # Agent spec persistence (FileAgentStore, YAML seed with overwrite)
+│   │   └── tools/                  # Tool system package
+│   │       ├── handlers.py         # Handler functions per primitive (memory, browser, code, tools, identity)
+│   │       ├── catalog.py          # ToolDefinition, _TOOL_CATALOG, build_tool_list, execute_tool
+│   │       └── delegation.py       # Agent-as-tool: _build_agent_tools, MAX_AGENT_DEPTH
+│   ├── enforcement/                # Policy enforcement (separate from primitives)
+│   │   ├── base.py                 # PolicyEnforcer ABC
+│   │   ├── noop.py                 # Default allow-all
+│   │   ├── cedar.py                # Local Cedar evaluation via cedarpy
+│   │   └── middleware.py           # Starlette middleware: maps requests → Cedar principals/actions/resources
 │   ├── models/                     # Pydantic request/response models per primitive
-│   │   └── agents.py               # AgentSpec, ChatRequest, ChatResponse
+│   │   ├── agents.py               # AgentSpec, ChatResponse, ToolArtifact, *MemoryResponse, *ToolsResponse
+│   │   └── ...                     # One file per primitive (memory, identity, gateway, etc.)
 │   └── primitives/
 │       ├── base.py                 # Re-exports all provider ABCs
 │       ├── _sync.py                # SyncRunnerMixin (shared executor helper for sync backends)
 │       ├── memory/
 │       │   ├── noop.py             # No-op (logs only)
-│       │   ├── in_memory.py        # Dict-based (dev/test)
+│       │   ├── in_memory.py        # Dict-based (dev/test), implements list_namespaces
 │       │   ├── mem0_provider.py    # mem0 + Milvus
 │       │   └── agentcore.py        # AWS Bedrock AgentCore
 │       ├── identity/
@@ -1667,17 +1717,31 @@ agentic-primitives-gateway/
 │       │   └── agentcore.py        # AWS AgentCore via OpenTelemetry
 │       ├── gateway/
 │       │   ├── noop.py
-│       │   └── bedrock.py          # AWS Bedrock Converse API (tool_use support)
+│       │   └── bedrock.py          # AWS Bedrock Converse API (tool_use + converse_stream)
+│       ├── policy/
+│       │   ├── noop.py
+│       │   └── agentcore.py        # AWS AgentCore Cedar policy management
+│       ├── evaluations/
+│       │   ├── noop.py
+│       │   └── agentcore.py        # AWS AgentCore LLM-as-a-judge evaluations
 │       └── tools/
 │           ├── noop.py
 │           ├── agentcore.py        # AWS AgentCore Gateway (MCP-compatible)
 │           └── mcp_registry.py     # MCP Registry
-├── ui/                             # React + Vite + TypeScript web UI (Dashboard, Agent Chat)
-│   ├── src/                        # Pages, components, hooks, API client
+├── ui/                             # React + Vite + TypeScript + Tailwind CSS web UI
+│   ├── src/
+│   │   ├── pages/                  # Dashboard, AgentList, AgentChat, PolicyManager, PrimitiveExplorer
+│   │   ├── components/             # ChatMessage, ToolCallBlock, SubAgentBlock, ArtifactBlock, MemoryPanel,
+│   │   │                           # ToolsPanel, CollapsibleSection, PrimitivesSelector, AgentCard, etc.
+│   │   ├── hooks/                  # useFetch<T>, useAgent, useAgents, useHealth, useProviders
+│   │   ├── lib/                    # cn, theme (CODE_THEME, PROSE_CLASSES), sse (parseSSE)
+│   │   └── api/                    # client.ts (REST + SSE streaming), types.ts
 │   └── vite.config.ts              # Dev proxy to :8000, prod build to static/
 ├── client/                         # Standalone Python client (separate package: agentic-primitives-gateway-client)
-├── tests/                          # Server tests (unit/system + integration)
-├── configs/                        # YAML presets (local, agentcore, kitchen-sink, agents-*)
+├── tests/                          # Server tests: 893+ unit/system + integration
+├── client/tests/                   # Client tests: 100 tests
+├── configs/                        # YAML presets (local, agentcore, kitchen-sink, agents-*, milvus-langfuse)
+├── examples/                       # Example agents (langchain, strands)
 ├── deploy/helm/agentic-primitives-gateway/   # Helm chart
 ├── Dockerfile                      # Multi-stage build
 └── pyproject.toml
