@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 import uuid
 from collections.abc import AsyncIterator
 from typing import Any
 
+from agentic_primitives_gateway.agents.namespace import resolve_knowledge_namespace
+from agentic_primitives_gateway.agents.store import AgentStore
 from agentic_primitives_gateway.agents.tools import (
     MAX_AGENT_DEPTH,
     build_tool_list,
@@ -33,9 +34,9 @@ class AgentRunner:
     """
 
     def __init__(self) -> None:
-        self._store: Any | None = None
+        self._store: AgentStore | None = None
 
-    def set_store(self, store: Any) -> None:
+    def set_store(self, store: AgentStore) -> None:
         """Set the agent store reference (called during app lifespan)."""
         self._store = store
 
@@ -61,7 +62,7 @@ class AgentRunner:
         # Apply this agent's provider overrides, saving the parent's to restore later
         prev_overrides = self._apply_overrides(spec)
 
-        knowledge_ns = self._resolve_knowledge_namespace(spec)
+        knowledge_ns = resolve_knowledge_namespace(spec)
         session_ctx: dict[str, str] = {}
 
         tools = build_tool_list(
@@ -262,7 +263,7 @@ class AgentRunner:
         # Apply this agent's provider overrides, saving the parent's to restore later
         prev_overrides = self._apply_overrides(spec)
 
-        knowledge_ns = self._resolve_knowledge_namespace(spec)
+        knowledge_ns = resolve_knowledge_namespace(spec)
         session_ctx: dict[str, str] = {}
 
         tools = build_tool_list(
@@ -294,7 +295,7 @@ class AgentRunner:
 
         turns_used = 0
         tools_called: list[str] = []
-        artifacts: list[dict[str, Any]] = []
+        artifacts: list[ToolArtifact] = []
         content = ""
 
         yield {"type": "stream_start", "session_id": session_id}
@@ -489,7 +490,7 @@ class AgentRunner:
                 if t_id in tool_result_map:
                     t_name, t_input, result = tool_result_map[t_id]
                     tools_called.append(t_name)
-                    artifacts.append({"tool_name": t_name, "tool_input": t_input, "output": result})
+                    artifacts.append(ToolArtifact(tool_name=t_name, tool_input=t_input, output=result))
                     tool_results.append({"tool_use_id": t_id, "content": result})
 
             messages.append({"role": "user", "tool_results": tool_results})
@@ -512,15 +513,13 @@ class AgentRunner:
         # Serialize artifacts for the done event
         done_artifacts = []
         for a in artifacts:
-            tool_input = a.get("tool_input", {}) if isinstance(a, dict) else getattr(a, "tool_input", {})
-            tool_name = a.get("tool_name", "") if isinstance(a, dict) else getattr(a, "tool_name", "")
-            output = a.get("output", "") if isinstance(a, dict) else getattr(a, "output", "")
+            ti = a.tool_input or {}
             done_artifacts.append(
                 {
-                    "tool_name": tool_name,
-                    "code": tool_input.get("code", "") if isinstance(tool_input, dict) else "",
-                    "language": tool_input.get("language", "python") if isinstance(tool_input, dict) else "python",
-                    "output": output,
+                    "tool_name": a.tool_name,
+                    "code": ti.get("code", ""),
+                    "language": ti.get("language", "python"),
+                    "output": a.output,
                 }
             )
 
@@ -534,12 +533,6 @@ class AgentRunner:
             "artifacts": done_artifacts,
             "metadata": {"trace_id": trace_id},
         }
-
-    def _resolve_namespace(self, spec: AgentSpec, session_id: str) -> str:
-        """Resolve memory namespace with all placeholders, including session_id."""
-        mem_config = spec.primitives.get("memory")
-        ns = mem_config.namespace if mem_config and mem_config.namespace else "agent:{agent_name}"
-        return ns.replace("{agent_name}", spec.name).replace("{session_id}", session_id)
 
     @staticmethod
     def _apply_overrides(spec: AgentSpec) -> dict[str, str]:
@@ -559,19 +552,6 @@ class AgentRunner:
     def _restore_overrides(prev: dict[str, str]) -> None:
         """Restore previous provider overrides."""
         set_provider_overrides(prev)
-
-    def _resolve_knowledge_namespace(self, spec: AgentSpec) -> str:
-        """Resolve the agent-scoped knowledge namespace (no session_id).
-
-        Memory tools (remember/recall/search) use this namespace so that
-        stored facts persist across sessions. The {session_id} placeholder
-        is stripped — session scoping is only for conversation history.
-        """
-        mem_config = spec.primitives.get("memory")
-        ns = mem_config.namespace if mem_config and mem_config.namespace else "agent:{agent_name}"
-        # Strip the session_id portion: "agent:{agent_name}:{session_id}" → "agent:{agent_name}"
-        ns = ns.replace(":{session_id}", "").replace("{session_id}", "")
-        return ns.replace("{agent_name}", spec.name).rstrip(":")
 
     async def _load_memory_context(self, namespace: str) -> str:
         """Load stored memories from the namespace (and related namespaces) as context."""
@@ -593,8 +573,10 @@ class AgentRunner:
                         if ns.startswith(child_prefix):
                             ns_records = await registry.memory.list_memories(namespace=ns, limit=20)
                             all_records.extend(ns_records)
+                except NotImplementedError:
+                    pass  # list_namespaces is optional for providers
                 except Exception:
-                    pass  # list_namespaces is optional
+                    logger.debug("Error searching child namespaces for %s", namespace, exc_info=True)
 
             if not all_records:
                 return ""
@@ -646,7 +628,7 @@ class AgentRunner:
         response: dict[str, Any],
     ) -> None:
         """Log a single LLM generation to observability."""
-        with contextlib.suppress(Exception):
+        try:
             await registry.observability.log_generation(
                 trace_id=trace_id,
                 name=f"agent:{spec.name}:turn:{turn}",
@@ -655,6 +637,8 @@ class AgentRunner:
                 output=response.get("content", ""),
                 usage=response.get("usage"),
             )
+        except Exception:
+            logger.debug("Failed to log generation for agent %s", spec.name, exc_info=True)
 
     async def _trace_conversation(
         self,
@@ -667,7 +651,7 @@ class AgentRunner:
         tools_called: list[str],
     ) -> None:
         """Create overall conversation trace."""
-        with contextlib.suppress(Exception):
+        try:
             await registry.observability.ingest_trace(
                 {
                     "trace_id": trace_id,
@@ -682,6 +666,8 @@ class AgentRunner:
                     },
                 }
             )
+        except Exception:
+            logger.debug("Failed to trace conversation for agent %s", spec.name, exc_info=True)
 
     async def _ensure_session(
         self,

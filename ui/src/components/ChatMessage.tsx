@@ -2,29 +2,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { cn } from "../lib/cn";
-
-const codeTheme: Record<string, React.CSSProperties> = {
-  'pre[class*="language-"]': {
-    background: "transparent",
-    margin: 0,
-    padding: 0,
-    fontSize: "0.8125rem",
-    lineHeight: "1.5",
-  },
-  'code[class*="language-"]': {
-    background: "transparent",
-    fontSize: "0.8125rem",
-  },
-  comment: { color: "#6b7280" },
-  string: { color: "#059669" },
-  keyword: { color: "#7c3aed" },
-  number: { color: "#d97706" },
-  function: { color: "#2563eb" },
-  operator: { color: "#6b7280" },
-  punctuation: { color: "#6b7280" },
-  "class-name": { color: "#0891b2" },
-  builtin: { color: "#0891b2" },
-};
+import { CODE_THEME, PROSE_CLASSES } from "../lib/theme";
 
 export default function ChatMessage({
   role,
@@ -48,7 +26,7 @@ export default function ChatMessage({
       {role === "user" ? (
         <span className="whitespace-pre-wrap">{content}</span>
       ) : (
-        <div className="prose prose-sm dark:prose-invert max-w-none prose-p:my-1 prose-pre:my-2 prose-ul:my-1 prose-ol:my-1 prose-li:my-0 prose-headings:my-2">
+        <div className={PROSE_CLASSES}>
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
             components={{
@@ -58,7 +36,7 @@ export default function ChatMessage({
                 if (match) {
                   return (
                     <SyntaxHighlighter
-                      style={codeTheme}
+                      style={CODE_THEME}
                       language={match[1]}
                       PreTag="div"
                       className="rounded border border-gray-200 dark:border-gray-700 bg-gray-100 dark:bg-gray-800 p-3 overflow-x-auto"

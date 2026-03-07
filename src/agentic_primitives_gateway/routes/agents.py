@@ -6,6 +6,7 @@ import logging
 from fastapi import APIRouter, HTTPException
 from starlette.responses import StreamingResponse
 
+from agentic_primitives_gateway.agents.namespace import resolve_knowledge_namespace_for_name
 from agentic_primitives_gateway.agents.runner import AgentRunner
 from agentic_primitives_gateway.agents.store import AgentStore
 from agentic_primitives_gateway.agents.tools import _TOOL_CATALOG, build_tool_list
@@ -168,10 +169,7 @@ async def get_agent_memory(name: str, session_id: str | None = None) -> AgentMem
         )
 
     # Resolve knowledge namespace (agent-scoped, no session_id — same as runner)
-    ns_template = mem_config.namespace or "agent:{agent_name}"
-    knowledge_ns = ns_template.replace(":{session_id}", "").replace("{session_id}", "")
-    knowledge_ns = knowledge_ns.replace("{agent_name}", name).rstrip(":")
-    namespace = knowledge_ns
+    namespace = resolve_knowledge_namespace_for_name(name, mem_config.namespace)
 
     # Get all known namespaces from the provider
     stores: list[MemoryStoreInfo] = []
