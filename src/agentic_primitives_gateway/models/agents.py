@@ -71,6 +71,14 @@ class ChatRequest(BaseModel):
     session_id: str | None = None
 
 
+class ToolArtifact(BaseModel):
+    """A tool call input/output pair captured during agent execution."""
+
+    tool_name: str
+    tool_input: dict[str, Any] = Field(default_factory=dict)
+    output: str = ""
+
+
 class ChatResponse(BaseModel):
     """Response for POST /api/v1/agents/{name}/chat."""
 
@@ -79,6 +87,7 @@ class ChatResponse(BaseModel):
     agent_name: str
     turns_used: int
     tools_called: list[str] = Field(default_factory=list)
+    artifacts: list[ToolArtifact] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 

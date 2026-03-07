@@ -390,6 +390,16 @@ _TOOL_CATALOG: dict[str, list[ToolDefinition]] = {
 }
 
 
+# ── Agent delegation handler ──────────────────────────────────────────
+
+MAX_AGENT_DEPTH = 3
+
+
+async def _call_agent(agent_name: str, message: str) -> str:
+    """Placeholder — replaced at build time with a bound handler that has store/runner/depth."""
+    raise RuntimeError("_call_agent must be bound with store, runner, and depth")
+
+
 # ── Public API ───────────────────────────────────────────────────────
 
 
@@ -397,11 +407,16 @@ def build_tool_list(
     spec_primitives: dict[str, PrimitiveConfig],
     namespace: str,
     session_ctx: dict[str, str] | None = None,
+    *,
+    agent_store: Any | None = None,
+    agent_runner: Any | None = None,
+    agent_depth: int = 0,
 ) -> list[ToolDefinition]:
     """Build the list of enabled tools for an agent, with bound context.
 
     For memory tools, binds the ``namespace`` parameter via functools.partial.
     For browser/code_interpreter tools, binds the ``session_id`` if available.
+    For agents, dynamically creates delegation tools from the agent store.
     The LLM-facing input_schema excludes these bound parameters.
     """
     session_ctx = session_ctx or {}
@@ -409,6 +424,17 @@ def build_tool_list(
 
     for primitive_name, config in spec_primitives.items():
         if not config.enabled:
+            continue
+
+        # Agent delegation tools are dynamic — built from the store
+        if primitive_name == "agents":
+            if agent_store is None or agent_runner is None:
+                logger.warning("agents primitive enabled but no store/runner provided — skipping")
+                continue
+            if agent_depth >= MAX_AGENT_DEPTH:
+                logger.info("Agent depth %d >= max %d — skipping sub-agent tools", agent_depth, MAX_AGENT_DEPTH)
+                continue
+            tools.extend(_build_agent_tools(config, agent_store, agent_runner, agent_depth))
             continue
 
         catalog_tools = _TOOL_CATALOG.get(primitive_name, [])
@@ -435,6 +461,76 @@ def build_tool_list(
                     handler=bound_handler,
                 )
             )
+
+    return tools
+
+
+def _build_agent_tools(
+    config: PrimitiveConfig,
+    store: Any,
+    runner: Any,
+    depth: int,
+) -> list[ToolDefinition]:
+    """Build delegation tools for sub-agents listed in config.tools."""
+    import asyncio
+
+    agent_names: list[str] = config.tools or []
+    if not agent_names:
+        # If no specific agents listed, try to get all from store
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # We're in an async context — can't block. The caller should
+                # have listed specific agent names in config.tools.
+                logger.warning("agents.tools is empty and we're in async context — list agent names explicitly")
+                return []
+        except RuntimeError:
+            return []
+
+    tools: list[ToolDefinition] = []
+    for agent_name in agent_names:
+        # Create a bound handler for this specific sub-agent
+        async def _handler(message: str, *, _name: str = agent_name) -> str:
+            spec = await store.get(_name)
+            if spec is None:
+                return f"Agent '{_name}' not found."
+            try:
+                response = await runner.run(spec, message=message, _depth=depth + 1)
+                # Include the response text plus any tool artifacts (code, results, etc.)
+                parts = [response.response]
+                if response.artifacts:
+                    parts.append("\n\n--- Tool Artifacts ---")
+                    for artifact in response.artifacts:
+                        parts.append(f"\n[{artifact.tool_name}]")
+                        if artifact.tool_input:
+                            # For code tools, include the code that was written
+                            code = artifact.tool_input.get("code", "")
+                            if code:
+                                parts.append(f"```\n{code}\n```")
+                        if artifact.output:
+                            parts.append(f"Output: {artifact.output}")
+                return "\n".join(parts)
+            except Exception as e:
+                return f"Agent '{_name}' failed: {type(e).__name__}: {e}"
+
+        tools.append(
+            ToolDefinition(
+                name=f"call_{agent_name}",
+                description=f"Delegate a task to the '{agent_name}' agent. Send it a message and get back its response.",
+                primitive="agents",
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "message": {
+                            "type": "string",
+                            "description": f"The message/task to send to the {agent_name} agent.",
+                        },
+                    },
+                    "required": ["message"],
+                },
+                handler=_handler,
+            )
+        )
 
     return tools
 

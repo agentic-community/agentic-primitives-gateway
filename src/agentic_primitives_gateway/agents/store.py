@@ -58,15 +58,17 @@ class FileAgentStore(AgentStore):
         self._path.write_text(json.dumps(data, indent=2, default=str))
 
     def seed(self, specs: dict[str, dict[str, Any]]) -> None:
-        """Seed agents from YAML config. Does not overwrite existing agents."""
+        """Seed agents from YAML config. Overwrites existing agents from config."""
         count = 0
         for name, spec_dict in specs.items():
-            if name not in self._agents:
-                self._agents[name] = AgentSpec(name=name, **spec_dict)
+            new_spec = AgentSpec(name=name, **spec_dict)
+            existing = self._agents.get(name)
+            if existing is None or existing != new_spec:
+                self._agents[name] = new_spec
                 count += 1
         if count:
             self._save()
-            logger.info("Seeded %d agents from config", count)
+            logger.info("Seeded/updated %d agents from config", count)
 
     async def get(self, name: str) -> AgentSpec | None:
         return self._agents.get(name)

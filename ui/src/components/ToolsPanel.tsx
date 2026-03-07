@@ -17,6 +17,8 @@ const PRIMITIVE_COLORS: Record<string, string> = {
     "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300",
   identity:
     "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-300",
+  agents:
+    "bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-300",
 };
 
 function groupByPrimitive(

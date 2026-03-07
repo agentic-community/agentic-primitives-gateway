@@ -23,6 +23,86 @@
     "provider_overrides": {
       "browser": "selenium_grid"
     },
+    "max_turns": 100,
+    "temperature": 1.0,
+    "max_tokens": null
+  },
+  "researcher": {
+    "name": "researcher",
+    "description": "A focused researcher that searches memory and the web for information",
+    "model": "us.anthropic.claude-sonnet-4-20250514-v1:0",
+    "system_prompt": "You are a focused researcher. When asked a question, search your memory\nfirst, then provide a thorough answer. Store important findings.\n",
+    "primitives": {
+      "memory": {
+        "enabled": true,
+        "tools": null,
+        "namespace": null
+      },
+      "browser": {
+        "enabled": true,
+        "tools": null,
+        "namespace": null
+      }
+    },
+    "hooks": {
+      "auto_memory": true,
+      "auto_trace": false
+    },
+    "provider_overrides": {
+      "browser": "selenium_grid"
+    },
+    "max_turns": 100,
+    "temperature": 1.0,
+    "max_tokens": null
+  },
+  "coder": {
+    "name": "coder",
+    "description": "A coding assistant that can write and execute code",
+    "model": "us.anthropic.claude-sonnet-4-20250514-v1:0",
+    "system_prompt": "You are a coding assistant. Write clean, correct code. Execute it\nwhen asked to verify results.\n",
+    "primitives": {
+      "code_interpreter": {
+        "enabled": true,
+        "tools": null,
+        "namespace": null
+      }
+    },
+    "hooks": {
+      "auto_memory": false,
+      "auto_trace": false
+    },
+    "provider_overrides": {
+      "code_interpreter": "jupyter"
+    },
+    "max_turns": 100,
+    "temperature": 1.0,
+    "max_tokens": null
+  },
+  "coordinator": {
+    "name": "coordinator",
+    "description": "A coordinator that delegates tasks to specialized agents",
+    "model": "us.anthropic.claude-sonnet-4-20250514-v1:0",
+    "system_prompt": "You are a coordinator agent. You have access to specialized agents:\n- call_researcher: for research and information gathering\n- call_coder: for writing and running code\nDelegate tasks to the appropriate agent. Synthesize their responses\ninto a coherent answer for the user.\nIMPORTANT: When tasks can be done independently, call multiple agents\nin parallel by making multiple tool calls in the same response.\nFor example, if you need research AND code, call both agents at once.\nIf you need 3 separate scripts written, make 3 parallel call_coder calls.\n",
+    "primitives": {
+      "memory": {
+        "enabled": true,
+        "tools": null,
+        "namespace": null
+      },
+      "agents": {
+        "enabled": true,
+        "tools": [
+          "researcher",
+          "coder"
+        ],
+        "namespace": null
+      }
+    },
+    "hooks": {
+      "auto_memory": true,
+      "auto_trace": false
+    },
+    "provider_overrides": {},
     "max_turns": 20,
     "temperature": 1.0,
     "max_tokens": null

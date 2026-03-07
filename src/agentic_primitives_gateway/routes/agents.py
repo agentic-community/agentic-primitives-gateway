@@ -8,7 +8,7 @@ from starlette.responses import StreamingResponse
 
 from agentic_primitives_gateway.agents.runner import AgentRunner
 from agentic_primitives_gateway.agents.store import AgentStore
-from agentic_primitives_gateway.agents.tools import build_tool_list
+from agentic_primitives_gateway.agents.tools import _TOOL_CATALOG, build_tool_list
 from agentic_primitives_gateway.context import get_provider_override, set_provider_overrides
 from agentic_primitives_gateway.models.agents import (
     AgentListResponse,
@@ -35,6 +35,7 @@ def set_agent_store(store: AgentStore) -> None:
     """Set the module-level agent store (called during app lifespan)."""
     global _store
     _store = store
+    _runner.set_store(store)
 
 
 def _get_store() -> AgentStore:
@@ -58,6 +59,17 @@ async def list_agents() -> AgentListResponse:
     store = _get_store()
     agents = await store.list()
     return AgentListResponse(agents=agents)
+
+
+@router.get("/tool-catalog")
+async def get_tool_catalog() -> dict:
+    """Return all available primitives and their tools for the agent builder UI."""
+    catalog: dict[str, list[dict[str, str]]] = {}
+    for primitive_name, tools in _TOOL_CATALOG.items():
+        catalog[primitive_name] = [{"name": t.name, "description": t.description} for t in tools]
+    # Add agents as a special primitive (tools are dynamic, so no static list)
+    catalog["agents"] = []
+    return {"primitives": catalog}
 
 
 @router.get("/{name}", response_model=AgentSpec)
@@ -101,18 +113,26 @@ async def get_agent_tools(name: str) -> AgentToolsResponse:
         set_provider_overrides(spec.provider_overrides)
 
     # Build the tool list (same as the runner does)
-    tools = build_tool_list(spec.primitives, namespace="__introspect__")
+    tools = build_tool_list(
+        spec.primitives,
+        namespace="__introspect__",
+        agent_store=_store,
+        agent_runner=_runner,
+    )
 
     # Resolve the active provider name for each primitive
     tool_infos: list[AgentToolInfo] = []
     for tool in tools:
         # Determine which provider is active for this primitive
-        try:
-            prim_providers = registry.get_primitive(tool.primitive)
-            override = get_provider_override(tool.primitive)
-            provider_name = override or prim_providers.default_name
-        except Exception:
-            provider_name = "unknown"
+        if tool.primitive == "agents":
+            provider_name = "agent_delegation"
+        else:
+            try:
+                prim_providers = registry.get_primitive(tool.primitive)
+                override = get_provider_override(tool.primitive)
+                provider_name = override or prim_providers.default_name
+            except Exception:
+                provider_name = "unknown"
 
         tool_infos.append(
             AgentToolInfo(
@@ -248,7 +268,9 @@ async def chat_with_agent_stream(name: str, request: ChatRequest) -> StreamingRe
             message=request.message,
             session_id=request.session_id,
         ):
-            yield f"data: {json.dumps(event, default=str)}\n\n"
+            # Strip large internal fields before sending to client
+            sse_event = {k: v for k, v in event.items() if k not in ("full_result", "tool_input")}
+            yield f"data: {json.dumps(sse_event, default=str)}\n\n"
 
     return StreamingResponse(
         event_generator(),

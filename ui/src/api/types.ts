@@ -117,7 +117,27 @@ export type StreamEvent =
   | { type: "token"; content: string }
   | { type: "tool_call_start"; name: string; id: string }
   | { type: "tool_call_result"; name: string; id: string; result: string }
-  | { type: "done"; response: string; session_id: string; agent_name: string; turns_used: number; tools_called: string[]; metadata: Record<string, unknown> };
+  | { type: "sub_agent_token"; agent: string; content: string }
+  | { type: "sub_agent_tool"; agent: string; name: string }
+  | { type: "done"; response: string; session_id: string; agent_name: string; turns_used: number; tools_called: string[]; artifacts?: StreamArtifact[]; metadata: Record<string, unknown> };
+
+export interface StreamArtifact {
+  tool_name: string;
+  code: string;
+  language: string;
+  output: string;
+}
+
+// Tool catalog types
+
+export interface CatalogToolInfo {
+  name: string;
+  description: string;
+}
+
+export interface ToolCatalogResponse {
+  primitives: Record<string, CatalogToolInfo[]>;
+}
 
 // Agent tools types
 

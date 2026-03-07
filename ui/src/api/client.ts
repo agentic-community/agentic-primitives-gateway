@@ -13,6 +13,7 @@ import type {
   PolicyListResponse,
   ProvidersResponse,
   ReadinessResponse,
+  ToolCatalogResponse,
   UpdateAgentRequest,
 } from "./types";
 
@@ -81,6 +82,8 @@ export const api = {
     }),
   getAgentTools: (name: string) =>
     request<AgentToolsResponse>(`/api/v1/agents/${name}/tools`),
+  getToolCatalog: () =>
+    request<ToolCatalogResponse>("/api/v1/agents/tool-catalog"),
   chatStream: (name: string, data: ChatRequest): ReadableStream<string> => {
     const body = JSON.stringify(data);
     // Return a ReadableStream that the caller can consume

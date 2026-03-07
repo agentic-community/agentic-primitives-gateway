@@ -347,7 +347,7 @@ class TestAgentStore:
         assert resp.status_code == 200
         assert resp.json()["system_prompt"] == "I was seeded."
 
-    def test_seed_does_not_overwrite(self, tmp_path: Any) -> None:
+    def test_seed_overwrites_existing(self, tmp_path: Any) -> None:
         path = str(tmp_path / "agents.json")
         store = FileAgentStore(path=path)
         set_agent_store(store)
@@ -359,8 +359,8 @@ class TestAgentStore:
             json={**SAMPLE_AGENT, "description": "API created"},
         )
 
-        # Seed with same name but different description
+        # Seed with same name but different description — config wins
         store.seed({"test-agent": {"model": "other-model", "description": "Seeded"}})
 
         resp = client.get("/api/v1/agents/test-agent")
-        assert resp.json()["description"] == "API created"  # Not overwritten
+        assert resp.json()["description"] == "Seeded"  # Config overwrites

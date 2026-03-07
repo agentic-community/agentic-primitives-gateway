@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import logging
 import uuid
@@ -7,11 +8,14 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 from agentic_primitives_gateway.agents.tools import (
+    MAX_AGENT_DEPTH,
     build_tool_list,
     execute_tool,
     to_gateway_tools,
 )
-from agentic_primitives_gateway.models.agents import AgentSpec, ChatResponse
+from agentic_primitives_gateway.context import get_provider_override, set_provider_overrides
+from agentic_primitives_gateway.models.agents import AgentSpec, ChatResponse, ToolArtifact
+from agentic_primitives_gateway.models.enums import Primitive
 from agentic_primitives_gateway.registry import registry
 
 logger = logging.getLogger(__name__)
@@ -28,25 +32,46 @@ class AgentRunner:
     5. Trace the interaction (if auto_trace)
     """
 
+    def __init__(self) -> None:
+        self._store: Any | None = None
+
+    def set_store(self, store: Any) -> None:
+        """Set the agent store reference (called during app lifespan)."""
+        self._store = store
+
     async def run(
         self,
         spec: AgentSpec,
         message: str,
         session_id: str | None = None,
+        _depth: int = 0,
     ) -> ChatResponse:
+        if _depth >= MAX_AGENT_DEPTH:
+            return ChatResponse(
+                response=f"Maximum agent delegation depth ({MAX_AGENT_DEPTH}) exceeded.",
+                session_id=session_id or "",
+                agent_name=spec.name,
+                turns_used=0,
+                tools_called=[],
+            )
+
         session_id = session_id or uuid.uuid4().hex[:16]
         trace_id = uuid.uuid4().hex
 
-        # Resolve agent-scoped knowledge namespace (no session_id) for memory tools
-        # so memories persist across sessions. Conversation history uses (actor_id, session_id)
-        # directly via _load_history/_store_turn.
-        knowledge_ns = self._resolve_knowledge_namespace(spec)
+        # Apply this agent's provider overrides, saving the parent's to restore later
+        prev_overrides = self._apply_overrides(spec)
 
-        # Session context for code_interpreter / browser (lazily populated)
+        knowledge_ns = self._resolve_knowledge_namespace(spec)
         session_ctx: dict[str, str] = {}
 
-        # Build tool list — bind memory tools to the agent-scoped namespace
-        tools = build_tool_list(spec.primitives, namespace=knowledge_ns, session_ctx=session_ctx)
+        tools = build_tool_list(
+            spec.primitives,
+            namespace=knowledge_ns,
+            session_ctx=session_ctx,
+            agent_store=self._store,
+            agent_runner=self,
+            agent_depth=_depth,
+        )
         gateway_tools = to_gateway_tools(tools) if tools else None
 
         # Build messages with conversation history
@@ -71,6 +96,7 @@ class AgentRunner:
         # Tool-call loop
         turns_used = 0
         tools_called: list[str] = []
+        artifacts: list[ToolArtifact] = []
         content = ""
 
         while turns_used < spec.max_turns:
@@ -132,42 +158,49 @@ class AgentRunner:
                 }
             )
 
-            # Execute each tool call and batch results into one message
-            tool_results: list[dict[str, Any]] = []
+            # Ensure sessions are started before parallel execution
             for tc in tool_calls:
-                tool_name = tc["name"]
-                tool_input = tc.get("input", {})
-                tool_id = tc.get("id", uuid.uuid4().hex[:8])
-                tools_called.append(tool_name)
-
-                # Start sessions lazily for code_interpreter / browser
                 prev_ctx_size = len(session_ctx)
-                await self._ensure_session(tool_name, tools, session_ctx)
-
-                # Rebuild tool list if a new session was started
+                await self._ensure_session(tc["name"], tools, session_ctx)
                 if len(session_ctx) > prev_ctx_size:
-                    tools = build_tool_list(spec.primitives, namespace=knowledge_ns, session_ctx=session_ctx)
+                    tools = build_tool_list(
+                        spec.primitives,
+                        namespace=knowledge_ns,
+                        session_ctx=session_ctx,
+                        agent_store=self._store,
+                        agent_runner=self,
+                        agent_depth=_depth,
+                    )
                     gateway_tools = to_gateway_tools(tools) if tools else None
 
+            # Execute all tool calls in parallel
+            async def _exec_one(
+                tc: dict[str, Any], *, _tools: list[Any] = tools
+            ) -> tuple[str, str, dict[str, Any], str]:
+                t_name = tc["name"]
+                t_input = tc.get("input", {})
+                t_id = tc.get("id", uuid.uuid4().hex[:8])
                 logger.info(
                     "Agent[%s] executing tool: %s(%s)",
                     spec.name,
-                    tool_name,
-                    ", ".join(f"{k}={str(v)[:50]}" for k, v in tool_input.items()),
+                    t_name,
+                    ", ".join(f"{k}={str(v)[:50]}" for k, v in t_input.items()),
                 )
                 try:
-                    result = await execute_tool(tool_name, tool_input, tools)
-                    logger.info(
-                        "Agent[%s] tool %s returned: %d chars",
-                        spec.name,
-                        tool_name,
-                        len(result),
-                    )
+                    res = await execute_tool(t_name, t_input, _tools)
+                    logger.info("Agent[%s] tool %s returned: %d chars", spec.name, t_name, len(res))
                 except Exception as e:
-                    result = f"Error: {type(e).__name__}: {e}"
-                    logger.warning("Tool %s failed: %s", tool_name, e)
+                    res = f"Error: {type(e).__name__}: {e}"
+                    logger.warning("Tool %s failed: %s", t_name, e)
+                return t_id, t_name, t_input, res
 
-                tool_results.append({"tool_use_id": tool_id, "content": result})
+            results = await asyncio.gather(*[_exec_one(tc) for tc in tool_calls])
+
+            tool_results: list[dict[str, Any]] = []
+            for t_id, t_name, t_input, result in results:
+                tools_called.append(t_name)
+                artifacts.append(ToolArtifact(tool_name=t_name, tool_input=t_input, output=result))
+                tool_results.append({"tool_use_id": t_id, "content": result})
 
             # Bedrock requires all tool results in a single user message
             messages.append({"role": "user", "tool_results": tool_results})
@@ -180,6 +213,9 @@ class AgentRunner:
 
         # Clean up sessions
         await self._cleanup_sessions(session_ctx)
+
+        # Restore parent's provider overrides
+        self._restore_overrides(prev_overrides)
 
         # Auto-memory: store the conversation turn
         if spec.hooks.auto_memory:
@@ -195,6 +231,7 @@ class AgentRunner:
             agent_name=spec.name,
             turns_used=turns_used,
             tools_called=tools_called,
+            artifacts=artifacts,
             metadata={"trace_id": trace_id},
         )
 
@@ -203,14 +240,39 @@ class AgentRunner:
         spec: AgentSpec,
         message: str,
         session_id: str | None = None,
+        _depth: int = 0,
     ) -> AsyncIterator[dict[str, Any]]:
         """Streaming variant of run(). Yields SSE-friendly event dicts."""
+        if _depth >= MAX_AGENT_DEPTH:
+            yield {"type": "token", "content": f"Maximum agent delegation depth ({MAX_AGENT_DEPTH}) exceeded."}
+            yield {
+                "type": "done",
+                "response": "",
+                "session_id": "",
+                "agent_name": spec.name,
+                "turns_used": 0,
+                "tools_called": [],
+                "metadata": {},
+            }
+            return
+
         session_id = session_id or uuid.uuid4().hex[:16]
         trace_id = uuid.uuid4().hex
+
+        # Apply this agent's provider overrides, saving the parent's to restore later
+        prev_overrides = self._apply_overrides(spec)
+
         knowledge_ns = self._resolve_knowledge_namespace(spec)
         session_ctx: dict[str, str] = {}
 
-        tools = build_tool_list(spec.primitives, namespace=knowledge_ns, session_ctx=session_ctx)
+        tools = build_tool_list(
+            spec.primitives,
+            namespace=knowledge_ns,
+            session_ctx=session_ctx,
+            agent_store=self._store,
+            agent_runner=self,
+            agent_depth=_depth,
+        )
         gateway_tools = to_gateway_tools(tools) if tools else None
 
         messages: list[dict[str, Any]] = []
@@ -232,6 +294,7 @@ class AgentRunner:
 
         turns_used = 0
         tools_called: list[str] = []
+        artifacts: list[dict[str, Any]] = []
         content = ""
 
         yield {"type": "stream_start", "session_id": session_id}
@@ -299,32 +362,135 @@ class AgentRunner:
                 }
             )
 
-            # Execute tool calls
-            tool_results: list[dict[str, Any]] = []
+            # Ensure sessions before parallel execution
             for tc in turn_tool_calls:
-                tool_name = tc["name"]
-                tool_input = tc.get("input", {})
-                tool_id = tc.get("id", uuid.uuid4().hex[:8])
-                tools_called.append(tool_name)
-
                 prev_ctx_size = len(session_ctx)
-                await self._ensure_session(tool_name, tools, session_ctx)
+                await self._ensure_session(tc["name"], tools, session_ctx)
                 if len(session_ctx) > prev_ctx_size:
-                    tools = build_tool_list(spec.primitives, namespace=knowledge_ns, session_ctx=session_ctx)
+                    tools = build_tool_list(
+                        spec.primitives,
+                        namespace=knowledge_ns,
+                        session_ctx=session_ctx,
+                        agent_store=self._store,
+                        agent_runner=self,
+                        agent_depth=_depth,
+                    )
                     gateway_tools = to_gateway_tools(tools) if tools else None
 
-                try:
-                    result = await execute_tool(tool_name, tool_input, tools)
-                except Exception as e:
-                    result = f"Error: {type(e).__name__}: {e}"
+            # Execute tool calls in parallel, streaming sub-agent events via a queue
+            event_queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
+            tool_result_map: dict[str, tuple[str, dict[str, Any], str]] = {}  # id -> (name, input, result)
 
-                tool_results.append({"tool_use_id": tool_id, "content": result})
-                yield {
-                    "type": "tool_call_result",
-                    "name": tool_name,
-                    "id": tool_id,
-                    "result": result[:500],
-                }
+            async def _exec_streaming(
+                tc: dict[str, Any],
+                *,
+                _tools: list[Any] = tools,
+                _queue: asyncio.Queue[dict[str, Any] | None] = event_queue,
+                _result_map: dict[str, tuple[str, dict[str, Any], str]] = tool_result_map,
+            ) -> None:
+                t_name = tc["name"]
+                t_input = tc.get("input", {})
+                t_id = tc.get("id", uuid.uuid4().hex[:8])
+
+                is_agent_tool = t_name.startswith("call_") and any(
+                    t.primitive == "agents" and t.name == t_name for t in _tools
+                )
+                if is_agent_tool and self._store is not None:
+                    sub_agent_name = t_name.removeprefix("call_")
+                    sub_spec = await self._store.get(sub_agent_name)
+                    if sub_spec is not None:
+                        result = ""
+                        sub_artifacts: list[dict[str, Any]] = []
+                        async for sub_event in self.run_stream(
+                            sub_spec,
+                            message=t_input.get("message", ""),
+                            _depth=_depth + 1,
+                        ):
+                            sub_type = sub_event.get("type")
+                            if sub_type == "token":
+                                await _queue.put(
+                                    {
+                                        "type": "sub_agent_token",
+                                        "agent": sub_agent_name,
+                                        "content": sub_event["content"],
+                                    }
+                                )
+                            elif sub_type == "tool_call_start":
+                                await _queue.put(
+                                    {
+                                        "type": "sub_agent_tool",
+                                        "agent": sub_agent_name,
+                                        "name": sub_event.get("name", ""),
+                                    }
+                                )
+                            elif sub_type == "tool_call_result":
+                                sub_artifacts.append(
+                                    {
+                                        "tool": sub_event.get("name", ""),
+                                        "tool_input": sub_event.get("tool_input", {}),
+                                        "result": sub_event.get("full_result", sub_event.get("result", "")),
+                                    }
+                                )
+                            elif sub_type == "done":
+                                result = sub_event.get("response", "")
+                        if sub_artifacts:
+                            parts = [result, "\n\n--- Tool Artifacts ---"]
+                            for sa in sub_artifacts:
+                                parts.append(f"\n[{sa['tool']}]")
+                                ti = sa.get("tool_input", {})
+                                code = ti.get("code", "")
+                                if code:
+                                    lang = ti.get("language", "python")
+                                    parts.append(f"```{lang}\n{code}\n```")
+                                if sa["result"]:
+                                    parts.append(f"Output:\n{sa['result']}")
+                            result = "\n".join(parts)
+                    else:
+                        result = f"Agent '{sub_agent_name}' not found."
+                else:
+                    try:
+                        result = await execute_tool(t_name, t_input, _tools)
+                    except Exception as e:
+                        result = f"Error: {type(e).__name__}: {e}"
+
+                _result_map[t_id] = (t_name, t_input, result)
+                await _queue.put(
+                    {
+                        "type": "tool_call_result",
+                        "name": t_name,
+                        "id": t_id,
+                        "result": result[:500],
+                        "full_result": result,
+                        "tool_input": t_input,
+                    }
+                )
+                await _queue.put(None)  # signal this task is done
+
+            # Launch all tool calls as concurrent tasks
+            tasks = [asyncio.create_task(_exec_streaming(tc)) for tc in turn_tool_calls]
+
+            # Drain the event queue until all tasks complete
+            pending = len(tasks)
+            while pending > 0:
+                event = await event_queue.get()
+                if event is None:
+                    pending -= 1
+                    continue
+                # tool_call_result is the last event each task emits before finishing
+                yield event
+
+            # Wait for tasks to ensure exceptions propagate
+            await asyncio.gather(*tasks)
+
+            # Collect results in original tool call order
+            tool_results: list[dict[str, Any]] = []
+            for tc in turn_tool_calls:
+                t_id = tc.get("id", "")
+                if t_id in tool_result_map:
+                    t_name, t_input, result = tool_result_map[t_id]
+                    tools_called.append(t_name)
+                    artifacts.append({"tool_name": t_name, "tool_input": t_input, "output": result})
+                    tool_results.append({"tool_use_id": t_id, "content": result})
 
             messages.append({"role": "user", "tool_results": tool_results})
         else:
@@ -335,10 +501,28 @@ class AgentRunner:
 
         await self._cleanup_sessions(session_ctx)
 
+        # Restore parent's provider overrides
+        self._restore_overrides(prev_overrides)
+
         if spec.hooks.auto_memory:
             await self._store_turn(spec.name, session_id, message, content)
         if spec.hooks.auto_trace:
             await self._trace_conversation(trace_id, spec, session_id, message, content, turns_used, tools_called)
+
+        # Serialize artifacts for the done event
+        done_artifacts = []
+        for a in artifacts:
+            tool_input = a.get("tool_input", {}) if isinstance(a, dict) else getattr(a, "tool_input", {})
+            tool_name = a.get("tool_name", "") if isinstance(a, dict) else getattr(a, "tool_name", "")
+            output = a.get("output", "") if isinstance(a, dict) else getattr(a, "output", "")
+            done_artifacts.append(
+                {
+                    "tool_name": tool_name,
+                    "code": tool_input.get("code", "") if isinstance(tool_input, dict) else "",
+                    "language": tool_input.get("language", "python") if isinstance(tool_input, dict) else "python",
+                    "output": output,
+                }
+            )
 
         yield {
             "type": "done",
@@ -347,6 +531,7 @@ class AgentRunner:
             "agent_name": spec.name,
             "turns_used": turns_used,
             "tools_called": tools_called,
+            "artifacts": done_artifacts,
             "metadata": {"trace_id": trace_id},
         }
 
@@ -355,6 +540,25 @@ class AgentRunner:
         mem_config = spec.primitives.get("memory")
         ns = mem_config.namespace if mem_config and mem_config.namespace else "agent:{agent_name}"
         return ns.replace("{agent_name}", spec.name).replace("{session_id}", session_id)
+
+    @staticmethod
+    def _apply_overrides(spec: AgentSpec) -> dict[str, str]:
+        """Apply this agent's provider overrides, returning the previous ones."""
+        prev: dict[str, str] = {}
+        for prim in Primitive:
+            val = get_provider_override(prim)
+            if val:
+                prev[prim] = val
+        if spec.provider_overrides:
+            # Merge: agent overrides on top of whatever was already set
+            merged = {**prev, **spec.provider_overrides}
+            set_provider_overrides(merged)
+        return prev
+
+    @staticmethod
+    def _restore_overrides(prev: dict[str, str]) -> None:
+        """Restore previous provider overrides."""
+        set_provider_overrides(prev)
 
     def _resolve_knowledge_namespace(self, spec: AgentSpec) -> str:
         """Resolve the agent-scoped knowledge namespace (no session_id).
