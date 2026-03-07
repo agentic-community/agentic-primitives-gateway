@@ -29,19 +29,27 @@ _EXEMPT_PREFIXES = (
 def _build_action_rules(
     routes: list[Route],
 ) -> list[tuple[str, re.Pattern[str], str]]:
-    """Build action rules from the app's registered routes.
+    """Build Cedar action rules by introspecting the app's registered routes.
 
-    Introspects FastAPI/Starlette routes and derives Cedar actions from
-    the router prefix (primitive) and endpoint function name. This means
-    new routes are automatically enforced without updating a static list.
+    This avoids maintaining a static mapping of paths → Cedar actions. Instead,
+    we derive actions automatically from the route structure:
 
-    Each route ``/api/v1/{primitive}/...`` with endpoint ``my_func``
-    produces action ``{primitive}:my_func``.
+      /api/v1/memory/{namespace}/{key}  +  endpoint=retrieve_memory
+      → action = "memory:retrieve_memory"
+
+    The result is a list of (HTTP_METHOD, compiled_regex, cedar_action) tuples.
+    At request time, _resolve_action iterates these to find a match.
+
+    Path parameters are converted to regex patterns so that
+    /api/v1/memory/{namespace}/{key} matches /api/v1/memory/my-ns/my-key.
+    FastAPI's {param:path} (catch-all) becomes .+ ; regular {param} becomes [^/]+.
+
+    Non-Route entries (Mount, WebSocket) are recursed into to handle sub-apps.
+    HEAD/OPTIONS are skipped (no enforcement needed for CORS preflight).
     """
     rules: list[tuple[str, re.Pattern[str], str]] = []
     for route in routes:
         if not isinstance(route, Route):
-            # Skip Mount, WebSocket, etc. — recurse into sub-applications
             sub_routes = getattr(route, "routes", None)
             if sub_routes:
                 rules.extend(_build_action_rules(sub_routes))
@@ -56,18 +64,16 @@ def _build_action_rules(
         if endpoint is None:
             continue
 
-        # Derive primitive from path: /api/v1/{primitive}/...
+        # Derive primitive from first path segment: /api/v1/{primitive}/...
         remainder = path.removeprefix("/api/v1/")
         primitive_segment = remainder.split("/", 1)[0]
-        # Normalize: "code-interpreter" → "code_interpreter"
-        primitive = primitive_segment.replace("-", "_")
+        primitive = primitive_segment.replace("-", "_")  # "code-interpreter" → "code_interpreter"
 
-        # Action = primitive:endpoint_name (e.g., "memory:store_memory")
         action = f"{primitive}:{endpoint.__name__}"
 
-        # Convert FastAPI path params to regex: {param} → [^/]+, {param:path} → .+
-        pattern_str = re.sub(r"\{[^}]+:path\}", ".+", path)
-        pattern_str = re.sub(r"\{[^}]+\}", "[^/]+", pattern_str)
+        # Convert FastAPI path params to regex for matching at request time
+        pattern_str = re.sub(r"\{[^}]+:path\}", ".+", path)  # {name:path} → .+
+        pattern_str = re.sub(r"\{[^}]+\}", "[^/]+", pattern_str)  # {param} → [^/]+
         pattern = re.compile(f"^{pattern_str}$")
 
         for method in methods:

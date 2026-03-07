@@ -272,7 +272,14 @@ class AgentRunner:
     # ── Session management ───────────────────────────────────────────
 
     async def _ensure_sessions_for_tools(self, ctx: _RunContext, tool_calls: list[dict[str, Any]]) -> None:
-        """Start browser/code_interpreter sessions lazily, rebuild tools if needed."""
+        """Start browser/code_interpreter sessions lazily, rebuild tools if needed.
+
+        Sessions are started on first use because not all agents need them.
+        When a new session starts, the tool list must be rebuilt so that
+        handler functions get the session_id bound via functools.partial.
+        This must run sequentially (before parallel execution) because
+        session start has side effects on ctx.session_ctx.
+        """
         for tc in tool_calls:
             prev_size = len(ctx.session_ctx)
             await self._ensure_session(tc["name"], ctx.tools, ctx.session_ctx)
@@ -321,7 +328,18 @@ class AgentRunner:
     async def _exec_tools_streaming(
         self, ctx: _RunContext, tool_calls: list[dict[str, Any]]
     ) -> AsyncIterator[dict[str, Any]]:
-        """Execute tool calls in parallel, yielding SSE events for sub-agents."""
+        """Execute tool calls in parallel, yielding SSE events for sub-agents.
+
+        Uses a shared asyncio.Queue to merge events from concurrent tool tasks:
+        - Each tool task runs as an asyncio.Task and puts events on the queue
+        - Sub-agent delegation tools forward their child stream events
+        - Each task puts None as a sentinel when done
+        - The main loop counts sentinels to know when all tasks are complete
+        - Results are collected in original tool-call order for the LLM
+
+        Default keyword args (_tools, _queue, _rmap) capture the current values
+        at task creation time to satisfy ruff's B023 (closure variable) check.
+        """
         await self._ensure_sessions_for_tools(ctx, tool_calls)
 
         event_queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
@@ -403,7 +421,14 @@ class AgentRunner:
         queue: asyncio.Queue[dict[str, Any] | None],
         depth: int,
     ) -> str:
-        """Run a sub-agent via run_stream, forwarding events to the queue."""
+        """Run a sub-agent via run_stream, forwarding events to the parent queue.
+
+        Consumes the child's SSE stream and:
+        - Forwards token/tool events as sub_agent_token/sub_agent_tool (UI shows these)
+        - Captures tool_call_result events to collect artifacts (code + output)
+        - On "done", appends artifacts to the result string so the parent LLM
+          receives the full code and output, not just the child's summary text.
+        """
         sub_name = tool_name.removeprefix("call_")
         sub_spec = await self._store.get(sub_name)  # type: ignore[union-attr]
         if sub_spec is None:
@@ -483,7 +508,15 @@ class AgentRunner:
 
     @staticmethod
     def _apply_overrides(spec: AgentSpec) -> dict[str, str]:
-        """Apply this agent's provider overrides, returning the previous ones."""
+        """Apply this agent's provider overrides, returning the previous ones.
+
+        Provider overrides are stored in a request-scoped contextvar. When a
+        coordinator delegates to a sub-agent, the sub-agent may have different
+        overrides (e.g. memory: mem0 vs in_memory). We save the current state,
+        merge the agent's overrides on top (agent wins on conflict), and return
+        the saved state so _restore_overrides can put it back after the sub-agent
+        finishes. This ensures the coordinator resumes with its own providers.
+        """
         prev: dict[str, str] = {}
         for prim in Primitive:
             val = get_provider_override(prim)
@@ -501,12 +534,26 @@ class AgentRunner:
     # ── Memory helpers ───────────────────────────────────────────────
 
     async def _load_memory_context(self, namespace: str) -> str:
-        """Load stored memories from the namespace (and related namespaces) as context."""
+        """Load stored memories and format as an LLM context preamble.
+
+        Searches two places for memories:
+        1. The primary knowledge namespace (e.g. "agent:research-assistant")
+        2. If empty, falls back to child namespaces (e.g. "agent:research-assistant:session123")
+           which may contain memories stored before the knowledge/session split.
+
+        The child namespace search uses "namespace:" as a prefix (with trailing colon)
+        to prevent "agent:bot" from matching "agent:bot-2" (multi-tenancy safety).
+
+        Dedupes by key, keeping the most recently updated version when the same
+        key exists across multiple child namespaces.
+        """
         all_records = []
         try:
             records = await registry.memory.list_memories(namespace=namespace, limit=20)
             all_records.extend(records)
 
+            # Fallback: search session-scoped child namespaces for memories
+            # stored before the knowledge/session namespace split was introduced
             if not all_records:
                 try:
                     child_prefix = namespace + ":"
@@ -515,13 +562,14 @@ class AgentRunner:
                         if ns.startswith(child_prefix):
                             all_records.extend(await registry.memory.list_memories(namespace=ns, limit=20))
                 except NotImplementedError:
-                    pass
+                    pass  # list_namespaces is optional for providers
                 except Exception:
                     logger.debug("Error searching child namespaces for %s", namespace, exc_info=True)
 
             if not all_records:
                 return ""
 
+            # Dedupe: same key may exist in multiple child namespaces — keep newest
             seen: dict[str, Any] = {}
             for r in all_records:
                 if r.key not in seen or r.updated_at > seen[r.key].updated_at:

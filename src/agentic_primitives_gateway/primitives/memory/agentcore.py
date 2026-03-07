@@ -152,6 +152,17 @@ class AgentCoreMemoryProvider(SyncRunnerMixin, MemoryProvider):
         top_k: int = 10,
         filters: dict[str, Any] | None = None,
     ) -> list[SearchResult]:
+        """Search across three memory tiers and merge results.
+
+        AgentCore has no single unified search. We combine:
+        1. Long-term memories (semantic search via the SDK)
+        2. Short-term conversation turns (substring match on recent turns)
+        3. Local KV cache (word-prefix match as a rough stemming heuristic)
+
+        Results are deduped by content and sorted by score. Long-term results
+        get their native relevance score; short-term gets 0.5; cache gets 0.8
+        (higher than short-term because it was explicitly stored via the KV API).
+        """
         memory_id = self._resolve_memory_id()
         boto_session = self._resolve_boto3_session()
         search_results: list[SearchResult] = []

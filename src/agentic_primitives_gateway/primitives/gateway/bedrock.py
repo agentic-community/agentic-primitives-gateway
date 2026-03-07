@@ -78,6 +78,17 @@ class BedrockConverseProvider(SyncRunnerMixin, GatewayProvider):
         return result
 
     async def route_request_stream(self, model_request: dict[str, Any]) -> AsyncIterator[dict[str, Any]]:
+        """Stream an LLM response via Bedrock's converse_stream API.
+
+        Bedrock streams events as a synchronous iterator from a background thread.
+        We bridge this to async using a queue: a thread drains the boto3 stream
+        into the queue, and the async generator awaits events one at a time.
+
+        Bedrock's stream event lifecycle for tool calls:
+          contentBlockStart (toolUse with id+name) → contentBlockDelta (input JSON chunks)
+          → contentBlockStop → we reassemble the accumulated JSON into a complete tool call.
+        For text: contentBlockDelta contains text chunks directly.
+        """
         client = self._get_client()
         model_id = model_request.get("model", self._default_model)
 
@@ -110,9 +121,11 @@ class BedrockConverseProvider(SyncRunnerMixin, GatewayProvider):
         if stream is None:
             return
 
-        # Use a queue to bridge the sync boto3 iterator to async iteration.
-        # A background thread reads events one at a time and puts them on the
-        # queue; the async generator awaits each one without buffering.
+        # Bridge sync→async: boto3's stream is a blocking iterator that yields
+        # one event at a time from the network. We can't iterate it directly in
+        # async code. A background thread reads events and puts them on an
+        # asyncio.Queue; call_soon_threadsafe ensures thread-safe enqueue.
+        # None is the sentinel signaling the stream is exhausted.
         queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
         loop = asyncio.get_event_loop()
 
@@ -121,11 +134,13 @@ class BedrockConverseProvider(SyncRunnerMixin, GatewayProvider):
                 for ev in stream:
                     loop.call_soon_threadsafe(queue.put_nowait, ev)
             finally:
-                loop.call_soon_threadsafe(queue.put_nowait, None)  # sentinel
+                loop.call_soon_threadsafe(queue.put_nowait, None)
 
         loop.run_in_executor(None, _drain_stream)
 
-        # Track tool use state for reassembly
+        # Tool use reassembly state: Bedrock sends tool input as incremental
+        # JSON string chunks across multiple contentBlockDelta events. We
+        # accumulate them and parse the complete JSON on contentBlockStop.
         current_tool_id = ""
         current_tool_name = ""
         current_tool_input_json = ""
@@ -133,7 +148,10 @@ class BedrockConverseProvider(SyncRunnerMixin, GatewayProvider):
         while True:
             event = await queue.get()
             if event is None:
-                break  # stream exhausted
+                break
+
+            # contentBlockStart: marks the beginning of a new content block.
+            # For tool calls, this contains the tool name and ID.
             if "contentBlockStart" in event:
                 start = event["contentBlockStart"].get("start", {})
                 if "toolUse" in start:
@@ -147,6 +165,8 @@ class BedrockConverseProvider(SyncRunnerMixin, GatewayProvider):
                         "name": current_tool_name,
                     }
 
+            # contentBlockDelta: incremental content. Text deltas are yielded
+            # immediately; tool input JSON chunks are accumulated for later parsing.
             elif "contentBlockDelta" in event:
                 delta = event["contentBlockDelta"].get("delta", {})
                 if "text" in delta:
@@ -154,8 +174,9 @@ class BedrockConverseProvider(SyncRunnerMixin, GatewayProvider):
                 elif "toolUse" in delta:
                     current_tool_input_json += delta["toolUse"].get("input", "")
 
+            # contentBlockStop: the block is complete. If we were accumulating
+            # tool input JSON, parse it now and emit the complete tool call.
             elif "contentBlockStop" in event:
-                # If we were accumulating tool input JSON, emit the complete tool call
                 if current_tool_name:
                     try:
                         parsed_input = json.loads(current_tool_input_json) if current_tool_input_json else {}
@@ -215,6 +236,20 @@ def _to_bedrock_messages(
     """Convert internal messages to Bedrock Converse format.
 
     Returns (system_prompts, messages).
+
+    The internal format uses flat dicts with optional keys:
+      - {"role": "user/assistant", "content": "text"}
+      - {"role": "assistant", "content": "text", "tool_calls": [...]}
+      - {"tool_results": [{"tool_use_id": "...", "content": "..."}]}  (batched)
+      - {"tool_result": {"tool_use_id": "...", "content": "..."}}     (legacy single)
+
+    Bedrock Converse requires content blocks:
+      - Text: [{"text": "..."}]
+      - Tool use: [{"toolUse": {"toolUseId": "...", "name": "...", "input": {...}}}]
+      - Tool result: [{"toolResult": {"toolUseId": "...", "content": [{"text": "..."}]}}]
+
+    System messages are extracted to a separate list (Bedrock requires them
+    in the top-level "system" parameter, not inline in messages).
     """
     raw_messages = model_request.get("messages", [])
     system_prompt = model_request.get("system")

@@ -265,7 +265,19 @@ def build_tool_list(
     agent_runner: Any | None = None,
     agent_depth: int = 0,
 ) -> list[ToolDefinition]:
-    """Build the list of enabled tools for an agent, with bound context."""
+    """Build the final tool list for an agent run from its primitive config.
+
+    Each enabled primitive contributes tools from _TOOL_CATALOG. Context
+    parameters are bound via functools.partial so the LLM doesn't need to
+    provide them:
+      - memory tools get ``namespace`` bound (agent-scoped, no session_id)
+      - browser/code_interpreter tools get ``session_id`` bound (if session started)
+      - agent delegation tools are built dynamically from the agent store
+
+    The "agents" pseudo-primitive is special: its tools are not in the static
+    catalog but built at runtime from the agent store. The delegation import
+    is deferred to avoid circular imports (delegation → catalog → delegation).
+    """
     from agentic_primitives_gateway.agents.tools.delegation import MAX_AGENT_DEPTH, _build_agent_tools
 
     session_ctx = session_ctx or {}
