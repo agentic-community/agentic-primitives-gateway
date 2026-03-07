@@ -35,6 +35,7 @@ function parseSSE(chunk: string): TeamStreamEvent[] {
 const phaseLabels: Record<string, string> = {
   planning: "Planning",
   execution: "Executing",
+  replanning: "Re-planning",
   synthesis: "Synthesizing",
   done: "Done",
 };
@@ -174,7 +175,10 @@ export default function TeamRun() {
                 addLog(`Phase: ${phaseLabels[event.phase] ?? event.phase}`);
                 break;
               case "tasks_created":
-                setTasks(event.tasks.map((t) => ({ id: t.id, title: t.title, status: "pending", suggestedWorker: t.suggested_worker })));
+                setTasks((prev) => [
+                  ...prev,
+                  ...event.tasks.map((t) => ({ id: t.id, title: t.title, status: "pending", suggestedWorker: t.suggested_worker })),
+                ]);
                 addLog(`${event.count} tasks created:`);
                 for (const t of event.tasks) {
                   addLog(`  → ${t.title}${t.suggested_worker ? ` [${t.suggested_worker}]` : ""}`);

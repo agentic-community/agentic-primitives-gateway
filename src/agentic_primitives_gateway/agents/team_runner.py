@@ -61,13 +61,13 @@ class TeamRunner:
         assert self._agent_store is not None
         assert self._agent_runner is not None
 
-        # Phase 1: Planning
+        # Phase 1: Initial planning
         logger.info("Team[%s] run=%s phase=planning", team_spec.name, team_run_id)
         await self._run_planner(team_spec, team_run_id, message)
 
-        # Phase 2: Execution
+        # Phase 2: Execution with continuous re-planning
         logger.info("Team[%s] run=%s phase=execution", team_spec.name, team_run_id)
-        workers_used = await self._run_workers(team_spec, team_run_id)
+        workers_used = await self._run_workers_with_replanning(team_spec, team_run_id, message)
 
         # Phase 3: Synthesis
         logger.info("Team[%s] run=%s phase=synthesis", team_spec.name, team_run_id)
@@ -99,12 +99,12 @@ class TeamRunner:
 
         yield {"type": "team_start", "team_run_id": team_run_id, "team_name": team_spec.name}
 
-        # Phase 1: Planning
+        # Phase 1: Initial planning
         yield {"type": "phase_change", "phase": "planning"}
         async for event in self._run_planner_stream(team_spec, team_run_id, message):
             yield event
 
-        # Report tasks created
+        # Report initial tasks
         all_tasks = await registry.tasks.list_tasks(team_run_id)
         yield {
             "type": "tasks_created",
@@ -115,10 +115,10 @@ class TeamRunner:
             ],
         }
 
-        # Phase 2: Execution
+        # Phase 2: Execution with continuous re-planning
         yield {"type": "phase_change", "phase": "execution"}
         workers_used: list[str] = []
-        async for event in self._run_workers_stream(team_spec, team_run_id):
+        async for event in self._run_workers_with_replanning_stream(team_spec, team_run_id, message):
             if event.get("type") == "worker_done" and event["agent"] not in workers_used:
                 workers_used.append(event["agent"])
             yield event
@@ -201,16 +201,13 @@ class TeamRunner:
             f"Available team members:\n{worker_list}\n\n"
             f"Guidelines:\n"
             f"- ALWAYS set assigned_to to the name of the best worker for each task\n"
-            f"- Create tasks that leverage EACH worker's unique capabilities\n"
-            f"- Write SPECIFIC task descriptions — name exact items, don't use ordinals like 'first' or 'second'\n"
-            f"- If you don't know specific items yet (e.g. which frameworks), create ONE task that covers all items rather than separate vague tasks\n"
+            f"- Only create tasks where you can write a SPECIFIC, actionable description right now\n"
+            f"- Do NOT create tasks that depend on unknown information (e.g. 'implement the frameworks' when "
+            f"you don't know which frameworks yet). Those tasks will be created automatically by re-planning "
+            f"after the research results come back.\n"
             f"- Each task should produce a complete, self-contained deliverable\n"
-            f"- CRITICAL: If a task refers to results from another task, it MUST set depends_on to that task's ID. "
-            f"Workers cannot see other tasks' results unless depends_on is set. A coding task that needs research results MUST depend on the research task.\n"
-            f"- Use priority to indicate importance (higher = more important)\n"
-            f"- Cover ALL aspects of the request — don't leave parts unaddressed\n"
-            f"- If the request asks for multiple things, create separate tasks for each\n"
-            f"- If a request involves both research AND implementation, create tasks for both\n\n"
+            f"- Use dependencies (depends_on with task IDs) when a task needs results from another\n"
+            f"- Use priority to indicate importance (higher = more important)\n\n"
             f"Use the create_task tool to add each task to the board.\n\n"
             f"Request: {message}"
         )
@@ -225,7 +222,256 @@ class TeamRunner:
             agent_name=planner_name,
         )
 
-    # ── Phase 2: Execution ───────────────────────────────────────────
+    # ── Continuous re-planning ─────────────────────────────────────
+
+    async def _build_replan_prompt(self, team_spec: TeamSpec, team_run_id: str, original_message: str) -> str | None:
+        """Build a re-planning prompt based on newly completed tasks. Returns None if no re-planning needed."""
+        all_tasks = await registry.tasks.list_tasks(team_run_id)
+        completed = [t for t in all_tasks if t.status == TaskStatus.DONE]
+        pending_or_active = [
+            t for t in all_tasks if t.status in (TaskStatus.PENDING, TaskStatus.CLAIMED, TaskStatus.IN_PROGRESS)
+        ]
+
+        if not completed:
+            return None
+
+        worker_descriptions = []
+        for w in set(team_spec.workers):
+            spec = await self._agent_store.get(w)  # type: ignore[union-attr]
+            desc = f"  - {w}"
+            if spec and spec.description:
+                desc += f": {spec.description}"
+            prims = []
+            if spec:
+                prims = [p for p, c in spec.primitives.items() if c.enabled]
+            if prims:
+                desc += f" (capabilities: {', '.join(prims)})"
+            worker_descriptions.append(desc)
+        worker_list = "\n".join(worker_descriptions)
+
+        completed_summary = []
+        for t in completed:
+            result_preview = (t.result or "")[:500]
+            completed_summary.append(
+                f"  - [{t.id}] {t.title} (assigned_to: {t.assigned_to})\n    Result: {result_preview}"
+            )
+
+        pending_summary = []
+        for t in pending_or_active:
+            pending_summary.append(
+                f"  - [{t.id}] {t.title} (status: {t.status}, assigned_to: {t.suggested_worker or t.assigned_to or 'unassigned'})"
+            )
+
+        return (
+            f"You are a task planner reviewing progress on a team request.\n\n"
+            f"Original request: {original_message}\n\n"
+            f"Available team members:\n{worker_list}\n\n"
+            f"Completed tasks:\n"
+            + "\n".join(completed_summary)
+            + "\n\n"
+            + (
+                "Pending/active tasks:\n" + "\n".join(pending_summary) + "\n\n"
+                if pending_summary
+                else "No pending tasks.\n\n"
+            )
+            + "Based on the completed task results, do any NEW follow-up tasks need to be created?\n\n"
+            "Guidelines:\n"
+            "- Review the completed results carefully — if they reveal specific items "
+            "(e.g., specific framework names, specific topics), create NEW tasks with those specific details\n"
+            "- ALWAYS set assigned_to to the appropriate worker\n"
+            "- Set depends_on if the new task needs results from a specific completed task\n"
+            "- Do NOT recreate tasks that already exist (completed or pending)\n"
+            "- If no new tasks are needed, just respond with text explaining why — do NOT call create_task\n"
+            "- Think about whether the original request has been fully addressed by existing tasks\n\n"
+            "Use the create_task tool ONLY if new tasks are needed."
+        )
+
+    async def _run_replanner(
+        self,
+        team_spec: TeamSpec,
+        team_run_id: str,
+        original_message: str,
+    ) -> int:
+        """Run the planner to evaluate completed tasks and create follow-ups. Returns count of new tasks created."""
+        planner_spec = await self._agent_store.get(team_spec.planner)  # type: ignore[union-attr]
+        if planner_spec is None:
+            return 0
+
+        prompt = await self._build_replan_prompt(team_spec, team_run_id, original_message)
+        if prompt is None:
+            return 0
+
+        tasks_before = await registry.tasks.list_tasks(team_run_id)
+        count_before = len(tasks_before)
+
+        planner_tools = self._build_planner_tools(team_run_id, team_spec.planner)
+        await self._run_agent_with_tools(planner_spec, prompt, planner_tools, max_turns=planner_spec.max_turns)
+
+        tasks_after = await registry.tasks.list_tasks(team_run_id)
+        new_count = len(tasks_after) - count_before
+        if new_count > 0:
+            logger.info("Re-planner created %d new tasks", new_count)
+        return new_count
+
+    async def _run_replanner_stream(
+        self,
+        team_spec: TeamSpec,
+        team_run_id: str,
+        original_message: str,
+        event_queue: asyncio.Queue[dict[str, Any] | None],
+    ) -> int:
+        """Streaming re-planner. Puts events on the queue. Returns count of new tasks."""
+        planner_spec = await self._agent_store.get(team_spec.planner)  # type: ignore[union-attr]
+        if planner_spec is None:
+            return 0
+
+        prompt = await self._build_replan_prompt(team_spec, team_run_id, original_message)
+        if prompt is None:
+            return 0
+
+        tasks_before = await registry.tasks.list_tasks(team_run_id)
+        count_before = len(tasks_before)
+
+        planner_tools = self._build_planner_tools(team_run_id, team_spec.planner)
+        logger.info("Re-planner evaluating completed tasks...")
+
+        await event_queue.put({"type": "phase_change", "phase": "replanning"})
+
+        async for event in self._run_agent_with_tools_stream(
+            planner_spec, prompt, planner_tools, "planner", max_turns=planner_spec.max_turns
+        ):
+            await event_queue.put(event)
+
+        tasks_after = await registry.tasks.list_tasks(team_run_id)
+        new_tasks = tasks_after[count_before:]
+        new_count = len(new_tasks)
+        if new_count > 0:
+            logger.info("Re-planner created %d new tasks", new_count)
+            await event_queue.put(
+                {
+                    "type": "tasks_created",
+                    "count": new_count,
+                    "tasks": [
+                        {"id": t.id, "title": t.title, "priority": t.priority, "suggested_worker": t.suggested_worker}
+                        for t in new_tasks
+                    ],
+                }
+            )
+        return new_count
+
+    # ── Phase 2: Execution with continuous re-planning ───────────────
+
+    async def _run_workers_with_replanning(
+        self,
+        team_spec: TeamSpec,
+        team_run_id: str,
+        original_message: str,
+    ) -> list[str]:
+        """Run workers and re-plan after each wave of completions."""
+        max_concurrent = team_spec.max_concurrent or len(team_spec.workers)
+        workers = team_spec.workers[:max_concurrent]
+        reviewed_tasks: set[str] = set()
+        workers_used: list[str] = []
+
+        while True:
+            # Run workers until board is idle
+            worker_tasks = [self._worker_loop(worker_name, team_spec, team_run_id) for worker_name in workers]
+            results = await asyncio.gather(*worker_tasks, return_exceptions=True)
+            for name, result in zip(workers, results, strict=False):
+                if not isinstance(result, Exception) and name not in workers_used:
+                    workers_used.append(name)
+
+            # Check for newly completed tasks
+            all_tasks = await registry.tasks.list_tasks(team_run_id)
+            newly_completed = [t for t in all_tasks if t.status == TaskStatus.DONE and t.id not in reviewed_tasks]
+            if not newly_completed:
+                break
+            for t in newly_completed:
+                reviewed_tasks.add(t.id)
+
+            # Re-plan
+            new_count = await self._run_replanner(team_spec, team_run_id, original_message)
+            if new_count == 0:
+                break
+            # Loop back — workers will pick up new tasks
+
+        return workers_used
+
+    async def _run_workers_with_replanning_stream(
+        self,
+        team_spec: TeamSpec,
+        team_run_id: str,
+        original_message: str,
+    ) -> AsyncIterator[dict[str, Any]]:
+        """Streaming execution with continuous re-planning."""
+        max_concurrent = team_spec.max_concurrent or len(team_spec.workers)
+        workers = team_spec.workers[:max_concurrent]
+        reviewed_tasks: set[str] = set()
+
+        while True:
+            # Run workers and planner concurrently, merging events
+            queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
+            active_count = len(workers)
+
+            async def _worker_wrapper(
+                worker_name: str,
+                _q: asyncio.Queue[dict[str, Any] | None] = queue,
+            ) -> None:
+                try:
+                    async for event in self._worker_loop_stream(worker_name, team_spec, team_run_id):
+                        await _q.put(event)
+                except Exception as e:
+                    await _q.put({"type": "worker_error", "agent": worker_name, "error": str(e)})
+                finally:
+                    await _q.put(None)
+
+            tasks = [asyncio.create_task(_worker_wrapper(w)) for w in workers]
+
+            finished = 0
+            while finished < active_count:
+                event = await queue.get()
+                if event is None:
+                    finished += 1
+                    continue
+                yield event
+
+            gather_results = await asyncio.gather(*tasks, return_exceptions=True)
+            for i, r in enumerate(gather_results):
+                if isinstance(r, Exception):
+                    logger.error("Worker task %d raised: %s", i, r)
+
+            logger.info("All workers finished, checking for re-planning...")
+
+            # Check for newly completed tasks to review
+            all_tasks = await registry.tasks.list_tasks(team_run_id)
+            newly_completed = [t for t in all_tasks if t.status == TaskStatus.DONE and t.id not in reviewed_tasks]
+            logger.info(
+                "Re-plan check: %d total tasks, %d newly completed, %d already reviewed",
+                len(all_tasks),
+                len(newly_completed),
+                len(reviewed_tasks),
+            )
+            if not newly_completed:
+                break
+            for t in newly_completed:
+                reviewed_tasks.add(t.id)
+                logger.info("  Newly completed: [%s] %s", t.id, t.title)
+
+            # Re-plan: run planner to create follow-up tasks
+            replan_queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
+            new_count = await self._run_replanner_stream(team_spec, team_run_id, original_message, replan_queue)
+
+            # Drain re-planner events
+            while not replan_queue.empty():
+                yield await replan_queue.get()
+
+            logger.info("Re-planner created %d new tasks", new_count)
+            if new_count == 0:
+                break
+            # Loop back — workers will pick up the new tasks
+            logger.info("Re-planning created %d tasks, restarting workers", new_count)
+
+    # ── Phase 2: Worker execution ────────────────────────────────────
 
     async def _run_workers(
         self,

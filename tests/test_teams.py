@@ -275,6 +275,8 @@ async def test_team_runner_full_run(tmp_path: Any) -> None:
             {"model": "mock", "content": "Tasks created.", "stop_reason": "end_turn", "usage": {}},
             # Worker turn 1: just responds (the task board tools are available but worker may not use them)
             {"model": "mock", "content": "Here is my research result.", "stop_reason": "end_turn", "usage": {}},
+            # Re-planner: no new tasks needed
+            {"model": "mock", "content": "No new tasks needed.", "stop_reason": "end_turn", "usage": {}},
             # Synthesizer turn 1: final response
             {"model": "mock", "content": "Final synthesized answer.", "stop_reason": "end_turn", "usage": {}},
         ]
@@ -336,6 +338,8 @@ async def test_team_runner_stream(tmp_path: Any) -> None:
             {"model": "mock", "content": "Done planning", "stop_reason": "end_turn", "usage": {}},
             # Worker
             {"model": "mock", "content": "Work done", "stop_reason": "end_turn", "usage": {}},
+            # Re-planner: no new tasks
+            {"model": "mock", "content": "No new tasks.", "stop_reason": "end_turn", "usage": {}},
             # Synthesizer
             {"model": "mock", "content": "All done", "stop_reason": "end_turn", "usage": {}},
         ]
