@@ -29,6 +29,7 @@ from agentic_primitives_gateway.routes import (
     memory,
     observability,
     policy,
+    teams,
     tools,
 )
 from agentic_primitives_gateway.watcher import ConfigWatcher
@@ -91,6 +92,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if settings.agents.specs:
         agent_store.seed(settings.agents.specs)
     set_agent_store(agent_store)
+
+    # Initialize team store
+    from agentic_primitives_gateway.agents.team_store import FileTeamStore
+    from agentic_primitives_gateway.routes.agents import _runner as agent_runner
+    from agentic_primitives_gateway.routes.teams import get_team_runner, set_team_store
+
+    team_store = FileTeamStore(path=settings.teams.store_path)
+    if settings.teams.specs:
+        team_store.seed(settings.teams.specs)
+    set_team_store(team_store)
+    get_team_runner().set_stores(agent_store, team_store, agent_runner)
 
     # Seed policies from config into the policy provider
     await _seed_policies()
@@ -194,6 +206,7 @@ app.include_router(browser.router)
 app.include_router(policy.router)
 app.include_router(evaluations.router)
 app.include_router(agents.router)
+app.include_router(teams.router)
 
 
 # ── Provider discovery ──────────────────────────────────────────────

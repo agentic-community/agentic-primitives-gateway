@@ -169,6 +169,14 @@ _DEFAULTS: dict[str, dict[str, Any]] = {
             }
         },
     },
+    Primitive.TASKS: {
+        "default": "noop",
+        "backends": {
+            "noop": {
+                "backend": "agentic_primitives_gateway.primitives.tasks.noop.NoopTasksProvider",
+            }
+        },
+    },
 }
 
 
@@ -182,6 +190,7 @@ class ProvidersConfig(BaseModel):
     browser: PrimitiveProvidersConfig = PrimitiveProvidersConfig(**_DEFAULTS[Primitive.BROWSER])
     policy: PrimitiveProvidersConfig = PrimitiveProvidersConfig(**_DEFAULTS[Primitive.POLICY])
     evaluations: PrimitiveProvidersConfig = PrimitiveProvidersConfig(**_DEFAULTS[Primitive.EVALUATIONS])
+    tasks: PrimitiveProvidersConfig = PrimitiveProvidersConfig(**_DEFAULTS[Primitive.TASKS])
 
 
 class SeedPolicyConfig(BaseModel):
@@ -208,6 +217,13 @@ class AgentsConfig(BaseModel):
     specs: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
 
+class TeamsConfig(BaseModel):
+    """Configuration for the teams subsystem."""
+
+    store_path: str = "teams.json"
+    specs: dict[str, dict[str, Any]] = Field(default_factory=dict)
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="AGENTIC_PRIMITIVES_GATEWAY_",
@@ -223,6 +239,7 @@ class Settings(BaseSettings):
     providers: ProvidersConfig = ProvidersConfig()
     enforcement: EnforcementConfig = EnforcementConfig()
     agents: AgentsConfig = AgentsConfig()
+    teams: TeamsConfig = TeamsConfig()
 
     @staticmethod
     def config_file_path() -> str | None:

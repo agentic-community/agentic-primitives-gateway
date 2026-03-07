@@ -6,6 +6,7 @@ import type {
   ChatRequest,
   ChatResponse,
   CreateAgentRequest,
+  CreateTeamRequest,
   HealthResponse,
   PolicyEngineInfo,
   PolicyEngineListResponse,
@@ -13,8 +14,13 @@ import type {
   PolicyListResponse,
   ProvidersResponse,
   ReadinessResponse,
+  TeamListResponse,
+  TeamRunRequest,
+  TeamRunResponse,
+  TeamSpec,
   ToolCatalogResponse,
   UpdateAgentRequest,
+  UpdateTeamRequest,
 } from "./types";
 
 class ApiError extends Error {
@@ -119,6 +125,59 @@ export const api = {
     return request<AgentMemoryResponse>(
       `/api/v1/agents/${name}/memory${params}`,
     );
+  },
+
+  // Teams
+  listTeams: () =>
+    request<TeamListResponse>("/api/v1/teams").then((r) => r.teams),
+  getTeam: (name: string) => request<TeamSpec>(`/api/v1/teams/${name}`),
+  createTeam: (data: CreateTeamRequest) =>
+    request<TeamSpec>("/api/v1/teams", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  updateTeam: (name: string, data: UpdateTeamRequest) =>
+    request<TeamSpec>(`/api/v1/teams/${name}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
+  deleteTeam: (name: string) =>
+    request<{ status: string }>(`/api/v1/teams/${name}`, {
+      method: "DELETE",
+    }),
+  runTeam: (name: string, data: TeamRunRequest) =>
+    request<TeamRunResponse>(`/api/v1/teams/${name}/run`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  runTeamStream: (name: string, data: TeamRunRequest): ReadableStream<string> => {
+    const body = JSON.stringify(data);
+    return new ReadableStream({
+      async start(controller) {
+        const res = await fetch(`/api/v1/teams/${name}/run/stream`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body,
+        });
+        if (!res.ok || !res.body) {
+          const err = await res.text().catch(() => res.statusText);
+          controller.enqueue(`data: ${JSON.stringify({ type: "error", detail: err })}\n\n`);
+          controller.close();
+          return;
+        }
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            controller.enqueue(decoder.decode(value, { stream: true }));
+          }
+        } finally {
+          controller.close();
+        }
+      },
+    });
   },
 
   // Policy

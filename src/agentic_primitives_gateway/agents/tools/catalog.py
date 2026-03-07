@@ -28,6 +28,13 @@ from agentic_primitives_gateway.agents.tools.handlers import (
     memory_retrieve,
     memory_search,
     memory_store,
+    task_add_note,
+    task_claim,
+    task_create,
+    task_get,
+    task_get_available,
+    task_list,
+    task_update,
     tools_invoke,
     tools_search,
 )
@@ -250,6 +257,130 @@ _TOOL_CATALOG: dict[str, list[ToolDefinition]] = {
             handler=identity_get_api_key,
         ),
     ],
+    "task_board": [
+        ToolDefinition(
+            name="create_task",
+            description="Create a new task on the team task board.",
+            primitive="task_board",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "Short title for the task."},
+                    "description": {
+                        "type": "string",
+                        "description": "Detailed description of what to do.",
+                        "default": "",
+                    },
+                    "depends_on": {
+                        "type": "string",
+                        "description": "Comma-separated task IDs this depends on.",
+                        "default": "",
+                    },
+                    "priority": {"type": "integer", "description": "Priority (higher = more important).", "default": 0},
+                    "assigned_to": {
+                        "type": "string",
+                        "description": "Name of the worker agent this task should be assigned to.",
+                        "default": "",
+                    },
+                },
+                "required": ["title"],
+            },
+            handler=task_create,
+        ),
+        ToolDefinition(
+            name="list_tasks",
+            description="List tasks on the board. Optionally filter by status or assignee.",
+            primitive="task_board",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "status": {
+                        "type": "string",
+                        "description": "Filter by status (pending/claimed/in_progress/done/failed).",
+                        "default": "",
+                    },
+                    "assigned_to": {"type": "string", "description": "Filter by assigned agent.", "default": ""},
+                },
+                "required": [],
+            },
+            handler=task_list,
+        ),
+        ToolDefinition(
+            name="get_task",
+            description="Get full details of a specific task by ID.",
+            primitive="task_board",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "task_id": {"type": "string", "description": "The task ID."},
+                },
+                "required": ["task_id"],
+            },
+            handler=task_get,
+        ),
+        ToolDefinition(
+            name="claim_task",
+            description="Claim an available task to work on. Fails if already claimed or dependencies not met.",
+            primitive="task_board",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "task_id": {"type": "string", "description": "The task ID to claim."},
+                },
+                "required": ["task_id"],
+            },
+            handler=task_claim,
+        ),
+        ToolDefinition(
+            name="complete_task",
+            description="Mark a task as done with a result.",
+            primitive="task_board",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "task_id": {"type": "string", "description": "The task ID to complete."},
+                    "result": {"type": "string", "description": "The result/output of this task."},
+                },
+                "required": ["task_id", "result"],
+            },
+            handler=task_update,
+        ),
+        ToolDefinition(
+            name="fail_task",
+            description="Mark a task as failed with an explanation.",
+            primitive="task_board",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "task_id": {"type": "string", "description": "The task ID that failed."},
+                    "result": {"type": "string", "description": "Explanation of why it failed."},
+                },
+                "required": ["task_id", "result"],
+            },
+            handler=task_update,
+        ),
+        ToolDefinition(
+            name="add_task_note",
+            description="Add a note to a task for other agents to read.",
+            primitive="task_board",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "task_id": {"type": "string", "description": "The task ID."},
+                    "content": {"type": "string", "description": "The note content."},
+                },
+                "required": ["task_id", "content"],
+            },
+            handler=task_add_note,
+        ),
+        ToolDefinition(
+            name="get_available_tasks",
+            description="Get tasks that are available to claim (pending with all dependencies met).",
+            primitive="task_board",
+            input_schema={"type": "object", "properties": {}, "required": []},
+            handler=task_get_available,
+        ),
+    ],
 }
 
 
@@ -264,6 +395,8 @@ def build_tool_list(
     agent_store: Any | None = None,
     agent_runner: Any | None = None,
     agent_depth: int = 0,
+    team_run_id: str | None = None,
+    agent_name: str | None = None,
 ) -> list[ToolDefinition]:
     """Build the final tool list for an agent run from its primitive config.
 
@@ -308,6 +441,16 @@ def build_tool_list(
                 sid = session_ctx.get(primitive_name, "")
                 if sid:
                     bound_handler = partial(tool.handler, session_id=sid)
+            elif primitive_name == "task_board" and team_run_id:
+                bound_handler = partial(tool.handler, team_run_id=team_run_id)
+                # Also bind agent_name for tools that need it
+                if agent_name and tool.name in ("create_task", "claim_task", "add_task_note", "get_available_tasks"):
+                    bound_handler = partial(bound_handler, agent_name=agent_name)
+                # Bind status for complete_task/fail_task
+                if tool.name == "complete_task":
+                    bound_handler = partial(bound_handler, status="done")
+                elif tool.name == "fail_task":
+                    bound_handler = partial(bound_handler, status="failed")
 
             tools.append(
                 ToolDefinition(

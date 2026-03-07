@@ -11,6 +11,7 @@ class Primitive(StrEnum):
     BROWSER = "browser"
     POLICY = "policy"
     EVALUATIONS = "evaluations"
+    TASKS = "tasks"
 
 
 class LogLevel(StrEnum):

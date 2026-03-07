@@ -8,6 +8,7 @@ from agentic_primitives_gateway.primitives.identity.base import IdentityProvider
 from agentic_primitives_gateway.primitives.memory.base import MemoryProvider
 from agentic_primitives_gateway.primitives.observability.base import ObservabilityProvider
 from agentic_primitives_gateway.primitives.policy.base import PolicyProvider
+from agentic_primitives_gateway.primitives.tasks.base import TasksProvider
 from agentic_primitives_gateway.primitives.tools.base import ToolsProvider
 
 __all__ = [
@@ -19,5 +20,6 @@ __all__ = [
     "MemoryProvider",
     "ObservabilityProvider",
     "PolicyProvider",
+    "TasksProvider",
     "ToolsProvider",
 ]

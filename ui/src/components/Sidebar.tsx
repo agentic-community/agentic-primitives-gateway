@@ -5,6 +5,7 @@ import ThemeToggle from "./ThemeToggle";
 const links = [
   { to: "/", label: "Dashboard", end: true },
   { to: "/agents", label: "Agents", end: false },
+  { to: "/teams", label: "Teams", end: false },
   { to: "/explorer", label: "Explorer", end: false },
   { to: "/policies", label: "Policies", end: false },
   { to: "/docs", label: "API Docs", external: true },

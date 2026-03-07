@@ -17,6 +17,7 @@ from agentic_primitives_gateway.primitives.base import (
     MemoryProvider,
     ObservabilityProvider,
     PolicyProvider,
+    TasksProvider,
     ToolsProvider,
 )
 
@@ -34,6 +35,7 @@ _EXPECTED_TYPES: dict[str, type] = {
     Primitive.BROWSER: BrowserProvider,
     Primitive.POLICY: PolicyProvider,
     Primitive.EVALUATIONS: EvaluationsProvider,
+    Primitive.TASKS: TasksProvider,
 }
 
 
@@ -229,6 +231,11 @@ class ProviderRegistry:
     @property
     def evaluations(self) -> EvaluationsProvider:
         provider: EvaluationsProvider = self.get_primitive(Primitive.EVALUATIONS).get()
+        return provider
+
+    @property
+    def tasks(self) -> TasksProvider:
+        provider: TasksProvider = self.get_primitive(Primitive.TASKS).get()
         return provider
 
 

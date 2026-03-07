@@ -124,3 +124,99 @@ async def identity_get_token(credential_provider: str, scopes: str = "") -> str:
 async def identity_get_api_key(credential_provider: str) -> str:
     result = await registry.identity.get_api_key(credential_provider=credential_provider, workload_token="")
     return json.dumps(result, default=str)
+
+
+# ── Task board ─────────────────────────────────────────────────────
+
+
+async def task_create(
+    team_run_id: str,
+    agent_name: str,
+    title: str,
+    description: str = "",
+    depends_on: str = "",
+    priority: int = 0,
+    assigned_to: str = "",
+) -> str:
+    deps = [d.strip() for d in depends_on.split(",") if d.strip()] if depends_on else []
+    task = await registry.tasks.create_task(
+        team_run_id=team_run_id,
+        title=title,
+        description=description,
+        created_by=agent_name,
+        depends_on=deps,
+        priority=priority,
+        suggested_worker=assigned_to or None,
+    )
+    return json.dumps(
+        {"id": task.id, "title": task.title, "status": task.status, "assigned_to": task.suggested_worker}, default=str
+    )
+
+
+async def task_list(team_run_id: str, status: str = "", assigned_to: str = "") -> str:
+    tasks = await registry.tasks.list_tasks(
+        team_run_id=team_run_id,
+        status=status or None,
+        assigned_to=assigned_to or None,
+    )
+    if not tasks:
+        return "No tasks found."
+    lines = []
+    for t in tasks:
+        deps = f" (depends: {', '.join(t.depends_on)})" if t.depends_on else ""
+        assigned = f" [{t.assigned_to}]" if t.assigned_to else ""
+        lines.append(f"- [{t.id}] {t.status}{assigned} p{t.priority}: {t.title}{deps}")
+    return "\n".join(lines)
+
+
+async def task_get(team_run_id: str, task_id: str) -> str:
+    task = await registry.tasks.get_task(team_run_id=team_run_id, task_id=task_id)
+    if task is None:
+        return f"Task '{task_id}' not found."
+    return json.dumps(task.model_dump(), default=str)
+
+
+async def task_claim(team_run_id: str, task_id: str, agent_name: str) -> str:
+    task = await registry.tasks.claim_task(
+        team_run_id=team_run_id,
+        task_id=task_id,
+        agent_name=agent_name,
+    )
+    if task is None:
+        return f"Could not claim task '{task_id}' — already claimed, not found, or dependencies not met."
+    return f"Claimed task '{task_id}': {task.title}"
+
+
+async def task_update(
+    team_run_id: str,
+    task_id: str,
+    status: str = "",
+    result: str = "",
+) -> str:
+    task = await registry.tasks.update_task(
+        team_run_id=team_run_id,
+        task_id=task_id,
+        status=status or None,
+        result=result or None,
+    )
+    if task is None:
+        return f"Task '{task_id}' not found."
+    return f"Updated task '{task_id}' — status={task.status}"
+
+
+async def task_add_note(team_run_id: str, task_id: str, agent_name: str, content: str) -> str:
+    from agentic_primitives_gateway.models.tasks import TaskNote
+
+    note = TaskNote(agent=agent_name, content=content)
+    task = await registry.tasks.add_note(team_run_id=team_run_id, task_id=task_id, note=note)
+    if task is None:
+        return f"Task '{task_id}' not found."
+    return f"Added note to task '{task_id}'."
+
+
+async def task_get_available(team_run_id: str, agent_name: str = "") -> str:
+    tasks = await registry.tasks.get_available(team_run_id=team_run_id, worker_name=agent_name or None)
+    if not tasks:
+        return "No available tasks (all tasks are done, claimed, or have unmet dependencies)."
+    lines = [f"- [{t.id}] p{t.priority}: {t.title}" for t in tasks]
+    return "\n".join(lines)

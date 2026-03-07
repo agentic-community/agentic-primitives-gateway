@@ -135,6 +135,16 @@ providers:
           region: "${AWS_REGION:=us-east-1}"
           default_model: "us.anthropic.claude-sonnet-4-20250514-v1:0"
 
+  tasks:
+    default: "in_memory"
+    backends:
+      noop:
+        backend: "agentic_primitives_gateway.primitives.tasks.noop.NoopTasksProvider"
+        config: {}
+      in_memory:
+        backend: "agentic_primitives_gateway.primitives.tasks.in_memory.InMemoryTasksProvider"
+        config: {}
+
   tools:
     default: "noop"
     backends:
@@ -252,3 +262,40 @@ agents:
       hooks:
         auto_memory: true
         auto_trace: false
+    planner:
+      model: "us.anthropic.claude-sonnet-4-20250514-v1:0"
+      description: "Decomposes requests into tasks for team execution"
+      system_prompt: |
+        You are a task planner for a team of specialized agents. Your job is to
+        decompose requests into multiple concrete tasks and assign each to the
+        right team member. You MUST create tasks for ALL workers when the request
+        involves their specialties. Always create at least one task per relevant
+        worker. Think carefully about what each worker can do and create tasks
+        that fully utilize the team. Where possible, write parallel tasks, 
+        for instance: if the task is to evaluate 3 things, write out a task for each 
+        evaluation.
+      primitives: {}
+      hooks:
+        auto_memory: false
+        auto_trace: false
+    synthesizer:
+      model: "us.anthropic.claude-sonnet-4-20250514-v1:0"
+      description: "Synthesizes team results into coherent responses"
+      system_prompt: |
+        You are a synthesizer. Given the results of multiple completed tasks,
+        produce a clear, comprehensive response that addresses the original request.
+      primitives: {}
+      hooks:
+        auto_memory: false
+        auto_trace: false
+
+teams:
+  store_path: "teams.json"
+  specs:
+    research-team:
+      description: "A team that researches topics and writes code collaboratively"
+      planner: "planner"
+      synthesizer: "synthesizer"
+      workers: ["researcher", "coder"]
+      global_max_turns: 100
+      global_timeout_seconds: 300
