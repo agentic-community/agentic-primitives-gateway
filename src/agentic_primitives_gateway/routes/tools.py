@@ -16,6 +16,7 @@ from agentic_primitives_gateway.models.tools import (
     ToolResult,
 )
 from agentic_primitives_gateway.registry import registry
+from agentic_primitives_gateway.routes._helpers import handle_provider_errors
 
 router = APIRouter(prefix="/api/v1/tools", tags=[Primitive.TOOLS])
 
@@ -48,32 +49,24 @@ async def search_tools(
 
 
 @router.get("/servers", response_model=ListServersResponse)
+@handle_provider_errors("Server listing not supported by this provider")
 async def list_servers() -> Any:
-    try:
-        servers = await registry.tools.list_servers()
-    except NotImplementedError:
-        raise HTTPException(status_code=501, detail="Server listing not supported by this provider") from None
+    servers = await registry.tools.list_servers()
     return ListServersResponse(servers=[ServerInfo(**s) for s in servers])
 
 
 @router.post("/servers", status_code=201)
 async def register_server(request: RegisterServerRequest) -> Any:
     try:
-        result = await registry.tools.register_server(request.model_dump())
+        return await registry.tools.register_server(request.model_dump())
     except NotImplementedError:
         raise HTTPException(status_code=501, detail="Server registration not supported by this provider") from None
-    return result
 
 
 @router.get("/servers/{server_name}")
+@handle_provider_errors("get_server not supported by this provider", not_found="Server not found")
 async def get_server(server_name: str) -> Any:
-    try:
-        result = await registry.tools.get_server(server_name)
-    except NotImplementedError:
-        raise HTTPException(status_code=501, detail="get_server not supported by this provider") from None
-    except KeyError:
-        raise HTTPException(status_code=404, detail="Server not found") from None
-    return result
+    return await registry.tools.get_server(server_name)
 
 
 # ── Tool invoke (has /invoke suffix, no conflict with catch-all) ─────
@@ -89,22 +82,14 @@ async def invoke_tool(name: str, request: InvokeToolRequest) -> ToolResult:
 
 
 @router.get("/{name:path}", response_model=ToolInfo)
+@handle_provider_errors("get_tool not supported by this provider", not_found="Tool not found")
 async def get_tool(name: str) -> Any:
-    try:
-        result = await registry.tools.get_tool(name)
-    except NotImplementedError:
-        raise HTTPException(status_code=501, detail="get_tool not supported by this provider") from None
-    except KeyError:
-        raise HTTPException(status_code=404, detail="Tool not found") from None
+    result = await registry.tools.get_tool(name)
     return ToolInfo(**result)
 
 
 @router.delete("/{name:path}")
+@handle_provider_errors("delete_tool not supported by this provider", not_found="Tool not found")
 async def delete_tool(name: str) -> Response:
-    try:
-        await registry.tools.delete_tool(name)
-    except NotImplementedError:
-        raise HTTPException(status_code=501, detail="delete_tool not supported by this provider") from None
-    except KeyError:
-        raise HTTPException(status_code=404, detail="Tool not found") from None
+    await registry.tools.delete_tool(name)
     return Response(status_code=204)

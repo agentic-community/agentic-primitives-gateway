@@ -23,6 +23,7 @@ from agentic_primitives_gateway.models.identity import (
     WorkloadTokenResponse,
 )
 from agentic_primitives_gateway.registry import registry
+from agentic_primitives_gateway.routes._helpers import handle_provider_errors
 
 router = APIRouter(prefix="/api/v1/identity", tags=[Primitive.IDENTITY])
 
@@ -97,21 +98,15 @@ async def create_credential_provider(request: CreateCredentialProviderRequest) -
         )
     except NotImplementedError:
         return JSONResponse(
-            status_code=501,
-            content={"detail": "create_credential_provider not supported by this provider"},
+            status_code=501, content={"detail": "create_credential_provider not supported by this provider"}
         )
     return JSONResponse(status_code=201, content=CredentialProviderInfo(**result).model_dump(mode="json"))
 
 
 @router.get("/credential-providers/{name}", response_model=CredentialProviderInfo)
+@handle_provider_errors("get_credential_provider not supported by this provider")
 async def get_credential_provider(name: str) -> JSONResponse:
-    try:
-        result = await registry.identity.get_credential_provider(name)
-    except NotImplementedError:
-        return JSONResponse(
-            status_code=501,
-            content={"detail": "get_credential_provider not supported by this provider"},
-        )
+    result = await registry.identity.get_credential_provider(name)
     return JSONResponse(content=CredentialProviderInfo(**result).model_dump(mode="json"))
 
 
@@ -124,8 +119,7 @@ async def update_credential_provider(name: str, request: UpdateCredentialProvide
         )
     except NotImplementedError:
         return JSONResponse(
-            status_code=501,
-            content={"detail": "update_credential_provider not supported by this provider"},
+            status_code=501, content={"detail": "update_credential_provider not supported by this provider"}
         )
     return JSONResponse(content=CredentialProviderInfo(**result).model_dump(mode="json"))
 
@@ -136,8 +130,7 @@ async def delete_credential_provider(name: str) -> Response:
         await registry.identity.delete_credential_provider(name)
     except NotImplementedError:
         return JSONResponse(
-            status_code=501,
-            content={"detail": "delete_credential_provider not supported by this provider"},
+            status_code=501, content={"detail": "delete_credential_provider not supported by this provider"}
         )
     return Response(status_code=204)
 
@@ -146,14 +139,9 @@ async def delete_credential_provider(name: str) -> Response:
 
 
 @router.get("/workload-identities", response_model=ListWorkloadIdentitiesResponse)
+@handle_provider_errors("list_workload_identities not supported by this provider")
 async def list_workload_identities() -> JSONResponse:
-    try:
-        identities = await registry.identity.list_workload_identities()
-    except NotImplementedError:
-        return JSONResponse(
-            status_code=501,
-            content={"detail": "list_workload_identities not supported by this provider"},
-        )
+    identities = await registry.identity.list_workload_identities()
     return JSONResponse(
         content=ListWorkloadIdentitiesResponse(
             workload_identities=[WorkloadIdentityInfo(**i) for i in identities]
@@ -170,21 +158,15 @@ async def create_workload_identity(request: CreateWorkloadIdentityRequest) -> JS
         )
     except NotImplementedError:
         return JSONResponse(
-            status_code=501,
-            content={"detail": "create_workload_identity not supported by this provider"},
+            status_code=501, content={"detail": "create_workload_identity not supported by this provider"}
         )
     return JSONResponse(status_code=201, content=WorkloadIdentityInfo(**result).model_dump(mode="json"))
 
 
 @router.get("/workload-identities/{name}", response_model=WorkloadIdentityInfo)
+@handle_provider_errors("get_workload_identity not supported by this provider")
 async def get_workload_identity(name: str) -> JSONResponse:
-    try:
-        result = await registry.identity.get_workload_identity(name)
-    except NotImplementedError:
-        return JSONResponse(
-            status_code=501,
-            content={"detail": "get_workload_identity not supported by this provider"},
-        )
+    result = await registry.identity.get_workload_identity(name)
     return JSONResponse(content=WorkloadIdentityInfo(**result).model_dump(mode="json"))
 
 
@@ -197,8 +179,7 @@ async def update_workload_identity(name: str, request: UpdateWorkloadIdentityReq
         )
     except NotImplementedError:
         return JSONResponse(
-            status_code=501,
-            content={"detail": "update_workload_identity not supported by this provider"},
+            status_code=501, content={"detail": "update_workload_identity not supported by this provider"}
         )
     return JSONResponse(content=WorkloadIdentityInfo(**result).model_dump(mode="json"))
 
@@ -209,7 +190,6 @@ async def delete_workload_identity(name: str) -> Response:
         await registry.identity.delete_workload_identity(name)
     except NotImplementedError:
         return JSONResponse(
-            status_code=501,
-            content={"detail": "delete_workload_identity not supported by this provider"},
+            status_code=501, content={"detail": "delete_workload_identity not supported by this provider"}
         )
     return Response(status_code=204)

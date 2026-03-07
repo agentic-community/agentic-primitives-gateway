@@ -16,6 +16,7 @@ from agentic_primitives_gateway.models.code_interpreter import (
 )
 from agentic_primitives_gateway.models.enums import Primitive
 from agentic_primitives_gateway.registry import registry
+from agentic_primitives_gateway.routes._helpers import handle_provider_errors
 
 router = APIRouter(prefix="/api/v1/code-interpreter", tags=[Primitive.CODE_INTERPRETER])
 
@@ -42,27 +43,19 @@ async def list_sessions(status: str | None = None) -> ListSessionsResponse:
 
 
 @router.get("/sessions/{session_id}/history", response_model=ExecutionHistoryResponse)
+@handle_provider_errors("Execution history not supported by this provider", not_found="Session not found")
 async def get_execution_history(
     session_id: str,
     limit: int = Query(default=50, ge=1, le=500),
 ) -> Any:
-    try:
-        entries = await registry.code_interpreter.get_execution_history(session_id, limit=limit)
-    except NotImplementedError:
-        raise HTTPException(status_code=501, detail="Execution history not supported by this provider") from None
-    except KeyError:
-        raise HTTPException(status_code=404, detail="Session not found") from None
+    entries = await registry.code_interpreter.get_execution_history(session_id, limit=limit)
     return ExecutionHistoryResponse(entries=[ExecutionHistoryEntry(**e) for e in entries])
 
 
 @router.get("/sessions/{session_id}", response_model=SessionInfo)
+@handle_provider_errors("get_session not supported by this provider", not_found="Session not found")
 async def get_session(session_id: str) -> Any:
-    try:
-        result = await registry.code_interpreter.get_session(session_id)
-    except NotImplementedError:
-        raise HTTPException(status_code=501, detail="get_session not supported by this provider") from None
-    except KeyError:
-        raise HTTPException(status_code=404, detail="Session not found") from None
+    result = await registry.code_interpreter.get_session(session_id)
     return SessionInfo(**result)
 
 

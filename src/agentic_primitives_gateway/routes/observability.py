@@ -21,6 +21,7 @@ from agentic_primitives_gateway.models.observability import (
     UpdateTraceRequest,
 )
 from agentic_primitives_gateway.registry import registry
+from agentic_primitives_gateway.routes._helpers import handle_provider_errors
 
 router = APIRouter(prefix="/api/v1/observability", tags=[Primitive.OBSERVABILITY])
 
@@ -29,11 +30,9 @@ router = APIRouter(prefix="/api/v1/observability", tags=[Primitive.OBSERVABILITY
 
 
 @router.post("/flush", response_model=FlushResponse, status_code=202)
+@handle_provider_errors("flush not supported by this provider")
 async def flush() -> FlushResponse:
-    try:
-        await registry.observability.flush()
-    except NotImplementedError:
-        raise HTTPException(status_code=501, detail="flush not supported by this provider") from None
+    await registry.observability.flush()
     return FlushResponse(status=HealthStatus.ACCEPTED)
 
 
@@ -41,23 +40,19 @@ async def flush() -> FlushResponse:
 
 
 @router.get("/sessions", response_model=ListSessionsResponse)
+@handle_provider_errors("list_sessions not supported by this provider")
 async def list_sessions(
     user_id: str | None = None,
     limit: int = Query(default=100, ge=1, le=1000),
 ) -> Any:
-    try:
-        sessions = await registry.observability.list_sessions(user_id=user_id, limit=limit)
-    except NotImplementedError:
-        raise HTTPException(status_code=501, detail="list_sessions not supported by this provider") from None
+    sessions = await registry.observability.list_sessions(user_id=user_id, limit=limit)
     return ListSessionsResponse(sessions=[ObservabilitySessionInfo(**s) for s in sessions])
 
 
 @router.get("/sessions/{session_id}", response_model=ObservabilitySessionInfo)
+@handle_provider_errors("get_session not supported by this provider")
 async def get_session(session_id: str) -> Any:
-    try:
-        result = await registry.observability.get_session(session_id)
-    except NotImplementedError:
-        raise HTTPException(status_code=501, detail="get_session not supported by this provider") from None
+    result = await registry.observability.get_session(session_id)
     return ObservabilitySessionInfo(**result)
 
 
@@ -67,9 +62,9 @@ async def get_session(session_id: str) -> Any:
 
 @router.post("/traces/{trace_id}/generations", response_model=GenerationInfo, status_code=201)
 async def log_generation(trace_id: str, request: LogGenerationRequest) -> Any:
+    usage_dict = request.usage.model_dump(exclude_none=True) if request.usage else None
     try:
-        usage_dict = request.usage.model_dump(exclude_none=True) if request.usage else None
-        result = await registry.observability.log_generation(
+        return await registry.observability.log_generation(
             trace_id=trace_id,
             name=request.name,
             model=request.model,
@@ -81,13 +76,12 @@ async def log_generation(trace_id: str, request: LogGenerationRequest) -> Any:
         )
     except NotImplementedError:
         raise HTTPException(status_code=501, detail="log_generation not supported by this provider") from None
-    return result
 
 
 @router.post("/traces/{trace_id}/scores", response_model=ScoreInfo, status_code=201)
 async def score_trace(trace_id: str, request: ScoreRequest) -> Any:
     try:
-        result = await registry.observability.score_trace(
+        return await registry.observability.score_trace(
             trace_id=trace_id,
             name=request.name,
             value=request.value,
@@ -96,15 +90,12 @@ async def score_trace(trace_id: str, request: ScoreRequest) -> Any:
         )
     except NotImplementedError:
         raise HTTPException(status_code=501, detail="score_trace not supported by this provider") from None
-    return result
 
 
 @router.get("/traces/{trace_id}/scores", response_model=ListScoresResponse)
+@handle_provider_errors("list_scores not supported by this provider")
 async def list_scores(trace_id: str) -> Any:
-    try:
-        scores = await registry.observability.list_scores(trace_id)
-    except NotImplementedError:
-        raise HTTPException(status_code=501, detail="list_scores not supported by this provider") from None
+    scores = await registry.observability.list_scores(trace_id)
     return ListScoresResponse(scores=[ScoreInfo(**s) for s in scores])
 
 
@@ -112,20 +103,16 @@ async def list_scores(trace_id: str) -> Any:
 
 
 @router.get("/traces/{trace_id}", response_model=Trace)
+@handle_provider_errors("get_trace not supported by this provider", not_found="Trace not found")
 async def get_trace(trace_id: str) -> Any:
-    try:
-        result = await registry.observability.get_trace(trace_id)
-    except NotImplementedError:
-        raise HTTPException(status_code=501, detail="get_trace not supported by this provider") from None
-    except KeyError:
-        raise HTTPException(status_code=404, detail="Trace not found") from None
+    result = await registry.observability.get_trace(trace_id)
     return Trace(**result)
 
 
 @router.put("/traces/{trace_id}")
 async def update_trace(trace_id: str, request: UpdateTraceRequest) -> Any:
     try:
-        result = await registry.observability.update_trace(
+        return await registry.observability.update_trace(
             trace_id,
             name=request.name,
             user_id=request.user_id,
@@ -137,7 +124,6 @@ async def update_trace(trace_id: str, request: UpdateTraceRequest) -> Any:
         )
     except NotImplementedError:
         raise HTTPException(status_code=501, detail="update_trace not supported by this provider") from None
-    return result
 
 
 # ── Original endpoints (trace/log ingestion, query) ──────────────────

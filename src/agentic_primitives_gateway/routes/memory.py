@@ -22,6 +22,7 @@ from agentic_primitives_gateway.models.memory import (
     TurnGroup,
 )
 from agentic_primitives_gateway.registry import registry
+from agentic_primitives_gateway.routes._helpers import handle_provider_errors
 
 router = APIRouter(prefix="/api/v1/memory", tags=[Primitive.MEMORY])
 
@@ -52,7 +53,7 @@ async def create_event(
     request: CreateEventRequest,
 ) -> Any:
     try:
-        result = await registry.memory.create_event(
+        return await registry.memory.create_event(
             actor_id=actor_id,
             session_id=session_id,
             messages=[(m.text, m.role) for m in request.messages],
@@ -60,26 +61,23 @@ async def create_event(
         )
     except NotImplementedError:
         raise HTTPException(status_code=501, detail="Conversation events not supported by this provider") from None
-    return result
 
 
 @router.get(
     "/sessions/{actor_id}/{session_id}/events",
     response_model=ListEventsResponse,
 )
+@handle_provider_errors("Conversation events not supported by this provider")
 async def list_events(
     actor_id: str,
     session_id: str,
     limit: int = Query(default=100, ge=1, le=1000),
 ) -> Any:
-    try:
-        events = await registry.memory.list_events(
-            actor_id=actor_id,
-            session_id=session_id,
-            limit=limit,
-        )
-    except NotImplementedError:
-        raise HTTPException(status_code=501, detail="Conversation events not supported by this provider") from None
+    events = await registry.memory.list_events(
+        actor_id=actor_id,
+        session_id=session_id,
+        limit=limit,
+    )
     return ListEventsResponse(events=[EventInfo(**e) for e in events])
 
 
@@ -87,32 +85,23 @@ async def list_events(
     "/sessions/{actor_id}/{session_id}/events/{event_id}",
     response_model=EventInfo,
 )
+@handle_provider_errors("Conversation events not supported by this provider", not_found="Event not found")
 async def get_event(actor_id: str, session_id: str, event_id: str) -> Any:
-    try:
-        event = await registry.memory.get_event(
-            actor_id=actor_id,
-            session_id=session_id,
-            event_id=event_id,
-        )
-    except NotImplementedError:
-        raise HTTPException(status_code=501, detail="Conversation events not supported by this provider") from None
-    except KeyError:
-        raise HTTPException(status_code=404, detail="Event not found") from None
-    return event
+    return await registry.memory.get_event(
+        actor_id=actor_id,
+        session_id=session_id,
+        event_id=event_id,
+    )
 
 
 @router.delete("/sessions/{actor_id}/{session_id}/events/{event_id}")
+@handle_provider_errors("Conversation events not supported by this provider", not_found="Event not found")
 async def delete_event(actor_id: str, session_id: str, event_id: str) -> Response:
-    try:
-        await registry.memory.delete_event(
-            actor_id=actor_id,
-            session_id=session_id,
-            event_id=event_id,
-        )
-    except NotImplementedError:
-        raise HTTPException(status_code=501, detail="Conversation events not supported by this provider") from None
-    except KeyError:
-        raise HTTPException(status_code=404, detail="Event not found") from None
+    await registry.memory.delete_event(
+        actor_id=actor_id,
+        session_id=session_id,
+        event_id=event_id,
+    )
     return Response(status_code=204)
 
 
@@ -120,19 +109,17 @@ async def delete_event(actor_id: str, session_id: str, event_id: str) -> Respons
     "/sessions/{actor_id}/{session_id}/turns",
     response_model=GetTurnsResponse,
 )
+@handle_provider_errors("Conversation turns not supported by this provider")
 async def get_last_turns(
     actor_id: str,
     session_id: str,
     k: int = Query(default=5, ge=1, le=100),
 ) -> Any:
-    try:
-        turns = await registry.memory.get_last_turns(
-            actor_id=actor_id,
-            session_id=session_id,
-            k=k,
-        )
-    except NotImplementedError:
-        raise HTTPException(status_code=501, detail="Conversation turns not supported by this provider") from None
+    turns = await registry.memory.get_last_turns(
+        actor_id=actor_id,
+        session_id=session_id,
+        k=k,
+    )
     return GetTurnsResponse(
         turns=[TurnGroup(messages=[EventMessage(text=m["text"], role=m["role"]) for m in turn]) for turn in turns]
     )
@@ -142,20 +129,16 @@ async def get_last_turns(
 
 
 @router.get("/actors")
+@handle_provider_errors("Actor listing not supported by this provider")
 async def list_actors() -> Any:
-    try:
-        actors = await registry.memory.list_actors()
-    except NotImplementedError:
-        raise HTTPException(status_code=501, detail="Actor listing not supported by this provider") from None
+    actors = await registry.memory.list_actors()
     return {"actors": actors}
 
 
 @router.get("/actors/{actor_id}/sessions")
+@handle_provider_errors("Session listing not supported by this provider")
 async def list_sessions(actor_id: str) -> Any:
-    try:
-        sessions = await registry.memory.list_sessions(actor_id=actor_id)
-    except NotImplementedError:
-        raise HTTPException(status_code=501, detail="Session listing not supported by this provider") from None
+    sessions = await registry.memory.list_sessions(actor_id=actor_id)
     return {"sessions": sessions}
 
 
@@ -172,7 +155,7 @@ async def fork_conversation(
     request: ForkConversationRequest,
 ) -> Any:
     try:
-        result = await registry.memory.fork_conversation(
+        return await registry.memory.fork_conversation(
             actor_id=actor_id,
             session_id=session_id,
             root_event_id=request.root_event_id,
@@ -181,18 +164,15 @@ async def fork_conversation(
         )
     except NotImplementedError:
         raise HTTPException(status_code=501, detail="Branch management not supported by this provider") from None
-    return result
 
 
 @router.get("/sessions/{actor_id}/{session_id}/branches")
+@handle_provider_errors("Branch management not supported by this provider")
 async def list_branches(actor_id: str, session_id: str) -> Any:
-    try:
-        branches = await registry.memory.list_branches(
-            actor_id=actor_id,
-            session_id=session_id,
-        )
-    except NotImplementedError:
-        raise HTTPException(status_code=501, detail="Branch management not supported by this provider") from None
+    branches = await registry.memory.list_branches(
+        actor_id=actor_id,
+        session_id=session_id,
+    )
     return {"branches": branches}
 
 
@@ -202,7 +182,7 @@ async def list_branches(actor_id: str, session_id: str) -> Any:
 @router.post("/resources", status_code=201)
 async def create_memory_resource(request: CreateMemoryResourceRequest) -> Any:
     try:
-        result = await registry.memory.create_memory_resource(
+        return await registry.memory.create_memory_resource(
             name=request.name,
             strategies=request.strategies,
             description=request.description,
@@ -211,39 +191,25 @@ async def create_memory_resource(request: CreateMemoryResourceRequest) -> Any:
         raise HTTPException(
             status_code=501, detail="Memory resource management not supported by this provider"
         ) from None
-    return result
 
 
 @router.get("/resources")
+@handle_provider_errors("Memory resource management not supported by this provider")
 async def list_memory_resources() -> Any:
-    try:
-        resources = await registry.memory.list_memory_resources()
-    except NotImplementedError:
-        raise HTTPException(
-            status_code=501, detail="Memory resource management not supported by this provider"
-        ) from None
+    resources = await registry.memory.list_memory_resources()
     return {"resources": resources}
 
 
 @router.get("/resources/{memory_id}")
+@handle_provider_errors("Memory resource management not supported by this provider")
 async def get_memory_resource(memory_id: str) -> Any:
-    try:
-        resource = await registry.memory.get_memory_resource(memory_id=memory_id)
-    except NotImplementedError:
-        raise HTTPException(
-            status_code=501, detail="Memory resource management not supported by this provider"
-        ) from None
-    return resource
+    return await registry.memory.get_memory_resource(memory_id=memory_id)
 
 
 @router.delete("/resources/{memory_id}")
+@handle_provider_errors("Memory resource management not supported by this provider")
 async def delete_memory_resource(memory_id: str) -> Response:
-    try:
-        await registry.memory.delete_memory_resource(memory_id=memory_id)
-    except NotImplementedError:
-        raise HTTPException(
-            status_code=501, detail="Memory resource management not supported by this provider"
-        ) from None
+    await registry.memory.delete_memory_resource(memory_id=memory_id)
     return Response(status_code=204)
 
 
@@ -251,32 +217,27 @@ async def delete_memory_resource(memory_id: str) -> Response:
 
 
 @router.get("/resources/{memory_id}/strategies")
+@handle_provider_errors("Strategy management not supported by this provider")
 async def list_strategies(memory_id: str) -> Any:
-    try:
-        strategies = await registry.memory.list_strategies(memory_id=memory_id)
-    except NotImplementedError:
-        raise HTTPException(status_code=501, detail="Strategy management not supported by this provider") from None
+    strategies = await registry.memory.list_strategies(memory_id=memory_id)
     return {"strategies": strategies}
 
 
 @router.post("/resources/{memory_id}/strategies", status_code=201)
 async def add_strategy(memory_id: str, request: AddStrategyRequest) -> Any:
     try:
-        result = await registry.memory.add_strategy(
+        return await registry.memory.add_strategy(
             memory_id=memory_id,
             strategy=request.strategy,
         )
     except NotImplementedError:
         raise HTTPException(status_code=501, detail="Strategy management not supported by this provider") from None
-    return result
 
 
 @router.delete("/resources/{memory_id}/strategies/{strategy_id}")
+@handle_provider_errors("Strategy management not supported by this provider")
 async def delete_strategy(memory_id: str, strategy_id: str) -> Response:
-    try:
-        await registry.memory.delete_strategy(memory_id=memory_id, strategy_id=strategy_id)
-    except NotImplementedError:
-        raise HTTPException(status_code=501, detail="Strategy management not supported by this provider") from None
+    await registry.memory.delete_strategy(memory_id=memory_id, strategy_id=strategy_id)
     return Response(status_code=204)
 
 

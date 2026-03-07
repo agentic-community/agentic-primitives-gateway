@@ -12,6 +12,7 @@ from agentic_primitives_gateway.models.evaluations import (
     UpdateEvaluatorRequest,
 )
 from agentic_primitives_gateway.registry import registry
+from agentic_primitives_gateway.routes._helpers import handle_provider_errors
 
 router = APIRouter(prefix="/api/v1/evaluations", tags=[Primitive.EVALUATIONS])
 
@@ -93,29 +94,21 @@ async def create_online_evaluation_config(request: CreateOnlineEvalConfigRequest
 
 
 @router.get("/online-configs")
+@handle_provider_errors("Online evaluation configs not supported by this provider")
 async def list_online_evaluation_configs(
     max_results: int = Query(default=100, ge=1, le=1000),
     next_token: str | None = Query(default=None),
 ) -> Any:
-    try:
-        return await registry.evaluations.list_online_evaluation_configs(
-            max_results=max_results,
-            next_token=next_token,
-        )
-    except NotImplementedError:
-        raise HTTPException(
-            status_code=501, detail="Online evaluation configs not supported by this provider"
-        ) from None
+    return await registry.evaluations.list_online_evaluation_configs(
+        max_results=max_results,
+        next_token=next_token,
+    )
 
 
 @router.get("/online-configs/{config_id}")
+@handle_provider_errors("Online evaluation configs not supported by this provider")
 async def get_online_evaluation_config(config_id: str) -> Any:
-    try:
-        return await registry.evaluations.get_online_evaluation_config(config_id=config_id)
-    except NotImplementedError:
-        raise HTTPException(
-            status_code=501, detail="Online evaluation configs not supported by this provider"
-        ) from None
+    return await registry.evaluations.get_online_evaluation_config(config_id=config_id)
 
 
 @router.delete("/online-configs/{config_id}")

@@ -20,6 +20,7 @@ from agentic_primitives_gateway.models.policy import (
     UpdatePolicyRequest,
 )
 from agentic_primitives_gateway.registry import registry
+from agentic_primitives_gateway.routes._helpers import handle_provider_errors
 
 router = APIRouter(prefix="/api/v1/policy", tags=[Primitive.POLICY])
 
@@ -129,32 +130,28 @@ async def start_policy_generation(engine_id: str, request: StartPolicyGeneration
 
 
 @router.get("/engines/{engine_id}/generations", response_model=ListPolicyGenerationsResponse)
+@handle_provider_errors("Policy generation not supported by this provider")
 async def list_policy_generations(
     engine_id: str,
     max_results: int = Query(default=100, ge=1, le=1000),
     next_token: str | None = None,
 ) -> Any:
-    try:
-        result = await registry.policy.list_policy_generations(
-            engine_id=engine_id,
-            max_results=max_results,
-            next_token=next_token,
-        )
-    except NotImplementedError:
-        raise HTTPException(status_code=501, detail="Policy generation not supported by this provider") from None
+    result = await registry.policy.list_policy_generations(
+        engine_id=engine_id,
+        max_results=max_results,
+        next_token=next_token,
+    )
     gens = [PolicyGenerationInfo(**g) for g in result.get("policy_generations", [])]
     return ListPolicyGenerationsResponse(policy_generations=gens, next_token=result.get("next_token"))
 
 
 @router.get("/engines/{engine_id}/generations/{generation_id}", response_model=PolicyGenerationInfo)
+@handle_provider_errors("Policy generation not supported by this provider")
 async def get_policy_generation(engine_id: str, generation_id: str) -> Any:
-    try:
-        result = await registry.policy.get_policy_generation(
-            engine_id=engine_id,
-            generation_id=generation_id,
-        )
-    except NotImplementedError:
-        raise HTTPException(status_code=501, detail="Policy generation not supported by this provider") from None
+    result = await registry.policy.get_policy_generation(
+        engine_id=engine_id,
+        generation_id=generation_id,
+    )
     return PolicyGenerationInfo(**result)
 
 
@@ -162,20 +159,18 @@ async def get_policy_generation(engine_id: str, generation_id: str) -> Any:
     "/engines/{engine_id}/generations/{generation_id}/assets",
     response_model=ListPolicyGenerationAssetsResponse,
 )
+@handle_provider_errors("Policy generation not supported by this provider")
 async def list_policy_generation_assets(
     engine_id: str,
     generation_id: str,
     max_results: int = Query(default=100, ge=1, le=1000),
     next_token: str | None = None,
 ) -> Any:
-    try:
-        result = await registry.policy.list_policy_generation_assets(
-            engine_id=engine_id,
-            generation_id=generation_id,
-            max_results=max_results,
-            next_token=next_token,
-        )
-    except NotImplementedError:
-        raise HTTPException(status_code=501, detail="Policy generation not supported by this provider") from None
+    result = await registry.policy.list_policy_generation_assets(
+        engine_id=engine_id,
+        generation_id=generation_id,
+        max_results=max_results,
+        next_token=next_token,
+    )
     assets = [PolicyGenerationAssetInfo(**a) for a in result.get("policy_generation_assets", [])]
     return ListPolicyGenerationAssetsResponse(policy_generation_assets=assets, next_token=result.get("next_token"))
