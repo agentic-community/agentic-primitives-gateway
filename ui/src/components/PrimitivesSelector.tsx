@@ -128,12 +128,17 @@ export default function PrimitivesSelector({
           const enabled = value[name]?.enabled ?? false;
           const isAgentsPrimitive = name === "agents";
           const tools = catalog[name];
-          const hasExpandable = isAgentsPrimitive
-            ? availableAgents.length > 0
-            : tools.length > 0;
+          const config = value[name];
+          const totalCount = isAgentsPrimitive ? availableAgents.length : tools.length;
+          const hasExpandable = totalCount > 0;
+          const selectedCount = isAgentsPrimitive
+            ? availableAgents.filter((a) => isAgentEnabled(a.name)).length
+            : config?.tools === null
+              ? tools.length
+              : (config?.tools ?? []).filter((t) => tools.some((c) => c.name === t)).length;
           const expandLabel = isAgentsPrimitive
-            ? `${availableAgents.length} agents`
-            : `${tools.length} tools`;
+            ? `${selectedCount}/${totalCount} agents`
+            : `${selectedCount}/${totalCount} tools`;
           const isOpen = expanded.has(name);
 
           return (
@@ -160,7 +165,7 @@ export default function PrimitivesSelector({
                     onClick={() => toggleExpanded(name)}
                     className="text-[10px] text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 px-1"
                   >
-                    {isOpen ? (isAgentsPrimitive ? "hide agents" : "hide tools") : expandLabel}
+                    {expandLabel}
                   </button>
                 )}
                 {isAgentsPrimitive && enabled && availableAgents.length === 0 && (
