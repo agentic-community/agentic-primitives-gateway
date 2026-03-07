@@ -4,12 +4,14 @@ import asyncio
 import logging
 import uuid
 from collections.abc import AsyncIterator
+from dataclasses import dataclass, field
 from typing import Any
 
 from agentic_primitives_gateway.agents.namespace import resolve_knowledge_namespace
 from agentic_primitives_gateway.agents.store import AgentStore
 from agentic_primitives_gateway.agents.tools import (
     MAX_AGENT_DEPTH,
+    ToolDefinition,
     build_tool_list,
     execute_tool,
     to_gateway_tools,
@@ -22,15 +24,35 @@ from agentic_primitives_gateway.registry import registry
 logger = logging.getLogger(__name__)
 
 
+# ── Shared mutable state for a single agent run ─────────────────────
+
+
+@dataclass
+class _RunContext:
+    """Holds all mutable state shared between run phases."""
+
+    spec: AgentSpec
+    session_id: str
+    trace_id: str
+    knowledge_ns: str
+    depth: int
+    prev_overrides: dict[str, str]
+    session_ctx: dict[str, str] = field(default_factory=dict)
+    tools: list[ToolDefinition] = field(default_factory=list)
+    gateway_tools: list[dict[str, Any]] | None = None
+    messages: list[dict[str, Any]] = field(default_factory=list)
+    turns_used: int = 0
+    tools_called: list[str] = field(default_factory=list)
+    artifacts: list[ToolArtifact] = field(default_factory=list)
+    content: str = ""
+
+
 class AgentRunner:
     """Orchestrates the agent tool-call loop.
 
-    Flow:
-    1. Load conversation history (if auto_memory enabled)
-    2. Build tool list from the agent spec
-    3. Loop: call LLM → execute tool calls → repeat until end_turn
-    4. Store conversation turn (if auto_memory)
-    5. Trace the interaction (if auto_trace)
+    ``run()`` and ``run_stream()`` share initialization, request building,
+    session management, and finalization via ``_RunContext`` + helper methods.
+    Only the LLM call and tool execution differ between the two.
     """
 
     def __init__(self) -> None:
@@ -39,6 +61,8 @@ class AgentRunner:
     def set_store(self, store: AgentStore) -> None:
         """Set the agent store reference (called during app lifespan)."""
         self._store = store
+
+    # ── Public entry points ──────────────────────────────────────────
 
     async def run(
         self,
@@ -56,184 +80,52 @@ class AgentRunner:
                 tools_called=[],
             )
 
-        session_id = session_id or uuid.uuid4().hex[:16]
-        trace_id = uuid.uuid4().hex
+        ctx = await self._init_context(spec, message, session_id or uuid.uuid4().hex[:16], _depth)
 
-        # Apply this agent's provider overrides, saving the parent's to restore later
-        prev_overrides = self._apply_overrides(spec)
-
-        knowledge_ns = resolve_knowledge_namespace(spec)
-        session_ctx: dict[str, str] = {}
-
-        tools = build_tool_list(
-            spec.primitives,
-            namespace=knowledge_ns,
-            session_ctx=session_ctx,
-            agent_store=self._store,
-            agent_runner=self,
-            agent_depth=_depth,
-        )
-        gateway_tools = to_gateway_tools(tools) if tools else None
-
-        # Build messages with conversation history
-        messages: list[dict[str, Any]] = []
-        if spec.hooks.auto_memory:
-            messages = await self._load_history(spec.name, session_id)
-
-        # Auto-retrieve stored memories and inject as context on first message
-        if not messages and "memory" in spec.primitives and spec.primitives["memory"].enabled:
-            memory_context = await self._load_memory_context(knowledge_ns)
-            if memory_context:
-                messages.append({"role": "user", "content": memory_context})
-                messages.append(
-                    {
-                        "role": "assistant",
-                        "content": "I've reviewed my stored memories and will use them in our conversation.",
-                    }
-                )
-
-        messages.append({"role": "user", "content": message})
-
-        # Tool-call loop
-        turns_used = 0
-        tools_called: list[str] = []
-        artifacts: list[ToolArtifact] = []
-        content = ""
-
-        while turns_used < spec.max_turns:
-            turns_used += 1
-
-            request_dict: dict[str, Any] = {
-                "model": spec.model,
-                "messages": messages,
-                "system": spec.system_prompt,
-                "temperature": spec.temperature,
-            }
-            if spec.max_tokens is not None:
-                request_dict["max_tokens"] = spec.max_tokens
-            if gateway_tools:
-                request_dict["tools"] = gateway_tools
+        while ctx.turns_used < spec.max_turns:
+            ctx.turns_used += 1
+            request_dict = self._build_request(ctx)
 
             logger.info(
                 "Agent[%s] turn %d: calling LLM (%d messages, %d tools)",
                 spec.name,
-                turns_used,
-                len(messages),
-                len(gateway_tools) if gateway_tools else 0,
+                ctx.turns_used,
+                len(ctx.messages),
+                len(ctx.gateway_tools) if ctx.gateway_tools else 0,
             )
             response = await registry.gateway.route_request(request_dict)
 
             stop_reason = response.get("stop_reason", "end_turn")
             tool_calls = response.get("tool_calls")
-            # Keep last non-empty content — the LLM may return text alongside
-            # tool_use and then an empty end_turn on the next call
             turn_content = response.get("content", "")
             if turn_content:
-                content = turn_content
-            usage = response.get("usage", {})
-            logger.info(
-                "Agent[%s] turn %d: LLM returned stop_reason=%s, tool_calls=%d, content=%d chars, usage=%s",
-                spec.name,
-                turns_used,
-                stop_reason,
-                len(tool_calls) if tool_calls else 0,
-                len(turn_content),
-                usage,
-            )
+                ctx.content = turn_content
 
-            # Trace the LLM call
             if spec.hooks.auto_trace:
-                await self._trace_generation(trace_id, spec, turns_used, messages, response)
+                await self._trace_generation(ctx.trace_id, spec, ctx.turns_used, ctx.messages, response)
 
-            # If no tool calls, we're done
             if stop_reason != "tool_use" or not tool_calls:
-                messages.append({"role": "assistant", "content": content})
+                ctx.messages.append({"role": "assistant", "content": ctx.content})
                 break
 
-            # Append assistant message with tool calls to history
-            messages.append(
-                {
-                    "role": "assistant",
-                    "content": content,
-                    "tool_calls": tool_calls,
-                }
-            )
-
-            # Ensure sessions are started before parallel execution
-            for tc in tool_calls:
-                prev_ctx_size = len(session_ctx)
-                await self._ensure_session(tc["name"], tools, session_ctx)
-                if len(session_ctx) > prev_ctx_size:
-                    tools = build_tool_list(
-                        spec.primitives,
-                        namespace=knowledge_ns,
-                        session_ctx=session_ctx,
-                        agent_store=self._store,
-                        agent_runner=self,
-                        agent_depth=_depth,
-                    )
-                    gateway_tools = to_gateway_tools(tools) if tools else None
-
-            # Execute all tool calls in parallel
-            async def _exec_one(
-                tc: dict[str, Any], *, _tools: list[Any] = tools
-            ) -> tuple[str, str, dict[str, Any], str]:
-                t_name = tc["name"]
-                t_input = tc.get("input", {})
-                t_id = tc.get("id", uuid.uuid4().hex[:8])
-                logger.info(
-                    "Agent[%s] executing tool: %s(%s)",
-                    spec.name,
-                    t_name,
-                    ", ".join(f"{k}={str(v)[:50]}" for k, v in t_input.items()),
-                )
-                try:
-                    res = await execute_tool(t_name, t_input, _tools)
-                    logger.info("Agent[%s] tool %s returned: %d chars", spec.name, t_name, len(res))
-                except Exception as e:
-                    res = f"Error: {type(e).__name__}: {e}"
-                    logger.warning("Tool %s failed: %s", t_name, e)
-                return t_id, t_name, t_input, res
-
-            results = await asyncio.gather(*[_exec_one(tc) for tc in tool_calls])
-
-            tool_results: list[dict[str, Any]] = []
-            for t_id, t_name, t_input, result in results:
-                tools_called.append(t_name)
-                artifacts.append(ToolArtifact(tool_name=t_name, tool_input=t_input, output=result))
-                tool_results.append({"tool_use_id": t_id, "content": result})
-
-            # Bedrock requires all tool results in a single user message
-            messages.append({"role": "user", "tool_results": tool_results})
+            ctx.messages.append({"role": "assistant", "content": ctx.content, "tool_calls": tool_calls})
+            await self._exec_tools_parallel(ctx, tool_calls)
         else:
-            # Max turns exceeded
-            content = (
-                f"I've reached the maximum number of turns ({spec.max_turns}). Here's what I have so far: {content}"
+            ctx.content = (
+                f"I've reached the maximum number of turns ({spec.max_turns}). Here's what I have so far: {ctx.content}"
             )
-            messages.append({"role": "assistant", "content": content})
+            ctx.messages.append({"role": "assistant", "content": ctx.content})
 
-        # Clean up sessions
-        await self._cleanup_sessions(session_ctx)
-
-        # Restore parent's provider overrides
-        self._restore_overrides(prev_overrides)
-
-        # Auto-memory: store the conversation turn
-        if spec.hooks.auto_memory:
-            await self._store_turn(spec.name, session_id, message, content)
-
-        # Auto-trace: create overall trace
-        if spec.hooks.auto_trace:
-            await self._trace_conversation(trace_id, spec, session_id, message, content, turns_used, tools_called)
+        await self._finalize(ctx, message)
 
         return ChatResponse(
-            response=content,
-            session_id=session_id,
+            response=ctx.content,
+            session_id=ctx.session_id,
             agent_name=spec.name,
-            turns_used=turns_used,
-            tools_called=tools_called,
-            artifacts=artifacts,
-            metadata={"trace_id": trace_id},
+            turns_used=ctx.turns_used,
+            tools_called=ctx.tools_called,
+            artifacts=ctx.artifacts,
+            metadata={"trace_id": ctx.trace_id},
         )
 
     async def run_stream(
@@ -257,62 +149,12 @@ class AgentRunner:
             }
             return
 
-        session_id = session_id or uuid.uuid4().hex[:16]
-        trace_id = uuid.uuid4().hex
+        ctx = await self._init_context(spec, message, session_id or uuid.uuid4().hex[:16], _depth)
+        yield {"type": "stream_start", "session_id": ctx.session_id}
 
-        # Apply this agent's provider overrides, saving the parent's to restore later
-        prev_overrides = self._apply_overrides(spec)
-
-        knowledge_ns = resolve_knowledge_namespace(spec)
-        session_ctx: dict[str, str] = {}
-
-        tools = build_tool_list(
-            spec.primitives,
-            namespace=knowledge_ns,
-            session_ctx=session_ctx,
-            agent_store=self._store,
-            agent_runner=self,
-            agent_depth=_depth,
-        )
-        gateway_tools = to_gateway_tools(tools) if tools else None
-
-        messages: list[dict[str, Any]] = []
-        if spec.hooks.auto_memory:
-            messages = await self._load_history(spec.name, session_id)
-
-        if not messages and "memory" in spec.primitives and spec.primitives["memory"].enabled:
-            memory_context = await self._load_memory_context(knowledge_ns)
-            if memory_context:
-                messages.append({"role": "user", "content": memory_context})
-                messages.append(
-                    {
-                        "role": "assistant",
-                        "content": "I've reviewed my stored memories and will use them in our conversation.",
-                    }
-                )
-
-        messages.append({"role": "user", "content": message})
-
-        turns_used = 0
-        tools_called: list[str] = []
-        artifacts: list[ToolArtifact] = []
-        content = ""
-
-        yield {"type": "stream_start", "session_id": session_id}
-
-        while turns_used < spec.max_turns:
-            turns_used += 1
-
-            request_dict: dict[str, Any] = {
-                "model": spec.model,
-                "messages": messages,
-                "system": spec.system_prompt,
-                "temperature": spec.temperature,
-            }
-            if spec.max_tokens is not None:
-                request_dict["max_tokens"] = spec.max_tokens
-            if gateway_tools:
-                request_dict["tools"] = gateway_tools
+        while ctx.turns_used < spec.max_turns:
+            ctx.turns_used += 1
+            request_dict = self._build_request(ctx)
 
             # Stream LLM response
             turn_content = ""
@@ -321,200 +163,313 @@ class AgentRunner:
 
             async for event in registry.gateway.route_request_stream(request_dict):
                 etype = event.get("type")
-
                 if etype == "content_delta":
-                    delta = event["delta"]
-                    turn_content += delta
-                    yield {"type": "token", "content": delta}
-
+                    turn_content += event["delta"]
+                    yield {"type": "token", "content": event["delta"]}
                 elif etype == "tool_use_start":
-                    yield {
-                        "type": "tool_call_start",
-                        "name": event.get("name", ""),
-                        "id": event.get("id", ""),
-                    }
-
+                    yield {"type": "tool_call_start", "name": event.get("name", ""), "id": event.get("id", "")}
                 elif etype == "tool_use_complete":
                     turn_tool_calls.append(
-                        {
-                            "id": event.get("id", ""),
-                            "name": event["name"],
-                            "input": event.get("input", {}),
-                        }
+                        {"id": event.get("id", ""), "name": event["name"], "input": event.get("input", {})}
                     )
-
                 elif etype == "message_stop":
                     stop_reason = event.get("stop_reason", "end_turn")
 
             if turn_content:
-                content = turn_content
+                ctx.content = turn_content
 
-            # No tool calls — we're done
             if stop_reason != "tool_use" or not turn_tool_calls:
-                messages.append({"role": "assistant", "content": content})
+                ctx.messages.append({"role": "assistant", "content": ctx.content})
                 break
 
-            # Append assistant message with tool calls to history
-            messages.append(
-                {
-                    "role": "assistant",
-                    "content": content,
-                    "tool_calls": turn_tool_calls,
-                }
+            ctx.messages.append({"role": "assistant", "content": ctx.content, "tool_calls": turn_tool_calls})
+
+            # Execute tools and yield events
+            async for tool_event in self._exec_tools_streaming(ctx, turn_tool_calls):
+                yield tool_event
+        else:
+            ctx.content = (
+                f"I've reached the maximum number of turns ({spec.max_turns}). Here's what I have so far: {ctx.content}"
             )
+            ctx.messages.append({"role": "assistant", "content": ctx.content})
 
-            # Ensure sessions before parallel execution
-            for tc in turn_tool_calls:
-                prev_ctx_size = len(session_ctx)
-                await self._ensure_session(tc["name"], tools, session_ctx)
-                if len(session_ctx) > prev_ctx_size:
-                    tools = build_tool_list(
-                        spec.primitives,
-                        namespace=knowledge_ns,
-                        session_ctx=session_ctx,
-                        agent_store=self._store,
-                        agent_runner=self,
-                        agent_depth=_depth,
-                    )
-                    gateway_tools = to_gateway_tools(tools) if tools else None
+        await self._finalize(ctx, message)
 
-            # Execute tool calls in parallel, streaming sub-agent events via a queue
-            event_queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
-            tool_result_map: dict[str, tuple[str, dict[str, Any], str]] = {}  # id -> (name, input, result)
+        yield {
+            "type": "done",
+            "response": ctx.content,
+            "session_id": ctx.session_id,
+            "agent_name": spec.name,
+            "turns_used": ctx.turns_used,
+            "tools_called": ctx.tools_called,
+            "artifacts": self._serialize_artifacts(ctx.artifacts),
+            "metadata": {"trace_id": ctx.trace_id},
+        }
 
-            async def _exec_streaming(
-                tc: dict[str, Any],
-                *,
-                _tools: list[Any] = tools,
-                _queue: asyncio.Queue[dict[str, Any] | None] = event_queue,
-                _result_map: dict[str, tuple[str, dict[str, Any], str]] = tool_result_map,
-            ) -> None:
-                t_name = tc["name"]
-                t_input = tc.get("input", {})
-                t_id = tc.get("id", uuid.uuid4().hex[:8])
+    # ── Shared initialization ────────────────────────────────────────
 
-                is_agent_tool = t_name.startswith("call_") and any(
-                    t.primitive == "agents" and t.name == t_name for t in _tools
-                )
-                if is_agent_tool and self._store is not None:
-                    sub_agent_name = t_name.removeprefix("call_")
-                    sub_spec = await self._store.get(sub_agent_name)
-                    if sub_spec is not None:
-                        result = ""
-                        sub_artifacts: list[dict[str, Any]] = []
-                        async for sub_event in self.run_stream(
-                            sub_spec,
-                            message=t_input.get("message", ""),
-                            _depth=_depth + 1,
-                        ):
-                            sub_type = sub_event.get("type")
-                            if sub_type == "token":
-                                await _queue.put(
-                                    {
-                                        "type": "sub_agent_token",
-                                        "agent": sub_agent_name,
-                                        "content": sub_event["content"],
-                                    }
-                                )
-                            elif sub_type == "tool_call_start":
-                                await _queue.put(
-                                    {
-                                        "type": "sub_agent_tool",
-                                        "agent": sub_agent_name,
-                                        "name": sub_event.get("name", ""),
-                                    }
-                                )
-                            elif sub_type == "tool_call_result":
-                                sub_artifacts.append(
-                                    {
-                                        "tool": sub_event.get("name", ""),
-                                        "tool_input": sub_event.get("tool_input", {}),
-                                        "result": sub_event.get("full_result", sub_event.get("result", "")),
-                                    }
-                                )
-                            elif sub_type == "done":
-                                result = sub_event.get("response", "")
-                        if sub_artifacts:
-                            parts = [result, "\n\n--- Tool Artifacts ---"]
-                            for sa in sub_artifacts:
-                                parts.append(f"\n[{sa['tool']}]")
-                                ti = sa.get("tool_input", {})
-                                code = ti.get("code", "")
-                                if code:
-                                    lang = ti.get("language", "python")
-                                    parts.append(f"```{lang}\n{code}\n```")
-                                if sa["result"]:
-                                    parts.append(f"Output:\n{sa['result']}")
-                            result = "\n".join(parts)
-                    else:
-                        result = f"Agent '{sub_agent_name}' not found."
-                else:
-                    try:
-                        result = await execute_tool(t_name, t_input, _tools)
-                    except Exception as e:
-                        result = f"Error: {type(e).__name__}: {e}"
+    async def _init_context(self, spec: AgentSpec, message: str, session_id: str, depth: int) -> _RunContext:
+        """Set up everything needed before the tool-call loop."""
+        prev_overrides = self._apply_overrides(spec)
+        knowledge_ns = resolve_knowledge_namespace(spec)
 
-                _result_map[t_id] = (t_name, t_input, result)
-                await _queue.put(
+        tools = build_tool_list(
+            spec.primitives,
+            namespace=knowledge_ns,
+            session_ctx={},
+            agent_store=self._store,
+            agent_runner=self,
+            agent_depth=depth,
+        )
+
+        ctx = _RunContext(
+            spec=spec,
+            session_id=session_id,
+            trace_id=uuid.uuid4().hex,
+            knowledge_ns=knowledge_ns,
+            depth=depth,
+            prev_overrides=prev_overrides,
+            tools=tools,
+            gateway_tools=to_gateway_tools(tools) if tools else None,
+        )
+
+        # Load conversation history
+        if spec.hooks.auto_memory:
+            ctx.messages = await self._load_history(spec.name, session_id)
+
+        # Inject stored memories as context on first message
+        if not ctx.messages and "memory" in spec.primitives and spec.primitives["memory"].enabled:
+            memory_context = await self._load_memory_context(knowledge_ns)
+            if memory_context:
+                ctx.messages.append({"role": "user", "content": memory_context})
+                ctx.messages.append(
                     {
-                        "type": "tool_call_result",
-                        "name": t_name,
-                        "id": t_id,
-                        "result": result[:500],
-                        "full_result": result,
-                        "tool_input": t_input,
+                        "role": "assistant",
+                        "content": "I've reviewed my stored memories and will use them in our conversation.",
                     }
                 )
-                await _queue.put(None)  # signal this task is done
 
-            # Launch all tool calls as concurrent tasks
-            tasks = [asyncio.create_task(_exec_streaming(tc)) for tc in turn_tool_calls]
+        ctx.messages.append({"role": "user", "content": message})
+        return ctx
 
-            # Drain the event queue until all tasks complete
-            pending = len(tasks)
-            while pending > 0:
-                event = await event_queue.get()
-                if event is None:
-                    pending -= 1
-                    continue
-                # tool_call_result is the last event each task emits before finishing
-                yield event
+    # ── Shared request building ──────────────────────────────────────
 
-            # Wait for tasks to ensure exceptions propagate
-            await asyncio.gather(*tasks)
+    @staticmethod
+    def _build_request(ctx: _RunContext) -> dict[str, Any]:
+        """Build the LLM request dict from context."""
+        request_dict: dict[str, Any] = {
+            "model": ctx.spec.model,
+            "messages": ctx.messages,
+            "system": ctx.spec.system_prompt,
+            "temperature": ctx.spec.temperature,
+        }
+        if ctx.spec.max_tokens is not None:
+            request_dict["max_tokens"] = ctx.spec.max_tokens
+        if ctx.gateway_tools:
+            request_dict["tools"] = ctx.gateway_tools
+        return request_dict
 
-            # Collect results in original tool call order
-            tool_results: list[dict[str, Any]] = []
-            for tc in turn_tool_calls:
-                t_id = tc.get("id", "")
-                if t_id in tool_result_map:
-                    t_name, t_input, result = tool_result_map[t_id]
-                    tools_called.append(t_name)
-                    artifacts.append(ToolArtifact(tool_name=t_name, tool_input=t_input, output=result))
-                    tool_results.append({"tool_use_id": t_id, "content": result})
+    # ── Session management ───────────────────────────────────────────
 
-            messages.append({"role": "user", "tool_results": tool_results})
-        else:
-            content = (
-                f"I've reached the maximum number of turns ({spec.max_turns}). Here's what I have so far: {content}"
+    async def _ensure_sessions_for_tools(self, ctx: _RunContext, tool_calls: list[dict[str, Any]]) -> None:
+        """Start browser/code_interpreter sessions lazily, rebuild tools if needed."""
+        for tc in tool_calls:
+            prev_size = len(ctx.session_ctx)
+            await self._ensure_session(tc["name"], ctx.tools, ctx.session_ctx)
+            if len(ctx.session_ctx) > prev_size:
+                ctx.tools = build_tool_list(
+                    ctx.spec.primitives,
+                    namespace=ctx.knowledge_ns,
+                    session_ctx=ctx.session_ctx,
+                    agent_store=self._store,
+                    agent_runner=self,
+                    agent_depth=ctx.depth,
+                )
+                ctx.gateway_tools = to_gateway_tools(ctx.tools) if ctx.tools else None
+
+    # ── Non-streaming tool execution ─────────────────────────────────
+
+    async def _exec_tools_parallel(self, ctx: _RunContext, tool_calls: list[dict[str, Any]]) -> None:
+        """Execute tool calls in parallel via asyncio.gather, append results to messages."""
+        await self._ensure_sessions_for_tools(ctx, tool_calls)
+
+        async def _exec_one(
+            tc: dict[str, Any], *, _tools: list[ToolDefinition] = ctx.tools
+        ) -> tuple[str, str, dict[str, Any], str]:
+            t_name, t_input = tc["name"], tc.get("input", {})
+            t_id = tc.get("id", uuid.uuid4().hex[:8])
+            logger.info("Agent[%s] executing tool: %s", ctx.spec.name, t_name)
+            try:
+                res = await execute_tool(t_name, t_input, _tools)
+            except Exception as e:
+                res = f"Error: {type(e).__name__}: {e}"
+                logger.warning("Tool %s failed: %s", t_name, e)
+            return t_id, t_name, t_input, res
+
+        results = await asyncio.gather(*[_exec_one(tc) for tc in tool_calls])
+
+        tool_results: list[dict[str, Any]] = []
+        for t_id, t_name, t_input, result in results:
+            ctx.tools_called.append(t_name)
+            ctx.artifacts.append(ToolArtifact(tool_name=t_name, tool_input=t_input, output=result))
+            tool_results.append({"tool_use_id": t_id, "content": result})
+
+        ctx.messages.append({"role": "user", "tool_results": tool_results})
+
+    # ── Streaming tool execution ─────────────────────────────────────
+
+    async def _exec_tools_streaming(
+        self, ctx: _RunContext, tool_calls: list[dict[str, Any]]
+    ) -> AsyncIterator[dict[str, Any]]:
+        """Execute tool calls in parallel, yielding SSE events for sub-agents."""
+        await self._ensure_sessions_for_tools(ctx, tool_calls)
+
+        event_queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
+        result_map: dict[str, tuple[str, dict[str, Any], str]] = {}
+
+        async def _exec_one(
+            tc: dict[str, Any],
+            *,
+            _tools: list[ToolDefinition] = ctx.tools,
+            _queue: asyncio.Queue[dict[str, Any] | None] = event_queue,
+            _rmap: dict[str, tuple[str, dict[str, Any], str]] = result_map,
+        ) -> None:
+            t_name, t_input = tc["name"], tc.get("input", {})
+            t_id = tc.get("id", uuid.uuid4().hex[:8])
+
+            result = await self._execute_single_tool_streaming(t_name, t_input, _tools, _queue, ctx.depth)
+
+            _rmap[t_id] = (t_name, t_input, result)
+            await _queue.put(
+                {
+                    "type": "tool_call_result",
+                    "name": t_name,
+                    "id": t_id,
+                    "result": result[:500],
+                    "full_result": result,
+                    "tool_input": t_input,
+                }
             )
-            messages.append({"role": "assistant", "content": content})
+            await _queue.put(None)  # signal done
 
-        await self._cleanup_sessions(session_ctx)
+        tasks = [asyncio.create_task(_exec_one(tc)) for tc in tool_calls]
 
-        # Restore parent's provider overrides
-        self._restore_overrides(prev_overrides)
+        pending = len(tasks)
+        while pending > 0:
+            event = await event_queue.get()
+            if event is None:
+                pending -= 1
+                continue
+            yield event
 
-        if spec.hooks.auto_memory:
-            await self._store_turn(spec.name, session_id, message, content)
-        if spec.hooks.auto_trace:
-            await self._trace_conversation(trace_id, spec, session_id, message, content, turns_used, tools_called)
+        await asyncio.gather(*tasks)
 
-        # Serialize artifacts for the done event
-        done_artifacts = []
+        # Collect results in original order
+        tool_results: list[dict[str, Any]] = []
+        for tc in tool_calls:
+            t_id = tc.get("id", "")
+            if t_id in result_map:
+                t_name, t_input, result = result_map[t_id]
+                ctx.tools_called.append(t_name)
+                ctx.artifacts.append(ToolArtifact(tool_name=t_name, tool_input=t_input, output=result))
+                tool_results.append({"tool_use_id": t_id, "content": result})
+
+        ctx.messages.append({"role": "user", "tool_results": tool_results})
+
+    async def _execute_single_tool_streaming(
+        self,
+        tool_name: str,
+        tool_input: dict[str, Any],
+        tools: list[ToolDefinition],
+        queue: asyncio.Queue[dict[str, Any] | None],
+        depth: int,
+    ) -> str:
+        """Execute one tool, streaming sub-agent events to the queue if applicable."""
+        is_agent_tool = tool_name.startswith("call_") and any(
+            t.primitive == "agents" and t.name == tool_name for t in tools
+        )
+        if is_agent_tool and self._store is not None:
+            return await self._run_sub_agent_streaming(tool_name, tool_input, queue, depth)
+
+        try:
+            return await execute_tool(tool_name, tool_input, tools)
+        except Exception as e:
+            return f"Error: {type(e).__name__}: {e}"
+
+    async def _run_sub_agent_streaming(
+        self,
+        tool_name: str,
+        tool_input: dict[str, Any],
+        queue: asyncio.Queue[dict[str, Any] | None],
+        depth: int,
+    ) -> str:
+        """Run a sub-agent via run_stream, forwarding events to the queue."""
+        sub_name = tool_name.removeprefix("call_")
+        sub_spec = await self._store.get(sub_name)  # type: ignore[union-attr]
+        if sub_spec is None:
+            return f"Agent '{sub_name}' not found."
+
+        result = ""
+        sub_artifacts: list[dict[str, Any]] = []
+
+        async for event in self.run_stream(sub_spec, message=tool_input.get("message", ""), _depth=depth + 1):
+            etype = event.get("type")
+            if etype == "token":
+                await queue.put({"type": "sub_agent_token", "agent": sub_name, "content": event["content"]})
+            elif etype == "tool_call_start":
+                await queue.put({"type": "sub_agent_tool", "agent": sub_name, "name": event.get("name", "")})
+            elif etype == "tool_call_result":
+                sub_artifacts.append(
+                    {
+                        "tool": event.get("name", ""),
+                        "tool_input": event.get("tool_input", {}),
+                        "result": event.get("full_result", event.get("result", "")),
+                    }
+                )
+            elif etype == "done":
+                result = event.get("response", "")
+
+        if sub_artifacts:
+            parts = [result, "\n\n--- Tool Artifacts ---"]
+            for sa in sub_artifacts:
+                parts.append(f"\n[{sa['tool']}]")
+                ti = sa.get("tool_input", {})
+                code = ti.get("code", "")
+                if code:
+                    parts.append(f"```{ti.get('language', 'python')}\n{code}\n```")
+                if sa["result"]:
+                    parts.append(f"Output:\n{sa['result']}")
+            result = "\n".join(parts)
+
+        return result
+
+    # ── Shared finalization ──────────────────────────────────────────
+
+    async def _finalize(self, ctx: _RunContext, user_message: str) -> None:
+        """Cleanup sessions, restore overrides, store turn, trace."""
+        await self._cleanup_sessions(ctx.session_ctx)
+        self._restore_overrides(ctx.prev_overrides)
+
+        if ctx.spec.hooks.auto_memory:
+            await self._store_turn(ctx.spec.name, ctx.session_id, user_message, ctx.content)
+        if ctx.spec.hooks.auto_trace:
+            await self._trace_conversation(
+                ctx.trace_id,
+                ctx.spec,
+                ctx.session_id,
+                user_message,
+                ctx.content,
+                ctx.turns_used,
+                ctx.tools_called,
+            )
+
+    @staticmethod
+    def _serialize_artifacts(artifacts: list[ToolArtifact]) -> list[dict[str, Any]]:
+        """Convert ToolArtifacts to dicts for the SSE done event."""
+        result = []
         for a in artifacts:
             ti = a.tool_input or {}
-            done_artifacts.append(
+            result.append(
                 {
                     "tool_name": a.tool_name,
                     "code": ti.get("code", ""),
@@ -522,17 +477,9 @@ class AgentRunner:
                     "output": a.output,
                 }
             )
+        return result
 
-        yield {
-            "type": "done",
-            "response": content,
-            "session_id": session_id,
-            "agent_name": spec.name,
-            "turns_used": turns_used,
-            "tools_called": tools_called,
-            "artifacts": done_artifacts,
-            "metadata": {"trace_id": trace_id},
-        }
+    # ── Provider overrides ───────────────────────────────────────────
 
     @staticmethod
     def _apply_overrides(spec: AgentSpec) -> dict[str, str]:
@@ -543,9 +490,7 @@ class AgentRunner:
             if val:
                 prev[prim] = val
         if spec.provider_overrides:
-            # Merge: agent overrides on top of whatever was already set
-            merged = {**prev, **spec.provider_overrides}
-            set_provider_overrides(merged)
+            set_provider_overrides({**prev, **spec.provider_overrides})
         return prev
 
     @staticmethod
@@ -553,34 +498,30 @@ class AgentRunner:
         """Restore previous provider overrides."""
         set_provider_overrides(prev)
 
+    # ── Memory helpers ───────────────────────────────────────────────
+
     async def _load_memory_context(self, namespace: str) -> str:
         """Load stored memories from the namespace (and related namespaces) as context."""
         all_records = []
         try:
-            # First check the primary (knowledge) namespace
             records = await registry.memory.list_memories(namespace=namespace, limit=20)
             all_records.extend(records)
 
-            # Also search session-scoped sub-namespaces for this agent in case
-            # memories were stored before the knowledge/session split.
-            # Use "namespace:" prefix to avoid matching other agents whose names
-            # share a prefix (e.g. "agent:bot" must not match "agent:bot-2").
             if not all_records:
                 try:
                     child_prefix = namespace + ":"
                     all_namespaces = await registry.memory.list_namespaces()
                     for ns in all_namespaces:
                         if ns.startswith(child_prefix):
-                            ns_records = await registry.memory.list_memories(namespace=ns, limit=20)
-                            all_records.extend(ns_records)
+                            all_records.extend(await registry.memory.list_memories(namespace=ns, limit=20))
                 except NotImplementedError:
-                    pass  # list_namespaces is optional for providers
+                    pass
                 except Exception:
                     logger.debug("Error searching child namespaces for %s", namespace, exc_info=True)
 
             if not all_records:
                 return ""
-            # Dedupe by key, preferring the most recently updated
+
             seen: dict[str, Any] = {}
             for r in all_records:
                 if r.key not in seen or r.updated_at > seen[r.key].updated_at:
@@ -619,6 +560,8 @@ class AgentRunner:
         except (NotImplementedError, Exception):
             logger.debug("Auto-memory store failed (provider may not support events)")
 
+    # ── Observability helpers ────────────────────────────────────────
+
     async def _trace_generation(
         self,
         trace_id: str,
@@ -627,7 +570,6 @@ class AgentRunner:
         messages: list[dict[str, Any]],
         response: dict[str, Any],
     ) -> None:
-        """Log a single LLM generation to observability."""
         try:
             await registry.observability.log_generation(
                 trace_id=trace_id,
@@ -650,7 +592,6 @@ class AgentRunner:
         turns_used: int,
         tools_called: list[str],
     ) -> None:
-        """Create overall conversation trace."""
         try:
             await registry.observability.ingest_trace(
                 {
@@ -669,24 +610,15 @@ class AgentRunner:
         except Exception:
             logger.debug("Failed to trace conversation for agent %s", spec.name, exc_info=True)
 
-    async def _ensure_session(
-        self,
-        tool_name: str,
-        tools: list[Any],
-        session_ctx: dict[str, str],
-    ) -> None:
-        """Lazily start code_interpreter / browser sessions on first use."""
-        # Determine which primitive the tool belongs to
+    # ── Session lifecycle ────────────────────────────────────────────
+
+    async def _ensure_session(self, tool_name: str, tools: list[Any], session_ctx: dict[str, str]) -> None:
         tool_def = next((t for t in tools if t.name == tool_name), None)
         if tool_def is None:
             return
-
         primitive = tool_def.primitive
-        if primitive not in ("code_interpreter", "browser"):
+        if primitive not in ("code_interpreter", "browser") or primitive in session_ctx:
             return
-        if primitive in session_ctx:
-            return
-
         try:
             logger.info("Starting %s session...", primitive)
             if primitive == "code_interpreter":
@@ -701,14 +633,11 @@ class AgentRunner:
             session_ctx[primitive] = uuid.uuid4().hex[:16]
 
     async def _cleanup_sessions(self, session_ctx: dict[str, str]) -> None:
-        """Stop any sessions that were started during the run."""
         for primitive, sid in session_ctx.items():
             try:
                 if primitive == "browser":
                     await registry.browser.stop_session(session_id=sid)
-                    logger.info("Stopped browser session: %s", sid)
                 elif primitive == "code_interpreter":
                     await registry.code_interpreter.stop_session(session_id=sid)
-                    logger.info("Stopped code_interpreter session: %s", sid)
             except (NotImplementedError, Exception):
                 logger.debug("Failed to stop %s session %s", primitive, sid)
