@@ -9,6 +9,7 @@ Three phases:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import uuid
 from collections.abc import AsyncIterator
@@ -425,7 +426,7 @@ class TeamRunner:
                 finally:
                     await _q.put(None)
 
-            tasks = [asyncio.create_task(_worker_wrapper(w)) for w in workers]
+            worker_tasks = [asyncio.create_task(_worker_wrapper(w)) for w in workers]
 
             finished = 0
             while finished < active_count:
@@ -435,10 +436,10 @@ class TeamRunner:
                     continue
                 yield event
 
-            gather_results = await asyncio.gather(*tasks, return_exceptions=True)
-            for i, r in enumerate(gather_results):
-                if isinstance(r, Exception):
-                    logger.error("Worker task %d raised: %s", i, r)
+            # All sentinels received — workers are done. Fire-and-forget cleanup.
+            for wt in worker_tasks:
+                if not wt.done():
+                    wt.cancel()
 
             logger.info("All workers finished, checking for re-planning...")
 
@@ -567,8 +568,18 @@ class TeamRunner:
                     await registry.tasks.update_task(team_run_id, t.id, status=TaskStatus.DONE, result=result)
                     logger.info("Team[%s] worker '%s' completed task '%s'", team_spec.name, worker_name, t.id)
                 except Exception as e:
-                    logger.error("Team[%s] worker '%s' failed task '%s': %s", team_spec.name, worker_name, t.id, e)
-                    await registry.tasks.update_task(team_run_id, t.id, status=TaskStatus.FAILED, result=str(e))
+                    logger.error(
+                        "Team[%s] worker '%s' failed task '%s': %s: %s",
+                        team_spec.name,
+                        worker_name,
+                        t.id,
+                        type(e).__name__,
+                        e,
+                    )
+                    try:
+                        await registry.tasks.update_task(team_run_id, t.id, status=TaskStatus.FAILED, result=str(e))
+                    except Exception:
+                        logger.error("Failed to mark task '%s' as failed", t.id)
 
             await asyncio.gather(*[_run_one(t) for t in claimed_tasks], return_exceptions=True)
 
@@ -626,23 +637,39 @@ class TeamRunner:
                     await registry.tasks.update_task(team_run_id, t.id, status=TaskStatus.DONE, result=result)
                     await _q.put({"type": "task_completed", "agent": worker_name, "task_id": t.id, "result": result})
                 except Exception as e:
-                    await registry.tasks.update_task(team_run_id, t.id, status=TaskStatus.FAILED, result=str(e))
+                    logger.error("Parallel task '%s' failed: %s: %s", t.id, type(e).__name__, e)
+                    try:
+                        await registry.tasks.update_task(team_run_id, t.id, status=TaskStatus.FAILED, result=str(e))
+                    except Exception:
+                        logger.error("Failed to mark task '%s' as failed", t.id)
                     await _q.put({"type": "task_failed", "agent": worker_name, "task_id": t.id, "error": str(e)})
 
             parallel_tasks = [asyncio.create_task(_run_one_stream(t)) for t in claimed_tasks]
 
             # Yield events as they arrive until all parallel tasks finish
-            done_count = 0
-            total = len(parallel_tasks)
-            while done_count < total:
-                # Check if any events are available
+            finished = set()
+            while len(finished) < len(parallel_tasks):
                 try:
                     event = await asyncio.wait_for(event_queue.get(), timeout=0.5)
                     yield event
                 except TimeoutError:
                     pass
-                # Count finished tasks
-                done_count = sum(1 for t in parallel_tasks if t.done())
+                # Check which tasks are done
+                for i, pt in enumerate(parallel_tasks):
+                    if i not in finished and pt.done():
+                        finished.add(i)
+                        # If the task raised an exception that wasn't caught, mark it failed
+                        exc = pt.exception() if not pt.cancelled() else None
+                        if exc is not None:
+                            task_obj = claimed_tasks[i]
+                            logger.error("Uncaught exception in parallel task '%s': %s", task_obj.id, exc)
+                            with contextlib.suppress(Exception):
+                                await registry.tasks.update_task(
+                                    team_run_id, task_obj.id, status=TaskStatus.FAILED, result=str(exc)
+                                )
+                            await event_queue.put(
+                                {"type": "task_failed", "agent": worker_name, "task_id": task_obj.id, "error": str(exc)}
+                            )
 
             # Drain remaining events
             while not event_queue.empty():
@@ -801,6 +828,7 @@ class TeamRunner:
             )
 
             # Use streaming agent helper, forwarding token events to the queue
+            logger.info("Task '%s' starting streaming execution for '%s'", task_id, title)
             content = ""
             async for event in self._run_agent_with_tools_stream(
                 worker_spec, task_message, tools, worker_name, max_turns=worker_spec.max_turns
@@ -821,6 +849,7 @@ class TeamRunner:
                     await event_queue.put(
                         {"type": "agent_tool", "agent": worker_name, "task_id": task_id, "name": event.get("name", "")}
                     )
+            logger.info("Task '%s' streaming execution complete, content_len=%d", task_id, len(content))
             return content
         finally:
             await self._stop_sessions(session_ctx)
