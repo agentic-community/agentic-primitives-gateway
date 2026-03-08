@@ -291,13 +291,16 @@ async def test_team_runner_full_run(tmp_path: Any) -> None:
     runner = TeamRunner()
     runner.set_stores(agent_store, team_store, agent_runner)
 
-    # Patch the registry to use our mocks
+    # Patch the registry in all modules that use it
     with (
         patch("agentic_primitives_gateway.agents.team_runner.registry") as mock_reg,
+        patch("agentic_primitives_gateway.agents.team_agent_loop.registry") as mock_loop_reg,
+        patch("agentic_primitives_gateway.agents.team_prompts.registry") as mock_prompts_reg,
         patch("agentic_primitives_gateway.agents.tools.handlers.registry") as mock_handlers_reg,
     ):
-        mock_reg.gateway = mock_gw
-        mock_reg.tasks = tasks_provider
+        for m in (mock_reg, mock_loop_reg, mock_prompts_reg):
+            m.gateway = mock_gw
+            m.tasks = tasks_provider
         mock_handlers_reg.tasks = tasks_provider
 
         result = await runner.run(team_spec, "Tell me about AI")
@@ -355,10 +358,13 @@ async def test_team_runner_stream(tmp_path: Any) -> None:
 
     with (
         patch("agentic_primitives_gateway.agents.team_runner.registry") as mock_reg,
+        patch("agentic_primitives_gateway.agents.team_agent_loop.registry") as mock_loop_reg,
+        patch("agentic_primitives_gateway.agents.team_prompts.registry") as mock_prompts_reg,
         patch("agentic_primitives_gateway.agents.tools.handlers.registry") as mock_handlers_reg,
     ):
-        mock_reg.gateway = mock_gw
-        mock_reg.tasks = tasks_provider
+        for m in (mock_reg, mock_loop_reg, mock_prompts_reg):
+            m.gateway = mock_gw
+            m.tasks = tasks_provider
         mock_handlers_reg.tasks = tasks_provider
 
         events = []
