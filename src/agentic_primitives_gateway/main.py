@@ -218,6 +218,12 @@ async def list_providers() -> dict:
     return registry.list_providers()
 
 
+@app.get("/api/v1/openapi", include_in_schema=False)
+async def get_openapi_spec() -> dict:
+    """Proxy for /openapi.json — accessible via /api/ prefix for dev proxy compatibility."""
+    return app.openapi()
+
+
 # ── Web UI (served from production build) ───────────────────────────
 
 _STATIC_DIR = Path(__file__).parent / "static"

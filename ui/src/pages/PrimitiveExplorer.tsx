@@ -241,7 +241,7 @@ export default function PrimitiveExplorer() {
 
   useEffect(() => {
     Promise.all([
-      fetch("/openapi.json").then((r) => r.json()),
+      fetch("/api/v1/openapi").then((r) => r.json()),
       fetch("/api/v1/providers").then((r) => r.json()),
     ])
       .then(([s, p]) => {
