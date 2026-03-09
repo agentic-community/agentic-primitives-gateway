@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from starlette.responses import Response

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from fastapi import APIRouter
 
 from agentic_primitives_gateway.models.enums import Primitive
