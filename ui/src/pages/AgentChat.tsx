@@ -147,12 +147,23 @@ export default function AgentChat() {
 
       case "tool_call_result":
         if (event.name.startsWith("call_")) {
+          // Static delegation: call_researcher → mark "researcher" done
           const agentName = event.name.replace("call_", "");
           setTurns((prev) =>
             updateTurn(prev, turnIndex, (t) => ({
               ...t,
               subAgents: t.subAgents.map((s) =>
                 s.agent === agentName ? { ...s, status: "done" } : s,
+              ),
+            })),
+          );
+        } else if (event.name === "delegate_to") {
+          // Dynamic delegation: mark any streaming sub-agents as done
+          setTurns((prev) =>
+            updateTurn(prev, turnIndex, (t) => ({
+              ...t,
+              subAgents: t.subAgents.map((s) =>
+                s.status !== "done" ? { ...s, status: "done" } : s,
               ),
             })),
           );

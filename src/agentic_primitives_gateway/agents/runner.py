@@ -402,12 +402,34 @@ class AgentRunner:
         queue: asyncio.Queue[dict[str, Any] | None],
         depth: int,
     ) -> str:
-        """Execute one tool, streaming sub-agent events to the queue if applicable."""
-        is_agent_tool = tool_name.startswith("call_") and any(
+        """Execute one tool, streaming sub-agent events to the queue if applicable.
+
+        Detects two forms of agent delegation:
+        - ``call_{name}`` tools from the static ``agents`` primitive
+        - ``delegate_to`` tool from ``agent_management`` (dynamic, for meta-agents)
+        Both get streamed sub-agent treatment so the UI shows live activity.
+        """
+        # Static delegation: call_researcher, call_coder, etc.
+        is_static_agent = tool_name.startswith("call_") and any(
             t.primitive == "agents" and t.name == tool_name for t in tools
         )
-        if is_agent_tool and self._store is not None:
+        if is_static_agent and self._store is not None:
             return await self._run_sub_agent_streaming(tool_name, tool_input, queue, depth)
+
+        # Dynamic delegation: delegate_to(agent_name, message) from agent_management
+        is_dynamic_delegate = tool_name == "delegate_to" and any(
+            t.primitive == "agent_management" and t.name == "delegate_to" for t in tools
+        )
+        if is_dynamic_delegate and self._store is not None:
+            agent_name = tool_input.get("agent_name", "")
+            if agent_name:
+                # Reuse _run_sub_agent_streaming with a synthetic tool name
+                return await self._run_sub_agent_streaming(
+                    f"call_{agent_name}",
+                    tool_input,
+                    queue,
+                    depth,
+                )
 
         try:
             return await execute_tool(tool_name, tool_input, tools)

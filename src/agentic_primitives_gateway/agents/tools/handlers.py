@@ -220,3 +220,111 @@ async def task_get_available(team_run_id: str, agent_name: str = "") -> str:
         return "No available tasks (all tasks are done, claimed, or have unmet dependencies)."
     lines = [f"- [{t.id}] p{t.priority}: {t.title}" for t in tasks]
     return "\n".join(lines)
+
+
+# ── Agent management ─────────────────────────────────────────────
+
+
+async def agent_create(
+    agent_store: Any,
+    name: str,
+    model: str,
+    system_prompt: str = "You are a helpful assistant.",
+    description: str = "",
+    primitives: str = "{}",
+) -> str:
+    """Create a new agent spec in the store.
+
+    ``primitives`` is a JSON string mapping primitive names to config,
+    e.g. '{"memory": {"enabled": true}, "browser": {"enabled": true}}'
+    """
+    from agentic_primitives_gateway.models.agents import AgentSpec, PrimitiveConfig
+
+    try:
+        prim_raw = json.loads(primitives) if primitives else {}
+    except json.JSONDecodeError:
+        return f"Error: invalid primitives JSON: {primitives[:200]}"
+
+    prim_configs = {}
+    for prim_name, prim_val in prim_raw.items():
+        if isinstance(prim_val, dict):
+            prim_configs[prim_name] = PrimitiveConfig(**prim_val)
+        elif isinstance(prim_val, bool) and prim_val:
+            prim_configs[prim_name] = PrimitiveConfig(enabled=True)
+
+    spec = AgentSpec(
+        name=name,
+        model=model,
+        system_prompt=system_prompt,
+        description=description,
+        primitives=prim_configs,
+    )
+
+    existing = await agent_store.get(name)
+    if existing is not None:
+        return f"Agent '{name}' already exists. Use a different name."
+
+    await agent_store.create(spec)
+    enabled = [p for p, c in prim_configs.items() if c.enabled]
+    return f"Created agent '{name}' with primitives: {enabled or ['none']}"
+
+
+async def agent_list(agent_store: Any) -> str:
+    """List all agents with their descriptions and capabilities."""
+    agents = await agent_store.list()
+    if not agents:
+        return "No agents exist."
+    lines = []
+    for a in agents:
+        prims = [p for p, c in a.primitives.items() if c.enabled]
+        lines.append(f"- {a.name}: {a.description or '(no description)'} [{', '.join(prims) or 'no primitives'}]")
+    return "\n".join(lines)
+
+
+async def agent_list_primitives() -> str:
+    """List available primitives and their tools so the agent knows what capabilities exist."""
+    from agentic_primitives_gateway.agents.tools.catalog import _TOOL_CATALOG
+
+    lines = ["Available primitives and tools:"]
+    for prim_name, tools in _TOOL_CATALOG.items():
+        tool_names = [t.name for t in tools]
+        lines.append(f"  {prim_name}: {', '.join(tool_names)}")
+    lines.append("  agents: delegate_to (call any agent by name)")
+    return "\n".join(lines)
+
+
+async def agent_delete(agent_store: Any, name: str) -> str:
+    """Delete an agent from the store."""
+    deleted = await agent_store.delete(name)
+    if not deleted:
+        return f"Agent '{name}' not found."
+    return f"Deleted agent '{name}'."
+
+
+async def agent_delegate_to(
+    agent_store: Any,
+    agent_runner: Any,
+    depth: int,
+    agent_name: str,
+    message: str,
+) -> str:
+    """Delegate a task to any agent by name. The agent runs its full tool-call loop."""
+    spec = await agent_store.get(agent_name)
+    if spec is None:
+        return f"Agent '{agent_name}' not found. Use agent_list to see available agents, or create_agent to make one."
+    try:
+        response = await agent_runner.run(spec, message=message, _depth=depth + 1)
+        parts = [response.response]
+        if response.artifacts:
+            parts.append("\n\n--- Tool Artifacts ---")
+            for artifact in response.artifacts:
+                parts.append(f"\n[{artifact.tool_name}]")
+                if artifact.tool_input:
+                    code = artifact.tool_input.get("code", "")
+                    if code:
+                        parts.append(f"```\n{code}\n```")
+                if artifact.output:
+                    parts.append(f"Output: {artifact.output}")
+        return "\n".join(parts)
+    except Exception as e:
+        return f"Agent '{agent_name}' failed: {type(e).__name__}: {e}"

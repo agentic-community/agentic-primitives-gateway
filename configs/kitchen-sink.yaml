@@ -67,7 +67,7 @@ providers:
           region: "${AWS_REGION:=us-east-1}"
 
   code_interpreter:
-    default: "noop"
+    default: "jupyter"
     backends:
       noop:
         backend: "agentic_primitives_gateway.primitives.code_interpreter.noop.NoopCodeInterpreterProvider"
@@ -259,6 +259,35 @@ agents:
         agents:
           enabled: true
           tools: ["researcher", "coder"]
+      hooks:
+        auto_memory: true
+        auto_trace: false
+    meta-agent:
+      model: "us.anthropic.claude-sonnet-4-20250514-v1:0"
+      description: "Creates specialized agents on the fly and delegates tasks to them"
+      system_prompt: |
+        You are a meta-agent. When you receive a task, you create specialized agents
+        tailored to the work and delegate to them.
+
+        Workflow:
+        1. Use list_primitives to see what capabilities are available
+        2. Use create_agent to build a specialist with the right primitives and a
+           focused system prompt. Only enable the primitives the agent actually needs.
+        3. Use delegate_to to send the agent its task
+        4. Use delete_agent to clean up ephemeral agents when done
+        5. Synthesize the results into a final response
+
+        Design each agent's system prompt to be specific and actionable. A web
+        scraper agent should know it scrapes web pages. A data analyst should know
+        it analyzes data. The more focused the prompt, the better the result.
+
+        You can create multiple agents and delegate to them in parallel when tasks
+        are independent.
+      primitives:
+        memory:
+          enabled: true
+        agent_management:
+          enabled: true
       hooks:
         auto_memory: true
         auto_trace: false

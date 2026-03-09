@@ -14,6 +14,11 @@ from functools import partial
 from typing import Any
 
 from agentic_primitives_gateway.agents.tools.handlers import (
+    agent_create,
+    agent_delegate_to,
+    agent_delete,
+    agent_list,
+    agent_list_primitives,
     browser_click,
     browser_evaluate_js,
     browser_navigate,
@@ -381,6 +386,82 @@ _TOOL_CATALOG: dict[str, list[ToolDefinition]] = {
             handler=task_get_available,
         ),
     ],
+    "agent_management": [
+        ToolDefinition(
+            name="create_agent",
+            description="Create a new specialized agent with a name, model, system prompt, and enabled primitives. Use list_primitives first to see what capabilities are available.",
+            primitive="agent_management",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Unique name for the new agent (e.g. 'hn-scraper', 'data-analyst').",
+                    },
+                    "model": {
+                        "type": "string",
+                        "description": "LLM model ID.",
+                        "default": "us.anthropic.claude-sonnet-4-20250514-v1:0",
+                    },
+                    "system_prompt": {
+                        "type": "string",
+                        "description": "System prompt that defines the agent's behavior and focus.",
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "Short description of what this agent does.",
+                        "default": "",
+                    },
+                    "primitives": {
+                        "type": "string",
+                        "description": 'JSON object of primitives to enable. Example: \'{"memory": {"enabled": true}, "browser": {"enabled": true}}\'',
+                        "default": "{}",
+                    },
+                },
+                "required": ["name", "system_prompt"],
+            },
+            handler=agent_create,
+        ),
+        ToolDefinition(
+            name="list_agents",
+            description="List all existing agents with their descriptions and enabled primitives.",
+            primitive="agent_management",
+            input_schema={"type": "object", "properties": {}, "required": []},
+            handler=agent_list,
+        ),
+        ToolDefinition(
+            name="list_primitives",
+            description="List all available primitives and their tools, so you know what capabilities to give a new agent.",
+            primitive="agent_management",
+            input_schema={"type": "object", "properties": {}, "required": []},
+            handler=agent_list_primitives,
+        ),
+        ToolDefinition(
+            name="delete_agent",
+            description="Delete an agent you previously created. Use for cleanup of ephemeral agents.",
+            primitive="agent_management",
+            input_schema={
+                "type": "object",
+                "properties": {"name": {"type": "string", "description": "Name of the agent to delete."}},
+                "required": ["name"],
+            },
+            handler=agent_delete,
+        ),
+        ToolDefinition(
+            name="delegate_to",
+            description="Delegate a task to any agent by name. The agent runs its full tool-call loop with its own primitives and returns the result. Works with both pre-existing and newly created agents.",
+            primitive="agent_management",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "agent_name": {"type": "string", "description": "Name of the agent to delegate to."},
+                    "message": {"type": "string", "description": "The message/task to send to the agent."},
+                },
+                "required": ["agent_name", "message"],
+            },
+            handler=agent_delegate_to,
+        ),
+    ],
 }
 
 
@@ -441,6 +522,19 @@ def build_tool_list(
                 sid = session_ctx.get(primitive_name, "")
                 if sid:
                     bound_handler = partial(tool.handler, session_id=sid)
+            elif primitive_name == "agent_management":
+                # Bind agent_store to create/list/delete, and store+runner+depth to delegate_to
+                if agent_store is not None:
+                    if tool.name in ("create_agent", "list_agents", "delete_agent"):
+                        bound_handler = partial(tool.handler, agent_store=agent_store)
+                    elif tool.name == "delegate_to" and agent_runner is not None:
+                        bound_handler = partial(
+                            tool.handler,
+                            agent_store=agent_store,
+                            agent_runner=agent_runner,
+                            depth=agent_depth,
+                        )
+                    # list_primitives needs no binding
             elif primitive_name == "task_board" and team_run_id:
                 bound_handler = partial(tool.handler, team_run_id=team_run_id)
                 # Also bind agent_name for tools that need it
