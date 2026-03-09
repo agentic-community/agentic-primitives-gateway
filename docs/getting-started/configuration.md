@@ -1,0 +1,171 @@
+# Configuration
+
+The gateway is configured via YAML files with environment variable expansion.
+
+## Config File Location
+
+Set via environment variable:
+
+```bash
+AGENTIC_PRIMITIVES_GATEWAY_CONFIG_FILE=configs/kitchen-sink.yaml
+```
+
+## Provider Configuration
+
+Each primitive has a `default` provider and a `backends` map:
+
+```yaml
+providers:
+  memory:
+    default: "in_memory"           # Used when no override is specified
+    backends:
+      in_memory:
+        backend: "agentic_primitives_gateway.primitives.memory.in_memory.InMemoryProvider"
+        config: {}
+      mem0:
+        backend: "agentic_primitives_gateway.primitives.memory.mem0_provider.Mem0MemoryProvider"
+        config:
+          vector_store:
+            provider: milvus
+            config:
+              collection_name: agentic_memories
+              url: "http://${MILVUS_HOST:=localhost}:${MILVUS_PORT:=19530}"
+          llm:
+            provider: aws_bedrock
+            config:
+              model: us.anthropic.claude-sonnet-4-20250514-v1:0
+          embedder:
+            provider: aws_bedrock
+            config:
+              model: amazon.titan-embed-text-v2:0
+```
+
+### Environment Variable Expansion
+
+Use `${VAR:=default}` syntax in YAML:
+
+```yaml
+region: "${AWS_REGION:=us-east-1}"
+url: "http://${MILVUS_HOST:=localhost}:${MILVUS_PORT:=19530}"
+```
+
+### Per-Request Provider Routing
+
+Clients can override which backend to use per-request via headers:
+
+```bash
+# Use mem0 for this specific request
+curl -H "X-Provider-Memory: mem0" http://localhost:8000/api/v1/memory/ns
+
+# Override all primitives
+curl -H "X-Provider: agentcore" http://localhost:8000/api/v1/memory/ns
+```
+
+## Credential Pass-Through
+
+### AWS Credentials
+
+```bash
+curl -H "X-AWS-Access-Key-Id: AKIA..." \
+     -H "X-AWS-Secret-Access-Key: ..." \
+     -H "X-AWS-Session-Token: ..." \
+     -H "X-AWS-Region: us-east-1" \
+     http://localhost:8000/api/v1/memory/ns
+```
+
+### Service Credentials
+
+Generic key-value credentials for any service:
+
+```bash
+curl -H "X-Cred-Langfuse-Public-Key: pk-..." \
+     -H "X-Cred-Langfuse-Secret-Key: sk-..." \
+     http://localhost:8000/api/v1/observability/traces
+```
+
+### Server Credential Fallback
+
+By default, the gateway requires client credentials. To allow the server's own credentials as a fallback:
+
+```yaml
+allow_server_credentials: true
+```
+
+## Agent Configuration
+
+```yaml
+agents:
+  store_path: "agents.json"
+  specs:
+    research-assistant:
+      model: "us.anthropic.claude-sonnet-4-20250514-v1:0"
+      description: "A research assistant with long-term memory"
+      system_prompt: |
+        You are a research assistant with long-term memory.
+      primitives:
+        memory:
+          enabled: true
+          namespace: "agent:{agent_name}"
+        browser:
+          enabled: true
+      provider_overrides:
+        browser: "selenium_grid"
+      hooks:
+        auto_memory: true
+        auto_trace: false
+      max_turns: 20
+      temperature: 1.0
+```
+
+Agents defined in config are seeded into the JSON store on startup. Config values **overwrite** existing agents with the same name.
+
+## Team Configuration
+
+```yaml
+teams:
+  store_path: "teams.json"
+  specs:
+    research-team:
+      description: "Researches and codes collaboratively"
+      planner: "planner"
+      synthesizer: "synthesizer"
+      workers: ["researcher", "coder"]
+      global_max_turns: 100
+      global_timeout_seconds: 300
+```
+
+See [Teams](../concepts/teams.md) for full documentation.
+
+## Policy Enforcement
+
+```yaml
+enforcement:
+  backend: "agentic_primitives_gateway.enforcement.cedar.CedarPolicyEnforcer"
+  config:
+    policy_refresh_interval: 30
+  seed_policies:
+    - description: "Allow all"
+      policy_body: 'permit(principal, action, resource);'
+```
+
+## Preset Configs
+
+| File | Description |
+|------|-------------|
+| `local.yaml` | All noop/in-memory providers, no external deps |
+| `kitchen-sink.yaml` | All providers registered, agent team example, Cedar enforcement |
+| `agentcore.yaml` | All primitives backed by AWS Bedrock AgentCore |
+| `milvus-langfuse.yaml` | mem0 + Milvus memory, Langfuse observability |
+| `agents-agentcore.yaml` | Agents with AgentCore backends |
+| `agents-mem0-langfuse.yaml` | Agents with mem0 memory, Langfuse tracing |
+| `agents-mixed.yaml` | Mixed providers per primitive |
+
+## Hot Reload
+
+The gateway watches the config file for changes (useful with Kubernetes ConfigMaps):
+
+```yaml
+# Config changes are detected automatically
+# Providers are swapped atomically under the GIL
+# Old providers are closed gracefully
+```

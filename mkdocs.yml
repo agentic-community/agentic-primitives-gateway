@@ -1,0 +1,71 @@
+site_name: Agentic Primitives Gateway
+site_description: Unified API for agent infrastructure primitives
+repo_url: https://github.com/your-org/agentic-primitives-gateway
+repo_name: agentic-primitives-gateway
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - content.code.copy
+    - content.tabs.link
+    - search.suggest
+    - toc.follow
+  icon:
+    repo: fontawesome/brands/github
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - tables
+  - attr_list
+  - def_list
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - Quickstart: getting-started/quickstart.md
+    - Configuration: getting-started/configuration.md
+  - Concepts:
+    - Architecture: concepts/architecture.md
+    - Primitives: concepts/primitives.md
+    - Agents: concepts/agents.md
+    - Agent Teams: concepts/teams.md
+    - Streaming: concepts/streaming.md
+    - Policy Enforcement: concepts/policy.md
+  - Guides:
+    - Adding a Provider: guides/adding-a-provider.md
+    - Agent-as-Tool Delegation: guides/agent-delegation.md
+    - Memory Namespaces: guides/memory-namespaces.md
+    - Using the Web UI: guides/web-ui.md
+  - API Reference:
+    - Overview: api/overview.md
+    - Memory: api/memory.md
+    - Agents: api/agents.md
+    - Teams: api/teams.md
+  - Examples:
+    - Overview: examples/index.md
