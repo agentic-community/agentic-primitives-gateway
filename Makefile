@@ -1,4 +1,4 @@
-.PHONY: lint format typecheck check test test-client install install-hooks pdf ui-install ui-dev ui-build ui-clean
+.PHONY: lint format typecheck check test test-client install install-hooks pdf ui-install ui-dev ui-build ui-clean docs docs-serve
 
 lint:
 	ruff check .
@@ -40,3 +40,9 @@ ui-build:
 
 ui-clean:
 	rm -rf src/agentic_primitives_gateway/static ui/node_modules
+
+docs:
+	mkdocs build
+
+docs-serve:
+	mkdocs serve
