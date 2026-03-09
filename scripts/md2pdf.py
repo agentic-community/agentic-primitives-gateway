@@ -124,7 +124,8 @@ li { margin: 3px 0; }
 
 def convert(md_path: str, pdf_path: str) -> None:
     """Convert a single Markdown file to PDF."""
-    md_text = Path(md_path).read_text()
+    md_abs = Path(md_path).resolve()
+    md_text = md_abs.read_text()
 
     html_body = markdown2.markdown(
         md_text,
@@ -138,28 +139,36 @@ def convert(md_path: str, pdf_path: str) -> None:
         ],
     )
 
+    # Write a temp HTML file next to the markdown so relative image paths resolve
+    tmp_html = md_abs.parent / f".{md_abs.stem}_tmp.html"
     full_html = f"""<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
-<style>{CSS}</style>
+<style>{CSS}
+img {{ max-width: 100%; border: 1px solid #d0d7de; border-radius: 6px; margin: 12px 0; }}
+</style>
 </head>
 <body>
 {html_body}
 </body>
 </html>"""
 
-    with sync_playwright() as p:
-        browser = p.chromium.launch()
-        page = browser.new_page()
-        page.set_content(full_html, wait_until="networkidle")
-        page.pdf(
-            path=pdf_path,
-            format="Letter",
-            margin={"top": "0.6in", "bottom": "0.6in", "left": "0.5in", "right": "0.5in"},
-            print_background=True,
-        )
-        browser.close()
+    try:
+        tmp_html.write_text(full_html)
+        with sync_playwright() as p:
+            browser = p.chromium.launch()
+            page = browser.new_page()
+            page.goto(f"file://{tmp_html}", wait_until="networkidle")
+            page.pdf(
+                path=pdf_path,
+                format="Letter",
+                margin={"top": "0.6in", "bottom": "0.6in", "left": "0.5in", "right": "0.5in"},
+                print_background=True,
+            )
+            browser.close()
+    finally:
+        tmp_html.unlink(missing_ok=True)
 
     print(f"  OK: {pdf_path}")
 
