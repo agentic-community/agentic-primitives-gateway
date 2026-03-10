@@ -50,7 +50,8 @@ test-server:
     paths:
       - .cache/pip
   script:
-    - pip install --cache-dir=.cache/pip -e ".[dev,agentcore,langfuse,mem0]" pytest-cov
+    - pip install --cache-dir=.cache/pip -e ".[dev,agentcore,langfuse,mem0,selenium,cedar,entra,keycloak,okta]" pytest-cov
+    - cd client && pip install --cache-dir=../.cache/pip -e ".[dev]" && cd ..
     - >
       pytest tests/ -v
       --cov=agentic_primitives_gateway
