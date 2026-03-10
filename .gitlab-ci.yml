@@ -14,6 +14,8 @@ lint:
   stage: lint
   variables:
     PRE_COMMIT_HOME: "$CI_PROJECT_DIR/.cache/pre-commit"
+    GIT_STRATEGY: clone
+    GIT_DEPTH: 0
   cache:
     key: pre-commit-$CI_COMMIT_REF_SLUG
     paths:

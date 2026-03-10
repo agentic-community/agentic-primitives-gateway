@@ -66,11 +66,11 @@ async def readiness() -> JSONResponse:
             if isinstance(result, BaseException):
                 logger.exception("Healthcheck task failed", exc_info=result)
                 continue
-            primitive, provider_name, key, healthy = result
+            prim, prov, key, healthy = result
             checks[key] = healthy
             PROVIDER_HEALTH.labels(
-                primitive=primitive,
-                provider=provider_name,
+                primitive=prim,
+                provider=prov,
             ).set(1 if healthy else 0)
     except Exception:
         logger.exception("Readiness check failed")
