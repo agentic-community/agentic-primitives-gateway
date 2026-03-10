@@ -22,7 +22,7 @@ lint:
       - .cache/pre-commit
       - .cache/pip
   before_script:
-    - apt-get update -qq && apt-get install -y -qq curl > /dev/null
+    - apt-get update -qq && apt-get install -y -qq curl git > /dev/null
   script:
     - pip install --cache-dir=.cache/pip pre-commit
     - curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/v3.93.4/scripts/install.sh | sh -s -- -b /usr/local/bin v3.93.4
