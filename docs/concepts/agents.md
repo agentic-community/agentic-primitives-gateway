@@ -109,6 +109,35 @@ coordinator:
 
 The coordinator LLM gets `call_researcher(message)` and `call_coder(message)` tools.
 
+## Self-Creating Agents (Meta-Agent)
+
+Instead of pre-defining sub-agents, a meta-agent can **create new agents at runtime** using the `agent_management` primitive:
+
+```yaml
+meta-agent:
+  primitives:
+    memory: { enabled: true }
+    agent_management: { enabled: true }
+```
+
+This provides five tools:
+
+| Tool | Description |
+|------|-------------|
+| `list_primitives()` | Discover available primitives and their tools |
+| `create_agent(name, model, system_prompt, primitives)` | Create a new specialist agent |
+| `delegate_to(agent_name, message)` | Run any agent by name (including just-created ones) |
+| `list_agents()` | List all existing agents |
+| `delete_agent(name)` | Clean up ephemeral agents |
+
+The meta-agent assesses the task, creates tailored specialists with focused system prompts and the right primitives, delegates work, then cleans up:
+
+![Meta-agent creating specialized agents, delegating tasks with live sub-agent streaming, and synthesizing results](../images/meta-agent-chat.png)
+
+`delegate_to` works with any agent — pre-existing or just created. Sub-agent streaming events are forwarded to the UI in real time, showing the same activity panels as static delegation.
+
+See [Agent Delegation Guide](../guides/agent-delegation.md) for more details.
+
 ## Memory Namespaces
 
 The `namespace` field controls where memories are stored. See [Memory Namespaces Guide](../guides/memory-namespaces.md).

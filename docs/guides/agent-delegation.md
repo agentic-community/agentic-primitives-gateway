@@ -106,11 +106,33 @@ Each agent uses its own `provider_overrides`. When the coordinator delegates to 
 
 This ensures each agent talks to its configured providers.
 
-## vs Agent Teams
+## Dynamic Delegation (Meta-Agent)
 
-| Feature | Agent Delegation | Agent Teams |
-|---------|-----------------|-------------|
-| Coordination | Direct (coordinator calls sub-agents) | Task board (planner decomposes) |
-| Parallelism | Coordinator decides what to parallelize | Workers claim tasks independently |
-| Replanning | Manual (coordinator decides next steps) | Automatic (replanner evaluates results) |
-| Best for | Simple 2-3 agent workflows | Complex multi-step collaboration |
+Instead of pre-defining sub-agents, use `agent_management` to create them at runtime:
+
+```yaml
+meta-agent:
+  primitives:
+    agent_management: { enabled: true }
+```
+
+The meta-agent gets `create_agent`, `delegate_to`, `delete_agent`, `list_agents`, and `list_primitives` tools. It can:
+
+1. Discover available primitives via `list_primitives`
+2. Create a specialist with `create_agent(name, system_prompt, primitives='{"browser": {"enabled": true}}')`
+3. Delegate via `delegate_to(agent_name, message)` — works with just-created agents
+4. Clean up with `delete_agent`
+
+![Meta-agent creating and delegating to ephemeral agents with live streaming](../images/meta-agent-chat.png)
+
+`delegate_to` provides the same streaming sub-agent experience in the UI as static `call_*` delegation — activity panels, tool badges, and green completion indicators.
+
+## Comparison
+
+| Feature | Static Delegation | Dynamic (Meta-Agent) | Agent Teams |
+|---------|------------------|---------------------|-------------|
+| Sub-agents | Pre-defined in config | Created at runtime | Pre-defined workers |
+| Coordination | Coordinator calls sub-agents | Meta-agent designs + delegates | Task board + planner |
+| Parallelism | Coordinator decides | Meta-agent decides | Workers claim independently |
+| Replanning | Manual | Manual | Automatic (continuous) |
+| Best for | Known 2-3 agent workflows | Unknown/novel tasks | Complex multi-step collaboration |

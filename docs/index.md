@@ -14,14 +14,16 @@ Agent (any framework)  -->  Gateway REST API  -->  Backend Provider
 
 ## Key Features
 
-- **9 primitives** with multiple backend providers each
+- **10 primitives** with multiple backend providers each
 - **Declarative agents** with server-side LLM tool-call loops
+- **Agent-as-tool delegation** — agents call other agents through the same tool interface
+- **Self-creating agents** — a meta-agent creates specialist agents at runtime, delegates work, and cleans up
 - **Agent teams** with task boards, continuous replanning, and parallel execution
 - **Token streaming** via SSE for real-time UI updates
 - **Policy enforcement** via Cedar with auto-discovered actions
 - **Per-request provider routing** via headers (`X-Provider-Memory: mem0`)
 - **Credential pass-through** preserving caller identity
-- **Web UI** for agent management, chat, and API exploration
+- **Web UI** for agent management, streaming chat, sub-agent activity, and API exploration
 - **Hot-reload** config via Kubernetes ConfigMap watcher
 
 ## Quick Links

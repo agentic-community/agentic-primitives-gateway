@@ -101,7 +101,9 @@ All nine primitives are fully implemented and wired to their respective provider
 
 **Agents** sit above the primitives as a declarative orchestration layer. An agent is defined by a spec (system prompt, model, enabled primitives/tools, hooks) and the gateway runs the LLM tool-call loop internally. No external agent framework needed. Key agent capabilities:
 - **Token streaming** — `POST /api/v1/agents/{name}/chat/stream` returns SSE events for real-time token delivery
-- **Agent teams** — Agents can delegate to other agents as tools (agent-as-tool pattern with depth limiting)
+- **Agent-as-tool delegation** — Agents can call other agents as tools (coordinator pattern with depth limiting)
+- **Self-creating agents** — A meta-agent can create new specialist agents at runtime via `agent_management` primitive, delegate to them, and clean up when done
+- **Agent teams** — Multi-agent collaboration with shared task board, continuous replanning, and parallel execution
 - **Parallel tool execution** — Multiple tool calls in a single turn run concurrently via `asyncio.gather`
 - **Tool artifacts** — Code execution outputs and sub-agent results are captured and returned to the coordinator
 - **Memory persistence** — Agent-scoped knowledge namespace persists across sessions; conversation history is session-scoped
