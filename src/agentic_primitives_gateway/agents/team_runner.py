@@ -340,7 +340,9 @@ class TeamRunner:
             replan_queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
             new_count = await self._run_replanner_stream(team_spec, team_run_id, message, replan_queue)
             while not replan_queue.empty():
-                yield await replan_queue.get()
+                event = await replan_queue.get()
+                if event is not None:
+                    yield event
 
             logger.info("Re-planner created %d new tasks", new_count)
             if new_count == 0:
@@ -430,7 +432,8 @@ class TeamRunner:
             while len(finished_ids) < len(parallel_tasks):
                 try:
                     event = await asyncio.wait_for(event_queue.get(), timeout=0.5)
-                    yield event
+                    if event is not None:
+                        yield event
                 except TimeoutError:
                     pass
                 for i, pt in enumerate(parallel_tasks):
@@ -450,7 +453,9 @@ class TeamRunner:
 
             # Drain remaining events
             while not event_queue.empty():
-                yield await event_queue.get()
+                event = await event_queue.get()
+                if event is not None:
+                    yield event
             await asyncio.gather(*parallel_tasks, return_exceptions=True)
 
         yield {"type": "worker_done", "agent": worker_name}

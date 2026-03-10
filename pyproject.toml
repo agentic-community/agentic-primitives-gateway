@@ -128,5 +128,8 @@ module = [
     "daytona_sdk.*",
     "websockets.*",
     "cedarpy.*",
+    "keycloak.*",
+    "msal.*",
+    "requests.*",
 ]
 ignore_missing_imports = true

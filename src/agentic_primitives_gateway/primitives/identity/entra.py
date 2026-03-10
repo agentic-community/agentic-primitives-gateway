@@ -4,7 +4,7 @@ import logging
 import uuid
 from typing import Any
 
-import msal  # type: ignore[import-untyped]
+import msal
 import requests
 
 from agentic_primitives_gateway.context import get_service_credentials_or_defaults

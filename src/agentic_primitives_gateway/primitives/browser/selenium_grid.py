@@ -152,7 +152,8 @@ class SeleniumGridBrowserProvider(BrowserProvider, SyncRunnerMixin):
 
         def _get_text() -> str:
             body = driver.find_element(By.TAG_NAME, "body")
-            return body.text
+            result: str = body.text
+            return result
 
         result: str = await self._run_sync(_get_text)
         return result

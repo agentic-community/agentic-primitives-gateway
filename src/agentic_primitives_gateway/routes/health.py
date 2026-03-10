@@ -63,7 +63,7 @@ async def readiness() -> JSONResponse:
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         for result in results:
-            if isinstance(result, Exception):
+            if isinstance(result, BaseException):
                 logger.exception("Healthcheck task failed", exc_info=result)
                 continue
             primitive, provider_name, key, healthy = result

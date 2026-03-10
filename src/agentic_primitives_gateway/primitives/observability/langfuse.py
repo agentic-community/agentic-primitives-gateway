@@ -105,7 +105,7 @@ class LangfuseObservabilityProvider(SyncRunnerMixin, ObservabilityProvider):
                 as_type="span",
                 name=trace.get("name", trace.get("trace_id", "trace")),
             ) as root:
-                root.update_trace(
+                root.update_trace(  # type: ignore[attr-defined]
                     name=trace.get("name"),
                     user_id=trace.get("user_id"),
                     session_id=trace.get("session_id"),
@@ -234,7 +234,7 @@ class LangfuseObservabilityProvider(SyncRunnerMixin, ObservabilityProvider):
             if level:
                 lf_level = _LEVEL_MAP.get(level.lower(), "DEFAULT")  # type: ignore[call-overload]
                 kwargs["level"] = lf_level
-            gen = client.start_generation(**kwargs)
+            gen = client.start_generation(**kwargs)  # type: ignore[attr-defined]
             gen.end()
             client.flush()
             return {
@@ -289,7 +289,7 @@ class LangfuseObservabilityProvider(SyncRunnerMixin, ObservabilityProvider):
                 name="update",
                 as_type="span",
             ):
-                client.update_current_trace(**update_kwargs)
+                client.update_current_trace(**update_kwargs)  # type: ignore[attr-defined]
             client.flush()
             return {"trace_id": trace_id, "status": "updated"}
 
