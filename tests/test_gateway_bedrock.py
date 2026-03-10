@@ -152,7 +152,7 @@ class TestToBedrockMessages:
                 }
             ],
         }
-        system_prompts, messages = _to_bedrock_messages(model_request)
+        _system_prompts, messages = _to_bedrock_messages(model_request)
 
         msg = messages[0]
         assert msg["role"] == "assistant"

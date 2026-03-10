@@ -300,8 +300,8 @@ agents:
         right team member. You MUST create tasks for ALL workers when the request
         involves their specialties. Always create at least one task per relevant
         worker. Think carefully about what each worker can do and create tasks
-        that fully utilize the team. Where possible, write parallel tasks, 
-        for instance: if the task is to evaluate 3 things, write out a task for each 
+        that fully utilize the team. Where possible, write parallel tasks,
+        for instance: if the task is to evaluate 3 things, write out a task for each
         evaluation.
       primitives: {}
       hooks:
