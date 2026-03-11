@@ -144,7 +144,9 @@ def _handle_agents(method: str, path: str, request: httpx.Request) -> httpx.Resp
             tools = []
             for prim, cfg in agent.get("primitives", {}).items():
                 if cfg.get("enabled", True):
-                    tools.append({"name": f"{prim}_tool", "description": "mock", "primitive": prim, "provider": "default"})
+                    tools.append(
+                        {"name": f"{prim}_tool", "description": "mock", "primitive": prim, "provider": "default"}
+                    )
             return httpx.Response(200, json={"agent_name": name, "tools": tools})
 
         # GET /{name}/memory
@@ -153,12 +155,15 @@ def _handle_agents(method: str, path: str, request: httpx.Request) -> httpx.Resp
             if agent is None:
                 return httpx.Response(404, json={"detail": f"Agent '{name}' not found"})
             mem = agent.get("primitives", {}).get("memory", {})
-            return httpx.Response(200, json={
-                "agent_name": name,
-                "memory_enabled": mem.get("enabled", False),
-                "namespace": mem.get("namespace", ""),
-                "stores": [],
-            })
+            return httpx.Response(
+                200,
+                json={
+                    "agent_name": name,
+                    "memory_enabled": mem.get("enabled", False),
+                    "namespace": mem.get("namespace", ""),
+                    "stores": [],
+                },
+            )
 
         # GET /{name}/sessions
         if len(parts) == 2 and parts[1] == "sessions" and method == "GET":
@@ -251,7 +256,17 @@ def _handle_teams(method: str, path: str, request: httpx.Request) -> httpx.Respo
             if len(parts) == 4 and parts[3] == "events" and method == "GET":
                 return httpx.Response(200, json={"team_run_id": run_id, "status": "unknown", "events": []})
             if len(parts) == 3 and method == "GET":
-                return httpx.Response(200, json={"team_run_id": run_id, "team_name": name, "status": "idle", "tasks": [], "tasks_created": 0, "tasks_completed": 0})
+                return httpx.Response(
+                    200,
+                    json={
+                        "team_run_id": run_id,
+                        "team_name": name,
+                        "status": "idle",
+                        "tasks": [],
+                        "tasks_created": 0,
+                        "tasks_completed": 0,
+                    },
+                )
             if len(parts) == 3 and method == "DELETE":
                 return httpx.Response(200, json={"status": "deleted"})
 

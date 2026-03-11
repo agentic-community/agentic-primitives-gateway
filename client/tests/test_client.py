@@ -478,7 +478,13 @@ class TestClientAgentSessions:
     @pytest.mark.asyncio
     async def test_get_agent_memory(self, make_client) -> None:
         async with make_client() as client:
-            await client.create_agent({"name": "mem-agent", "model": "m", "primitives": {"memory": {"enabled": True, "namespace": "agent:{agent_name}"}}})
+            await client.create_agent(
+                {
+                    "name": "mem-agent",
+                    "model": "m",
+                    "primitives": {"memory": {"enabled": True, "namespace": "agent:{agent_name}"}},
+                }
+            )
             result = await client.get_agent_memory("mem-agent")
             assert result["agent_name"] == "mem-agent"
             assert result["memory_enabled"] is True
