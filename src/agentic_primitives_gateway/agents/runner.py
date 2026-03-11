@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import uuid
 from collections.abc import AsyncIterator
@@ -57,10 +58,14 @@ class AgentRunner:
 
     def __init__(self) -> None:
         self._store: AgentStore | None = None
+        self._session_registry: Any | None = None
 
     def set_store(self, store: AgentStore) -> None:
         """Set the agent store reference (called during app lifespan)."""
         self._store = store
+
+    def set_session_registry(self, registry: Any) -> None:
+        self._session_registry = registry
 
     # ── Public entry points ──────────────────────────────────────────
 
@@ -698,6 +703,8 @@ class AgentRunner:
                 result = await registry.browser.start_session()
                 session_ctx["browser"] = result.get("session_id", uuid.uuid4().hex[:16])
             logger.info("Started %s session: %s", primitive, session_ctx[primitive])
+            if self._session_registry:
+                await self._session_registry.register(primitive, session_ctx[primitive])
         except (NotImplementedError, Exception):
             logger.warning("Failed to start %s session", primitive, exc_info=True)
             session_ctx[primitive] = uuid.uuid4().hex[:16]
@@ -711,3 +718,6 @@ class AgentRunner:
                     await registry.code_interpreter.stop_session(session_id=sid)
             except (NotImplementedError, Exception):
                 logger.debug("Failed to stop %s session %s", primitive, sid)
+            if self._session_registry:
+                with contextlib.suppress(Exception):
+                    await self._session_registry.unregister(primitive, sid)

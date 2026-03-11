@@ -28,15 +28,38 @@ interface Turn {
 
 const MEMORY_TOOLS = new Set(["remember", "forget", "recall", "search_memory", "list_memories"]);
 
-const SESSION_STORAGE_PREFIX = "agent-session:";
+const SESSIONS_KEY_PREFIX = "agent-sessions:";
+
+function getSessions(agentName: string): string[] {
+  try {
+    return JSON.parse(localStorage.getItem(SESSIONS_KEY_PREFIX + agentName) || "[]");
+  } catch {
+    return [];
+  }
+}
+
+function saveSessions(agentName: string, sessions: string[]) {
+  localStorage.setItem(SESSIONS_KEY_PREFIX + agentName, JSON.stringify(sessions));
+}
 
 function getOrCreateSessionId(agentName: string): [string, boolean] {
-  const key = SESSION_STORAGE_PREFIX + agentName;
-  const existing = localStorage.getItem(key);
-  if (existing) return [existing, true];
+  const sessions = getSessions(agentName);
+  if (sessions.length > 0) return [sessions[0], true];
   const id = crypto.randomUUID();
-  localStorage.setItem(key, id);
+  saveSessions(agentName, [id]);
   return [id, false];
+}
+
+function addSession(agentName: string, sessionId: string) {
+  const sessions = getSessions(agentName);
+  if (!sessions.includes(sessionId)) {
+    saveSessions(agentName, [sessionId, ...sessions]);
+  }
+}
+
+function removeSession(agentName: string, sessionId: string) {
+  const sessions = getSessions(agentName).filter((s) => s !== sessionId);
+  saveSessions(agentName, sessions);
 }
 
 /** Update a specific turn in the turns array by index. */
@@ -77,7 +100,7 @@ export default function AgentChat() {
   // Sync session_id into URL and localStorage (once on mount)
   useEffect(() => {
     if (!name) return;
-    localStorage.setItem(SESSION_STORAGE_PREFIX + name, sessionId);
+    addSession(name, sessionId);
     const url = new URL(window.location.href);
     if (url.searchParams.get("session_id") !== sessionId) {
       url.searchParams.set("session_id", sessionId);
@@ -218,10 +241,31 @@ export default function AgentChat() {
   const handleNewSession = useCallback(() => {
     if (!name) return;
     const newId = crypto.randomUUID();
-    localStorage.setItem(SESSION_STORAGE_PREFIX + name, newId);
-    // Navigate to same page with new session — triggers full remount
+    addSession(name, newId);
     window.location.href = `/ui/agents/${name}/chat?session_id=${newId}`;
   }, [name]);
+
+  const handleSwitchSession = useCallback((sid: string) => {
+    if (!name) return;
+    window.location.href = `/ui/agents/${name}/chat?session_id=${sid}`;
+  }, [name]);
+
+  const handleDeleteSession = useCallback(async (sid: string) => {
+    if (!name) return;
+    removeSession(name, sid);
+    try { await api.deleteSession(name, sid); } catch { /* ignore */ }
+    // If deleting current session, switch to another or create new
+    if (sid === sessionId) {
+      const remaining = getSessions(name);
+      if (remaining.length > 0) {
+        window.location.href = `/ui/agents/${name}/chat?session_id=${remaining[0]}`;
+      } else {
+        const newId = crypto.randomUUID();
+        addSession(name, newId);
+        window.location.href = `/ui/agents/${name}/chat?session_id=${newId}`;
+      }
+    }
+  }, [name, sessionId]);
 
   function handleStreamEvent(event: StreamEvent, turnIndex: number) {
     switch (event.type) {
@@ -343,13 +387,7 @@ export default function AgentChat() {
           <div className="flex items-center gap-3 mt-1 text-[11px] text-gray-500 dark:text-gray-400">
             <span className="font-mono">{agent.model}</span>
             <span>|</span>
-            <button
-              className="font-mono hover:text-gray-700 dark:hover:text-gray-300"
-              aria-label="Copy session ID"
-              onClick={() => navigator.clipboard.writeText(sessionId)}
-            >
-              session: {sessionId.slice(0, 8)}...
-            </button>
+            <span className="font-mono">{sessionId.slice(0, 8)}...</span>
             <span>|</span>
             <span>turns: {turnsUsed}</span>
             <span>|</span>
@@ -357,8 +395,29 @@ export default function AgentChat() {
               className="hover:text-gray-700 dark:hover:text-gray-300"
               onClick={handleNewSession}
             >
-              new session
+              + new
             </button>
+            {getSessions(name!).length > 1 && (
+              <>
+                <span>|</span>
+                {getSessions(name!).filter((s) => s !== sessionId).map((s) => (
+                  <span key={s} className="inline-flex items-center gap-0.5">
+                    <button
+                      className="font-mono hover:text-indigo-500"
+                      onClick={() => handleSwitchSession(s)}
+                    >
+                      {s.slice(0, 6)}
+                    </button>
+                    <button
+                      className="text-red-400 hover:text-red-600"
+                      onClick={() => handleDeleteSession(s)}
+                    >
+                      x
+                    </button>
+                  </span>
+                ))}
+              </>
+            )}
           </div>
         </div>
       </div>

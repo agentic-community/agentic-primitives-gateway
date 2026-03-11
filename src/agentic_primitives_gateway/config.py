@@ -211,7 +211,9 @@ class EnforcementConfig(BaseModel):
 class AgentsConfig(BaseModel):
     """Configuration for the agents subsystem."""
 
-    store_path: str = "agents.json"
+    store_backend: str = "file"  # "file" or "redis"
+    store_path: str = "agents.json"  # for file backend
+    redis_url: str = "redis://localhost:6379/0"  # for redis backend
     default_model: str = "us.anthropic.claude-sonnet-4-20250514-v1:0"
     max_turns: int = 20
     specs: dict[str, dict[str, Any]] = Field(default_factory=dict)
@@ -220,7 +222,9 @@ class AgentsConfig(BaseModel):
 class TeamsConfig(BaseModel):
     """Configuration for the teams subsystem."""
 
-    store_path: str = "teams.json"
+    store_backend: str = "file"  # "file" or "redis"
+    store_path: str = "teams.json"  # for file backend
+    redis_url: str = "redis://localhost:6379/0"  # for redis backend
     specs: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
 

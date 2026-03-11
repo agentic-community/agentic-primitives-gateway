@@ -62,6 +62,7 @@ class TeamRunner:
         self._agent_store: AgentStore | None = None
         self._team_store: TeamStore | None = None
         self._agent_runner: AgentRunner | None = None
+        self._session_registry: Any | None = None
 
     def set_stores(
         self,
@@ -72,6 +73,9 @@ class TeamRunner:
         self._agent_store = agent_store
         self._team_store = team_store
         self._agent_runner = agent_runner
+
+    def set_session_registry(self, registry: Any) -> None:
+        self._session_registry = registry
 
     # ── Public entry points ──────────────────────────────────────────
 
@@ -610,8 +614,7 @@ class TeamRunner:
     def _restore_overrides(prev: dict[str, str]) -> None:
         set_provider_overrides(prev)
 
-    @staticmethod
-    async def _start_sessions(worker_spec: AgentSpec) -> dict[str, str]:
+    async def _start_sessions(self, worker_spec: AgentSpec) -> dict[str, str]:
         """Start browser/code_interpreter sessions if the worker uses them."""
         session_ctx: dict[str, str] = {}
         for prim_name, config in worker_spec.primitives.items():
@@ -627,19 +630,23 @@ class TeamRunner:
                 else:
                     continue
                 logger.info("Started %s session: %s", prim_name, session_ctx[prim_name])
+                if self._session_registry:
+                    await self._session_registry.register(prim_name, session_ctx[prim_name])
             except Exception:
                 logger.warning("Failed to start %s session", prim_name, exc_info=True)
                 session_ctx[prim_name] = uuid.uuid4().hex[:16]
         return session_ctx
 
-    @staticmethod
-    async def _stop_sessions(session_ctx: dict[str, str]) -> None:
+    async def _stop_sessions(self, session_ctx: dict[str, str]) -> None:
         for prim_name, sid in session_ctx.items():
             with contextlib.suppress(Exception):
                 if prim_name == "browser":
                     await registry.browser.stop_session(session_id=sid)
                 elif prim_name == "code_interpreter":
                     await registry.code_interpreter.stop_session(session_id=sid)
+            if self._session_registry:
+                with contextlib.suppress(Exception):
+                    await self._session_registry.unregister(prim_name, sid)
 
     def _build_worker_tools(
         self, worker_spec: AgentSpec, team_spec: TeamSpec, team_run_id: str, session_ctx: dict[str, str]

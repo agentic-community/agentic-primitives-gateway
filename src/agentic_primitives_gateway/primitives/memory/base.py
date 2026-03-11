@@ -101,6 +101,9 @@ class MemoryProvider(ABC):
     async def list_sessions(self, actor_id: str) -> list[dict[str, Any]]:
         raise NotImplementedError
 
+    async def delete_session(self, actor_id: str, session_id: str) -> None:
+        raise NotImplementedError
+
     # ── Branch management (optional) ─────────────────────────────────
 
     async def fork_conversation(

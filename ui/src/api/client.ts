@@ -124,10 +124,16 @@ export const api = {
     request<ToolCatalogResponse>("/api/v1/agents/tool-catalog"),
   chatStream: (name: string, data: ChatRequest, signal?: AbortSignal): ReadableStream<string> =>
     sseStream(`/api/v1/agents/${name}/chat/stream`, JSON.stringify(data), signal),
+  listSessions: (name: string) =>
+    request<{ agent_name: string; sessions: Array<{ session_id: string; [key: string]: unknown }> }>(
+      `/api/v1/agents/${name}/sessions`,
+    ),
   getSessionHistory: (name: string, sessionId: string) =>
     request<SessionHistoryResponse>(`/api/v1/agents/${name}/sessions/${sessionId}`),
   getSessionStatus: (name: string, sessionId: string) =>
     request<{ status: string }>(`/api/v1/agents/${name}/sessions/${sessionId}/status`),
+  deleteSession: (name: string, sessionId: string) =>
+    request<{ status: string }>(`/api/v1/agents/${name}/sessions/${sessionId}`, { method: "DELETE" }),
   getAgentMemory: (name: string, sessionId?: string) => {
     const params = sessionId ? `?session_id=${sessionId}` : "";
     return request<AgentMemoryResponse>(
@@ -158,6 +164,12 @@ export const api = {
       method: "POST",
       body: JSON.stringify(data),
     }),
+  listTeamRuns: (name: string) =>
+    request<{ team_name: string; runs: Array<{ team_run_id: string; status: string }> }>(
+      `/api/v1/teams/${name}/runs`,
+    ),
+  deleteTeamRun: (name: string, runId: string) =>
+    request<{ status: string }>(`/api/v1/teams/${name}/runs/${runId}`, { method: "DELETE" }),
   getTeamRunStatus: (name: string, runId: string) =>
     request<{ status: string }>(`/api/v1/teams/${name}/runs/${runId}/status`),
   getTeamRun: (name: string, runId: string) =>

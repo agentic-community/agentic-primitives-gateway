@@ -98,7 +98,30 @@ function TaskCard({ task }: { task: TaskInfo }) {
   );
 }
 
-const RUN_STORAGE_PREFIX = "team-run:";
+const RUNS_KEY_PREFIX = "team-runs:";
+
+function getRuns(teamName: string): string[] {
+  try {
+    return JSON.parse(localStorage.getItem(RUNS_KEY_PREFIX + teamName) || "[]");
+  } catch {
+    return [];
+  }
+}
+
+function saveRuns(teamName: string, runs: string[]) {
+  localStorage.setItem(RUNS_KEY_PREFIX + teamName, JSON.stringify(runs));
+}
+
+function addRun(teamName: string, runId: string) {
+  const runs = getRuns(teamName);
+  if (!runs.includes(runId)) {
+    saveRuns(teamName, [runId, ...runs]);
+  }
+}
+
+function removeRun(teamName: string, runId: string) {
+  saveRuns(teamName, getRuns(teamName).filter((r) => r !== runId));
+}
 
 export default function TeamRun() {
   const { name } = useParams<{ name: string }>();
@@ -111,7 +134,8 @@ export default function TeamRun() {
   const [teamRunId, setTeamRunId] = useState<string>(() => {
     if (!name) return "";
     const params = new URLSearchParams(window.location.search);
-    return params.get("run_id") || localStorage.getItem(RUN_STORAGE_PREFIX + name) || "";
+    // Only restore a run if explicitly specified in URL
+    return params.get("run_id") || "";
   });
   const [phase, setPhase] = useState<string>("");
   const [tasks, setTasks] = useState<TaskInfo[]>([]);
@@ -122,6 +146,7 @@ export default function TeamRun() {
   const logRef = useAutoScroll([activityLog]);
   const abortRef = useRef<AbortController | null>(null);
   const bgCheckRef = useRef(false);
+  const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (!name) return;
@@ -222,8 +247,6 @@ export default function TeamRun() {
       window.history.replaceState(null, "", url.toString());
     }
 
-    let stopped = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
     const POLL_INTERVAL = 3000;
     const MAX_POLLS = 30;
 
@@ -239,33 +262,59 @@ export default function TeamRun() {
         }
         if (data.status === "running") {
           setPolling(true);
-          if (!stopped) timer = setTimeout(() => pollEvents(attempt + 1), POLL_INTERVAL);
+          pollTimerRef.current = setTimeout(() => pollEvents(attempt + 1), POLL_INTERVAL);
           return;
         }
       } catch { /* ignore */ }
       setPolling(false);
     }
 
-    // Fetch events and replay them to reconstruct full UI state
     api.getTeamRunEvents(name, teamRunId).then((data) => {
       if (data.events && data.events.length > 0) {
         replayEvents(data.events);
       }
       if (data.status === "running") {
         setPolling(true);
-        if (!stopped) timer = setTimeout(() => pollEvents(0), POLL_INTERVAL);
+        pollTimerRef.current = setTimeout(() => pollEvents(0), POLL_INTERVAL);
       }
     }).catch(() => {});
 
     return () => {
-      stopped = true;
-      if (timer) clearTimeout(timer);
+      if (pollTimerRef.current) {
+        clearTimeout(pollTimerRef.current);
+        pollTimerRef.current = null;
+      }
     };
   }, [name, teamRunId, running, replayEvents]);
 
   const addLog = useCallback((msg: string) => {
     setActivityLog((prev) => [...prev, msg]);
   }, []);
+
+  const handleNewRun = useCallback(() => {
+    if (!name) return;
+    // Navigate without run_id to start fresh
+    window.location.href = `/ui/teams/${name}/run`;
+  }, [name]);
+
+  const handleSwitchRun = useCallback((runId: string) => {
+    if (!name) return;
+    window.location.href = `/ui/teams/${name}/run?run_id=${runId}`;
+  }, [name]);
+
+  const handleDeleteRun = useCallback(async (runId: string) => {
+    if (!name) return;
+    removeRun(name, runId);
+    try { await api.deleteTeamRun(name, runId); } catch { /* ignore */ }
+    if (runId === teamRunId) {
+      const remaining = getRuns(name);
+      if (remaining.length > 0) {
+        window.location.href = `/ui/teams/${name}/run?run_id=${remaining[0]}`;
+      } else {
+        window.location.href = `/ui/teams/${name}/run`;
+      }
+    }
+  }, [name, teamRunId]);
 
   const handleSend = useCallback(
     async (message: string) => {
@@ -303,7 +352,7 @@ export default function TeamRun() {
             switch (event.type) {
               case "team_start":
                 setTeamRunId(event.team_run_id);
-                localStorage.setItem(RUN_STORAGE_PREFIX + name, event.team_run_id);
+                addRun(name, event.team_run_id);
                 {
                   const url = new URL(window.location.href);
                   url.searchParams.set("run_id", event.team_run_id);
@@ -420,12 +469,7 @@ export default function TeamRun() {
             {teamRunId && (
               <>
                 <span>|</span>
-                <button
-                  className="font-mono hover:text-gray-700 dark:hover:text-gray-300"
-                  onClick={() => navigator.clipboard.writeText(teamRunId)}
-                >
-                  run: {teamRunId.slice(0, 8)}...
-                </button>
+                <span className="font-mono">{teamRunId.slice(0, 8)}...</span>
               </>
             )}
             {phase && (
@@ -434,6 +478,34 @@ export default function TeamRun() {
                 <span className={`font-medium ${phase === "done" ? "text-green-500" : "text-indigo-500"}`}>
                   {phaseLabels[phase] ?? phase}
                 </span>
+              </>
+            )}
+            <span>|</span>
+            <button
+              className="hover:text-gray-700 dark:hover:text-gray-300"
+              onClick={handleNewRun}
+            >
+              + new run
+            </button>
+            {getRuns(name!).length > 1 && (
+              <>
+                <span>|</span>
+                {getRuns(name!).filter((r) => r !== teamRunId).map((r) => (
+                  <span key={r} className="inline-flex items-center gap-0.5">
+                    <button
+                      className="font-mono hover:text-indigo-500"
+                      onClick={() => handleSwitchRun(r)}
+                    >
+                      {r.slice(0, 6)}
+                    </button>
+                    <button
+                      className="text-red-400 hover:text-red-600"
+                      onClick={() => handleDeleteRun(r)}
+                    >
+                      x
+                    </button>
+                  </span>
+                ))}
               </>
             )}
           </div>

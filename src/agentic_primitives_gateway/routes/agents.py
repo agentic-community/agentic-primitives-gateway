@@ -1,4 +1,5 @@
 import logging
+from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from starlette.responses import StreamingResponse
@@ -30,9 +31,14 @@ router = APIRouter(prefix="/api/v1/agents", tags=["agents"])
 _store: AgentStore | None = None
 _runner = AgentRunner()
 _bg = BackgroundRunManager(stale_seconds=600)
-
-# Re-export for tests
 _active_runs = _bg.runs
+
+
+def set_agent_bg(bg: BackgroundRunManager) -> None:
+    """Replace the background run manager (called during app lifespan)."""
+    global _bg, _active_runs
+    _bg = bg
+    _active_runs = bg.runs
 
 
 def set_agent_store(store: AgentStore) -> None:
@@ -276,11 +282,50 @@ async def chat_with_agent_stream(name: str, request: ChatRequest) -> StreamingRe
     return sse_response(queue, strip_fields=frozenset({"full_result", "tool_input"}))
 
 
+@router.get("/{name}/sessions")
+async def list_sessions(name: str) -> dict:
+    """List all conversation sessions for an agent."""
+    store = _get_store()
+    spec = await store.get(name)
+    if spec is None:
+        raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
+
+    if spec.provider_overrides:
+        set_provider_overrides(spec.provider_overrides)
+
+    sessions: list[dict[str, Any]] = []
+    try:
+        sessions = await registry.memory.list_sessions(name)
+    except (NotImplementedError, Exception):
+        logger.debug("Failed to list sessions for %s", name)
+
+    return {"agent_name": name, "sessions": sessions}
+
+
+@router.delete("/{name}/sessions/{session_id}")
+async def delete_session(name: str, session_id: str) -> dict:
+    """Delete a session's conversation history."""
+    store = _get_store()
+    spec = await store.get(name)
+    if spec is None:
+        raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
+
+    if spec.provider_overrides:
+        set_provider_overrides(spec.provider_overrides)
+
+    try:
+        await registry.memory.delete_session(actor_id=name, session_id=session_id)
+    except (NotImplementedError, Exception):
+        logger.debug("Failed to delete session %s/%s", name, session_id)
+
+    return {"status": "deleted"}
+
+
 @router.get("/{name}/sessions/{session_id}/status")
 async def get_session_status(name: str, session_id: str) -> dict:
     """Check if a run is currently active for this session."""
     _bg.cleanup()
-    return {"status": _bg.get_status(session_id)}
+    return {"status": await _bg.get_status_async(session_id)}
 
 
 @router.get("/{name}/sessions/{session_id}", response_model=SessionHistoryResponse)
