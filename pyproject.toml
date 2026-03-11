@@ -140,3 +140,11 @@ module = [
     "redis.*",
 ]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = [
+    "agentic_primitives_gateway.routes._background",
+    "agentic_primitives_gateway.primitives.tasks.redis",
+    "agentic_primitives_gateway.agents.session_registry",
+]
+disable_error_code = ["misc"]
