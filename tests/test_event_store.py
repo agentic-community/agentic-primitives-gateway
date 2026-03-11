@@ -177,7 +177,7 @@ class TestBackgroundRunManagerAsync:
             yield {"type": "start", "run_id": "r1"}
             yield {"type": "done"}
 
-        queue, event_log = mgr.start("key1", gen(), record_events=True, rekey_field="run_id")
+        queue, _event_log = mgr.start("key1", gen(), record_events=True, rekey_field="run_id")
 
         # Drain the queue to let the task complete
         events = []
