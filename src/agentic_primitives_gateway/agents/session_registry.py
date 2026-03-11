@@ -114,4 +114,4 @@ class RedisSessionRegistry(SessionRegistry):
         return results
 
     async def is_registered(self, primitive: str, session_id: str) -> bool:
-        return await self._redis.hexists(self._key(primitive), session_id) == 1
+        return bool(await self._redis.hexists(self._key(primitive), session_id))

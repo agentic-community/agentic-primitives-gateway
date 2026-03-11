@@ -50,6 +50,9 @@ class EventStore(ABC):
     @abstractmethod
     async def delete(self, key: str) -> None: ...
 
+    async def rename_key(self, old_key: str, new_key: str) -> None:  # noqa: B027
+        """Rename keys when a run ID changes. Default is no-op."""
+
 
 class RedisEventStore(EventStore):
     """Redis-backed event persistence for cross-replica visibility."""
@@ -72,7 +75,8 @@ class RedisEventStore(EventStore):
         await self._redis.set(self._status_key(key), status, ex=ttl)
 
     async def get_status(self, key: str) -> str | None:
-        return await self._redis.get(self._status_key(key))
+        result = await self._redis.get(self._status_key(key))
+        return str(result) if result is not None else None
 
     async def append_event(self, key: str, event: dict[str, Any], ttl: int = 600) -> None:
         events_key = self._events_key(key)

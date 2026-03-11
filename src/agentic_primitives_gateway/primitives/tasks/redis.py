@@ -223,6 +223,6 @@ class RedisTasksProvider(TasksProvider):
 
     async def healthcheck(self) -> bool:
         try:
-            return await self._redis.ping()
+            return bool(await self._redis.ping())
         except Exception:
             return False
