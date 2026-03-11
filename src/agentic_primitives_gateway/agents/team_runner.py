@@ -407,58 +407,69 @@ class TeamRunner:
             if not claimed:
                 continue
 
-            # Execute claimed tasks in parallel, merging events via a queue
-            event_queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
-
-            async def _run_one_stream(t: Any, _q: asyncio.Queue[dict[str, Any] | None] = event_queue) -> None:
-                await _q.put({"type": "task_claimed", "agent": worker_name, "task_id": t.id, "title": t.title})
-                await registry.tasks.update_task(team_run_id, t.id, status=TaskStatus.IN_PROGRESS)
-                try:
-                    result = await self._execute_task_streaming(
-                        worker_spec, team_spec, team_run_id, t.id, t.title, t.description, _q, worker_name
-                    )
-                    await registry.tasks.update_task(team_run_id, t.id, status=TaskStatus.DONE, result=result)
-                    await _q.put({"type": "task_completed", "agent": worker_name, "task_id": t.id, "result": result})
-                except Exception as e:
-                    logger.error("Parallel task '%s' failed: %s: %s", t.id, type(e).__name__, e)
-                    with contextlib.suppress(Exception):
-                        await registry.tasks.update_task(team_run_id, t.id, status=TaskStatus.FAILED, result=str(e))
-                    await _q.put({"type": "task_failed", "agent": worker_name, "task_id": t.id, "error": str(e)})
-
-            parallel_tasks = [asyncio.create_task(_run_one_stream(t)) for t in claimed]
-
-            # Yield events as they arrive; also detect uncaught exceptions
-            finished_ids: set[int] = set()
-            while len(finished_ids) < len(parallel_tasks):
-                try:
-                    event = await asyncio.wait_for(event_queue.get(), timeout=0.5)
-                    if event is not None:
-                        yield event
-                except TimeoutError:
-                    pass
-                for i, pt in enumerate(parallel_tasks):
-                    if i not in finished_ids and pt.done():
-                        finished_ids.add(i)
-                        exc = pt.exception() if not pt.cancelled() else None
-                        if exc is not None:
-                            task_obj = claimed[i]
-                            logger.error("Uncaught exception in task '%s': %s", task_obj.id, exc)
-                            with contextlib.suppress(Exception):
-                                await registry.tasks.update_task(
-                                    team_run_id, task_obj.id, status=TaskStatus.FAILED, result=str(exc)
-                                )
-                            await event_queue.put(
-                                {"type": "task_failed", "agent": worker_name, "task_id": task_obj.id, "error": str(exc)}
-                            )
-
-            # Drain remaining events
-            while not event_queue.empty():
-                event = await event_queue.get()
-                if event is not None:
-                    yield event
-            await asyncio.gather(*parallel_tasks, return_exceptions=True)
+            async for event in self._execute_tasks_parallel_stream(
+                claimed, worker_spec, team_spec, team_run_id, worker_name
+            ):
+                yield event
 
         yield {"type": "worker_done", "agent": worker_name}
+
+    async def _execute_tasks_parallel_stream(
+        self,
+        claimed: list[Any],
+        worker_spec: AgentSpec,
+        team_spec: TeamSpec,
+        team_run_id: str,
+        worker_name: str,
+    ) -> AsyncIterator[dict[str, Any]]:
+        """Execute claimed tasks in parallel, yielding events as they arrive."""
+        event_queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
+
+        async def _run_one(t: Any, _q: asyncio.Queue[dict[str, Any] | None] = event_queue) -> None:
+            await _q.put({"type": "task_claimed", "agent": worker_name, "task_id": t.id, "title": t.title})
+            await registry.tasks.update_task(team_run_id, t.id, status=TaskStatus.IN_PROGRESS)
+            try:
+                result = await self._execute_task_streaming(
+                    worker_spec, team_spec, team_run_id, t.id, t.title, t.description, _q, worker_name
+                )
+                await registry.tasks.update_task(team_run_id, t.id, status=TaskStatus.DONE, result=result)
+                await _q.put({"type": "task_completed", "agent": worker_name, "task_id": t.id, "result": result})
+            except Exception as e:
+                logger.error("Parallel task '%s' failed: %s: %s", t.id, type(e).__name__, e)
+                with contextlib.suppress(Exception):
+                    await registry.tasks.update_task(team_run_id, t.id, status=TaskStatus.FAILED, result=str(e))
+                await _q.put({"type": "task_failed", "agent": worker_name, "task_id": t.id, "error": str(e)})
+
+        parallel_tasks = [asyncio.create_task(_run_one(t)) for t in claimed]
+
+        finished_ids: set[int] = set()
+        while len(finished_ids) < len(parallel_tasks):
+            try:
+                event = await asyncio.wait_for(event_queue.get(), timeout=0.5)
+                if event is not None:
+                    yield event
+            except TimeoutError:
+                pass
+            for i, pt in enumerate(parallel_tasks):
+                if i not in finished_ids and pt.done():
+                    finished_ids.add(i)
+                    exc = pt.exception() if not pt.cancelled() else None
+                    if exc is not None:
+                        task_obj = claimed[i]
+                        logger.error("Uncaught exception in task '%s': %s", task_obj.id, exc)
+                        with contextlib.suppress(Exception):
+                            await registry.tasks.update_task(
+                                team_run_id, task_obj.id, status=TaskStatus.FAILED, result=str(exc)
+                            )
+                        await event_queue.put(
+                            {"type": "task_failed", "agent": worker_name, "task_id": task_obj.id, "error": str(exc)}
+                        )
+
+        while not event_queue.empty():
+            event = await event_queue.get()
+            if event is not None:
+                yield event
+        await asyncio.gather(*parallel_tasks, return_exceptions=True)
 
     # ── Task execution ───────────────────────────────────────────────
 

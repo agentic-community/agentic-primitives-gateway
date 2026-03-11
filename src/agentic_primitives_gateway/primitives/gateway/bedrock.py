@@ -13,6 +13,65 @@ from agentic_primitives_gateway.primitives.gateway.base import GatewayProvider
 logger = logging.getLogger(__name__)
 
 
+async def _parse_bedrock_stream(
+    queue: asyncio.Queue[dict[str, Any] | None],
+    model_id: str,
+) -> AsyncIterator[dict[str, Any]]:
+    """Parse Bedrock converse_stream events into normalized dicts.
+
+    Handles tool-use reassembly: input JSON arrives as incremental string
+    chunks across contentBlockDelta events, assembled on contentBlockStop.
+    """
+    tool_id = ""
+    tool_name = ""
+    tool_json = ""
+
+    while True:
+        event = await queue.get()
+        if event is None:
+            break
+
+        if "contentBlockStart" in event:
+            start = event["contentBlockStart"].get("start", {})
+            if "toolUse" in start:
+                tu = start["toolUse"]
+                tool_id = tu.get("toolUseId", "")
+                tool_name = tu.get("name", "")
+                tool_json = ""
+                yield {"type": "tool_use_start", "id": tool_id, "name": tool_name}
+
+        elif "contentBlockDelta" in event:
+            delta = event["contentBlockDelta"].get("delta", {})
+            if "text" in delta:
+                yield {"type": "content_delta", "delta": delta["text"]}
+            elif "toolUse" in delta:
+                tool_json += delta["toolUse"].get("input", "")
+
+        elif "contentBlockStop" in event:
+            if tool_name:
+                try:
+                    parsed_input = json.loads(tool_json) if tool_json else {}
+                except json.JSONDecodeError:
+                    parsed_input = {"raw": tool_json}
+                yield {"type": "tool_use_complete", "id": tool_id, "name": tool_name, "input": parsed_input}
+                tool_name = ""
+                tool_json = ""
+
+        elif "messageStop" in event:
+            yield {
+                "type": "message_stop",
+                "stop_reason": event["messageStop"].get("stopReason", "end_turn"),
+                "model": model_id,
+            }
+
+        elif "metadata" in event:
+            usage = event["metadata"].get("usage", {})
+            yield {
+                "type": "metadata",
+                "usage": {"input_tokens": usage.get("inputTokens", 0), "output_tokens": usage.get("outputTokens", 0)},
+            }
+
+
 class BedrockConverseProvider(SyncRunnerMixin, GatewayProvider):
     """Gateway provider using the Bedrock Converse API.
 
@@ -138,76 +197,8 @@ class BedrockConverseProvider(SyncRunnerMixin, GatewayProvider):
 
         loop.run_in_executor(None, _drain_stream)
 
-        # Tool use reassembly state: Bedrock sends tool input as incremental
-        # JSON string chunks across multiple contentBlockDelta events. We
-        # accumulate them and parse the complete JSON on contentBlockStop.
-        current_tool_id = ""
-        current_tool_name = ""
-        current_tool_input_json = ""
-
-        while True:
-            event = await queue.get()
-            if event is None:
-                break
-
-            # contentBlockStart: marks the beginning of a new content block.
-            # For tool calls, this contains the tool name and ID.
-            if "contentBlockStart" in event:
-                start = event["contentBlockStart"].get("start", {})
-                if "toolUse" in start:
-                    tu = start["toolUse"]
-                    current_tool_id = tu.get("toolUseId", "")
-                    current_tool_name = tu.get("name", "")
-                    current_tool_input_json = ""
-                    yield {
-                        "type": "tool_use_start",
-                        "id": current_tool_id,
-                        "name": current_tool_name,
-                    }
-
-            # contentBlockDelta: incremental content. Text deltas are yielded
-            # immediately; tool input JSON chunks are accumulated for later parsing.
-            elif "contentBlockDelta" in event:
-                delta = event["contentBlockDelta"].get("delta", {})
-                if "text" in delta:
-                    yield {"type": "content_delta", "delta": delta["text"]}
-                elif "toolUse" in delta:
-                    current_tool_input_json += delta["toolUse"].get("input", "")
-
-            # contentBlockStop: the block is complete. If we were accumulating
-            # tool input JSON, parse it now and emit the complete tool call.
-            elif "contentBlockStop" in event:
-                if current_tool_name:
-                    try:
-                        parsed_input = json.loads(current_tool_input_json) if current_tool_input_json else {}
-                    except json.JSONDecodeError:
-                        parsed_input = {"raw": current_tool_input_json}
-                    yield {
-                        "type": "tool_use_complete",
-                        "id": current_tool_id,
-                        "name": current_tool_name,
-                        "input": parsed_input,
-                    }
-                    current_tool_name = ""
-                    current_tool_input_json = ""
-
-            elif "messageStop" in event:
-                stop_reason = event["messageStop"].get("stopReason", "end_turn")
-                yield {
-                    "type": "message_stop",
-                    "stop_reason": stop_reason,
-                    "model": model_id,
-                }
-
-            elif "metadata" in event:
-                usage = event["metadata"].get("usage", {})
-                yield {
-                    "type": "metadata",
-                    "usage": {
-                        "input_tokens": usage.get("inputTokens", 0),
-                        "output_tokens": usage.get("outputTokens", 0),
-                    },
-                }
+        async for parsed in _parse_bedrock_stream(queue, model_id):
+            yield parsed
 
     async def list_models(self) -> list[dict[str, Any]]:
         return [
@@ -228,6 +219,49 @@ class BedrockConverseProvider(SyncRunnerMixin, GatewayProvider):
 
 
 # ── Message translation ──────────────────────────────────────────────
+
+
+def _tool_result_block(tr: dict[str, Any]) -> dict[str, Any]:
+    """Convert a single tool result dict to a Bedrock toolResult content block."""
+    content_text = tr.get("content", "")
+    if not isinstance(content_text, str):
+        content_text = json.dumps(content_text, default=str)
+    return {"toolResult": {"toolUseId": tr["tool_use_id"], "content": [{"text": content_text}]}}
+
+
+def _convert_message(msg: dict[str, Any], system_prompts: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Convert a single internal message to Bedrock format. Returns None for system messages."""
+    role = msg.get("role", "user")
+
+    if role == "system":
+        system_prompts.append({"text": msg.get("content", "")})
+        return None
+
+    if "tool_results" in msg:
+        return {"role": "user", "content": [_tool_result_block(tr) for tr in msg["tool_results"]]}
+
+    if "tool_result" in msg:
+        return {"role": "user", "content": [_tool_result_block(msg["tool_result"])]}
+
+    tool_calls = msg.get("tool_calls")
+    if role == "assistant" and tool_calls:
+        blocks: list[dict[str, Any]] = []
+        if msg.get("content"):
+            blocks.append({"text": msg["content"]})
+        for tc in tool_calls:
+            tool_input = tc.get("input", {})
+            if isinstance(tool_input, str):
+                try:
+                    tool_input = json.loads(tool_input)
+                except (json.JSONDecodeError, TypeError):
+                    tool_input = {"raw": tool_input}
+            blocks.append({"toolUse": {"toolUseId": tc["id"], "name": tc["name"], "input": tool_input}})
+        return {"role": "assistant", "content": blocks}
+
+    content = msg.get("content", "")
+    if isinstance(content, list):
+        return {"role": role, "content": content}
+    return {"role": role, "content": [{"text": str(content)}]}
 
 
 def _to_bedrock_messages(
@@ -261,87 +295,9 @@ def _to_bedrock_messages(
     bedrock_messages: list[dict[str, Any]] = []
 
     for msg in raw_messages:
-        role = msg.get("role", "user")
-
-        # System messages extracted to system_prompts
-        if role == "system":
-            system_prompts.append({"text": msg.get("content", "")})
-            continue
-
-        # Batched tool results (multiple results in one user message)
-        if "tool_results" in msg:
-            content_blocks: list[dict[str, Any]] = []
-            for tr in msg["tool_results"]:
-                content_text = tr.get("content", "")
-                if not isinstance(content_text, str):
-                    content_text = json.dumps(content_text, default=str)
-                content_blocks.append(
-                    {
-                        "toolResult": {
-                            "toolUseId": tr["tool_use_id"],
-                            "content": [{"text": content_text}],
-                        }
-                    }
-                )
-            bedrock_messages.append({"role": "user", "content": content_blocks})
-            continue
-
-        # Single tool result message (legacy / direct API usage)
-        if "tool_result" in msg:
-            tr = msg["tool_result"]
-            content_text = tr.get("content", "")
-            if not isinstance(content_text, str):
-                content_text = json.dumps(content_text, default=str)
-            bedrock_messages.append(
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "toolResult": {
-                                "toolUseId": tr["tool_use_id"],
-                                "content": [{"text": content_text}],
-                            }
-                        }
-                    ],
-                }
-            )
-            continue
-
-        # Assistant messages with tool_calls
-        tool_calls = msg.get("tool_calls")
-        if role == "assistant" and tool_calls:
-            content_blocks = []
-            text_content = msg.get("content")
-            if text_content:
-                content_blocks.append({"text": text_content})
-            for tc in tool_calls:
-                tool_input = tc.get("input", {})
-                if isinstance(tool_input, str):
-                    try:
-                        tool_input = json.loads(tool_input)
-                    except (json.JSONDecodeError, TypeError):
-                        tool_input = {"raw": tool_input}
-                content_blocks.append(
-                    {
-                        "toolUse": {
-                            "toolUseId": tc["id"],
-                            "name": tc["name"],
-                            "input": tool_input,
-                        }
-                    }
-                )
-            bedrock_messages.append({"role": "assistant", "content": content_blocks})
-            continue
-
-        # Regular text messages
-        content = msg.get("content", "")
-        if isinstance(content, str):
-            bedrock_messages.append({"role": role, "content": [{"text": content}]})
-        elif isinstance(content, list):
-            # Already in content-block format
-            bedrock_messages.append({"role": role, "content": content})
-        else:
-            bedrock_messages.append({"role": role, "content": [{"text": str(content)}]})
+        converted = _convert_message(msg, system_prompts)
+        if converted is not None:
+            bedrock_messages.append(converted)
 
     return system_prompts, bedrock_messages
 

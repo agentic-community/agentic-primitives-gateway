@@ -468,6 +468,42 @@ _TOOL_CATALOG: dict[str, list[ToolDefinition]] = {
 # ── Public API ───────────────────────────────────────────────────────
 
 
+def _bind_handler(
+    tool: ToolDefinition,
+    primitive_name: str,
+    namespace: str,
+    session_ctx: dict[str, str],
+    *,
+    agent_store: Any | None = None,
+    agent_runner: Any | None = None,
+    agent_depth: int = 0,
+    team_run_id: str | None = None,
+    agent_name: str | None = None,
+) -> Any:
+    """Bind context parameters to a tool handler via functools.partial."""
+    handler = tool.handler
+    if primitive_name == "memory":
+        return partial(handler, namespace=namespace)
+    if primitive_name in ("code_interpreter", "browser"):
+        sid = session_ctx.get(primitive_name, "")
+        return partial(handler, session_id=sid) if sid else handler
+    if primitive_name == "agent_management" and agent_store is not None:
+        if tool.name in ("create_agent", "list_agents", "delete_agent"):
+            return partial(handler, agent_store=agent_store)
+        if tool.name == "delegate_to" and agent_runner is not None:
+            return partial(handler, agent_store=agent_store, agent_runner=agent_runner, depth=agent_depth)
+    if primitive_name == "task_board" and team_run_id:
+        handler = partial(handler, team_run_id=team_run_id)
+        if agent_name and tool.name in ("create_task", "claim_task", "add_task_note", "get_available_tasks"):
+            handler = partial(handler, agent_name=agent_name)
+        if tool.name == "complete_task":
+            handler = partial(handler, status="done")
+        elif tool.name == "fail_task":
+            handler = partial(handler, status="failed")
+        return handler
+    return handler
+
+
 def build_tool_list(
     spec_primitives: dict[str, PrimitiveConfig],
     namespace: str,
@@ -515,37 +551,17 @@ def build_tool_list(
             if config.tools is not None and tool.name not in config.tools:
                 continue
 
-            bound_handler = tool.handler
-            if primitive_name == "memory":
-                bound_handler = partial(tool.handler, namespace=namespace)
-            elif primitive_name in ("code_interpreter", "browser"):
-                sid = session_ctx.get(primitive_name, "")
-                if sid:
-                    bound_handler = partial(tool.handler, session_id=sid)
-            elif primitive_name == "agent_management":
-                # Bind agent_store to create/list/delete, and store+runner+depth to delegate_to
-                if agent_store is not None:
-                    if tool.name in ("create_agent", "list_agents", "delete_agent"):
-                        bound_handler = partial(tool.handler, agent_store=agent_store)
-                    elif tool.name == "delegate_to" and agent_runner is not None:
-                        bound_handler = partial(
-                            tool.handler,
-                            agent_store=agent_store,
-                            agent_runner=agent_runner,
-                            depth=agent_depth,
-                        )
-                    # list_primitives needs no binding
-            elif primitive_name == "task_board" and team_run_id:
-                bound_handler = partial(tool.handler, team_run_id=team_run_id)
-                # Also bind agent_name for tools that need it
-                if agent_name and tool.name in ("create_task", "claim_task", "add_task_note", "get_available_tasks"):
-                    bound_handler = partial(bound_handler, agent_name=agent_name)
-                # Bind status for complete_task/fail_task
-                if tool.name == "complete_task":
-                    bound_handler = partial(bound_handler, status="done")
-                elif tool.name == "fail_task":
-                    bound_handler = partial(bound_handler, status="failed")
-
+            bound_handler = _bind_handler(
+                tool,
+                primitive_name,
+                namespace,
+                session_ctx,
+                agent_store=agent_store,
+                agent_runner=agent_runner,
+                agent_depth=agent_depth,
+                team_run_id=team_run_id,
+                agent_name=agent_name,
+            )
             tools.append(
                 ToolDefinition(
                     name=tool.name,

@@ -18,6 +18,32 @@ from agentic_primitives_gateway.registry import registry
 logger = logging.getLogger(__name__)
 
 
+def _process_stream_chunk(
+    chunk: dict[str, Any],
+    tool_calls: list[dict[str, Any]],
+    role_label: str,
+) -> dict[str, Any] | None:
+    """Process a single stream chunk, updating tool_calls in place.
+
+    Returns an event dict to yield, or None to skip. Internal fields
+    ``_content_delta`` and ``_stop_reason`` carry data back to the caller.
+    """
+    event_type = chunk.get("type", "")
+    if event_type == "content_delta":
+        delta = chunk.get("delta", "")
+        return {"type": "agent_token", "agent": role_label, "content": delta, "_content_delta": delta}
+    if event_type == "tool_use_start":
+        tool_calls.append({"id": chunk["id"], "name": chunk["name"], "input": {}})
+        return {"type": "agent_tool", "agent": role_label, "name": chunk["name"]}
+    if event_type == "tool_use_complete":
+        if tool_calls:
+            tool_calls[-1]["input"] = chunk.get("input", {})
+        return None
+    if event_type == "message_stop":
+        return {"_stop_reason": chunk.get("stop_reason", "end_turn")}
+    return None
+
+
 async def run_agent_with_tools(
     spec: AgentSpec,
     message: str,
@@ -123,21 +149,16 @@ async def run_agent_with_tools_stream(
         stop_reason = "end_turn"
 
         async for chunk in registry.gateway.route_request_stream(request_dict):
-            event_type = chunk.get("type", "")
-            if event_type == "content_delta":
-                delta = chunk.get("delta", "")
-                turn_content += delta
-                yield {"type": "agent_token", "agent": role_label, "content": delta}
-            elif event_type == "tool_use_start":
-                tool_calls.append({"id": chunk["id"], "name": chunk["name"], "input": {}})
-                yield {"type": "agent_tool", "agent": role_label, "name": chunk["name"]}
-            elif event_type == "tool_use_delta":
-                pass  # Input JSON accumulated server-side in Bedrock provider
-            elif event_type == "tool_use_complete":
-                if tool_calls:
-                    tool_calls[-1]["input"] = chunk.get("input", {})
-            elif event_type == "message_stop":
-                stop_reason = chunk.get("stop_reason", "end_turn")
+            parsed = _process_stream_chunk(chunk, tool_calls, role_label)
+            if parsed is None:
+                continue
+            if "_content_delta" in parsed:
+                turn_content += parsed.pop("_content_delta")
+            if "_stop_reason" in parsed:
+                stop_reason = parsed["_stop_reason"]
+                continue
+            if "type" in parsed:
+                yield parsed
 
         if turn_content:
             content = turn_content
