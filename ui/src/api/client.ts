@@ -49,6 +49,37 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   return res.json();
 }
 
+/** Create a ReadableStream that POSTs to an SSE endpoint and pipes the response. */
+function sseStream(url: string, body: string, signal?: AbortSignal): ReadableStream<string> {
+  return new ReadableStream({
+    async start(controller) {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body,
+        signal,
+      });
+      if (!res.ok || !res.body) {
+        const err = await res.text().catch(() => res.statusText);
+        controller.enqueue(`data: ${JSON.stringify({ type: "error", detail: err })}\n\n`);
+        controller.close();
+        return;
+      }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          controller.enqueue(decoder.decode(value, { stream: true }));
+        }
+      } finally {
+        controller.close();
+      }
+    },
+  });
+}
+
 export const api = {
   // Health
   health: () => request<HealthResponse>("/healthz"),
@@ -91,36 +122,8 @@ export const api = {
     request<AgentToolsResponse>(`/api/v1/agents/${name}/tools`),
   getToolCatalog: () =>
     request<ToolCatalogResponse>("/api/v1/agents/tool-catalog"),
-  chatStream: (name: string, data: ChatRequest, signal?: AbortSignal): ReadableStream<string> => {
-    const body = JSON.stringify(data);
-    return new ReadableStream({
-      async start(controller) {
-        const res = await fetch(`/api/v1/agents/${name}/chat/stream`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body,
-          signal,
-        });
-        if (!res.ok || !res.body) {
-          const err = await res.text().catch(() => res.statusText);
-          controller.enqueue(`data: ${JSON.stringify({ type: "error", detail: err })}\n\n`);
-          controller.close();
-          return;
-        }
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        try {
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            controller.enqueue(decoder.decode(value, { stream: true }));
-          }
-        } finally {
-          controller.close();
-        }
-      },
-    });
-  },
+  chatStream: (name: string, data: ChatRequest, signal?: AbortSignal): ReadableStream<string> =>
+    sseStream(`/api/v1/agents/${name}/chat/stream`, JSON.stringify(data), signal),
   getSessionHistory: (name: string, sessionId: string) =>
     request<SessionHistoryResponse>(`/api/v1/agents/${name}/sessions/${sessionId}`),
   getSessionStatus: (name: string, sessionId: string) =>
@@ -165,36 +168,8 @@ export const api = {
     request<{ team_run_id: string; status: string; events: Array<Record<string, unknown>> }>(
       `/api/v1/teams/${name}/runs/${runId}/events`,
     ),
-  runTeamStream: (name: string, data: TeamRunRequest, signal?: AbortSignal): ReadableStream<string> => {
-    const body = JSON.stringify(data);
-    return new ReadableStream({
-      async start(controller) {
-        const res = await fetch(`/api/v1/teams/${name}/run/stream`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body,
-          signal,
-        });
-        if (!res.ok || !res.body) {
-          const err = await res.text().catch(() => res.statusText);
-          controller.enqueue(`data: ${JSON.stringify({ type: "error", detail: err })}\n\n`);
-          controller.close();
-          return;
-        }
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        try {
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            controller.enqueue(decoder.decode(value, { stream: true }));
-          }
-        } finally {
-          controller.close();
-        }
-      },
-    });
-  },
+  runTeamStream: (name: string, data: TeamRunRequest, signal?: AbortSignal): ReadableStream<string> =>
+    sseStream(`/api/v1/teams/${name}/run/stream`, JSON.stringify(data), signal),
 
   // Policy
   listPolicyEngines: () =>

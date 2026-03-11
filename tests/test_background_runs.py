@@ -18,23 +18,10 @@ from starlette.testclient import TestClient
 from agentic_primitives_gateway.agents.store import FileAgentStore
 from agentic_primitives_gateway.agents.team_store import FileTeamStore
 from agentic_primitives_gateway.main import app
-from agentic_primitives_gateway.routes.agents import (
-    _STALE_RUN_SECONDS as AGENT_STALE,
-)
-from agentic_primitives_gateway.routes.agents import (
-    _active_runs,
-    set_agent_store,
-)
-from agentic_primitives_gateway.routes.agents import (
-    _cleanup_stale_runs as agent_cleanup,
-)
-from agentic_primitives_gateway.routes.teams import (
-    _active_team_runs,
-    set_team_store,
-)
-from agentic_primitives_gateway.routes.teams import (
-    _cleanup_stale_runs as team_cleanup,
-)
+from agentic_primitives_gateway.routes.agents import _active_runs, set_agent_store
+from agentic_primitives_gateway.routes.agents import _bg as agent_bg
+from agentic_primitives_gateway.routes.teams import _active_team_runs, set_team_store
+from agentic_primitives_gateway.routes.teams import _bg as team_bg
 
 SAMPLE_AGENT = {
     "name": "bg-agent",
@@ -84,7 +71,7 @@ class TestAgentSessionStatus:
         # Inject a fake active run
         task = MagicMock(spec=asyncio.Task)
         task.done.return_value = False
-        _active_runs["fake-session"] = (task, asyncio.Queue(), time.monotonic())
+        _active_runs["fake-session"] = (task, asyncio.Queue(), [], time.monotonic())
 
         resp = client.get("/api/v1/agents/bg-agent/sessions/fake-session/status")
         assert resp.json()["status"] == "running"
@@ -94,7 +81,7 @@ class TestAgentSessionStatus:
 
         task = MagicMock(spec=asyncio.Task)
         task.done.return_value = True
-        _active_runs["done-session"] = (task, asyncio.Queue(), time.monotonic())
+        _active_runs["done-session"] = (task, asyncio.Queue(), [], time.monotonic())
 
         resp = client.get("/api/v1/agents/bg-agent/sessions/done-session/status")
         assert resp.json()["status"] == "idle"
@@ -134,25 +121,25 @@ class TestAgentCleanupStaleRuns:
     def test_removes_done_tasks(self) -> None:
         task = MagicMock(spec=asyncio.Task)
         task.done.return_value = True
-        _active_runs["old-session"] = (task, asyncio.Queue(), time.monotonic())
+        _active_runs["old-session"] = (task, asyncio.Queue(), [], time.monotonic())
 
-        agent_cleanup()
+        agent_bg.cleanup()
         assert "old-session" not in _active_runs
 
     def test_removes_stale_tasks(self) -> None:
         task = MagicMock(spec=asyncio.Task)
         task.done.return_value = False
-        _active_runs["stale-session"] = (task, asyncio.Queue(), time.monotonic() - AGENT_STALE - 1)
+        _active_runs["stale-session"] = (task, asyncio.Queue(), [], time.monotonic() - agent_bg._stale_seconds - 1)
 
-        agent_cleanup()
+        agent_bg.cleanup()
         assert "stale-session" not in _active_runs
 
     def test_keeps_active_tasks(self) -> None:
         task = MagicMock(spec=asyncio.Task)
         task.done.return_value = False
-        _active_runs["active-session"] = (task, asyncio.Queue(), time.monotonic())
+        _active_runs["active-session"] = (task, asyncio.Queue(), [], time.monotonic())
 
-        agent_cleanup()
+        agent_bg.cleanup()
         assert "active-session" in _active_runs
 
 
@@ -301,7 +288,7 @@ class TestTeamCleanupStaleRuns:
         task.done.return_value = True
         _active_team_runs["recent"] = (task, asyncio.Queue(), [], time.monotonic())
 
-        team_cleanup()
+        team_bg.cleanup()
         assert "recent" in _active_team_runs
 
     def test_removes_old_completed(self) -> None:
@@ -309,7 +296,7 @@ class TestTeamCleanupStaleRuns:
         task.done.return_value = True
         _active_team_runs["old"] = (task, asyncio.Queue(), [], time.monotonic() - 120)
 
-        team_cleanup()
+        team_bg.cleanup()
         assert "old" not in _active_team_runs
 
     def test_removes_stale_running(self) -> None:
@@ -317,7 +304,7 @@ class TestTeamCleanupStaleRuns:
         task.done.return_value = False
         _active_team_runs["stale"] = (task, asyncio.Queue(), [], time.monotonic() - 700)
 
-        team_cleanup()
+        team_bg.cleanup()
         assert "stale" not in _active_team_runs
 
     def test_keeps_active_running(self) -> None:
@@ -325,5 +312,5 @@ class TestTeamCleanupStaleRuns:
         task.done.return_value = False
         _active_team_runs["active"] = (task, asyncio.Queue(), [], time.monotonic())
 
-        team_cleanup()
+        team_bg.cleanup()
         assert "active" in _active_team_runs

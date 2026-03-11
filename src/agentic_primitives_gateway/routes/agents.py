@@ -1,8 +1,4 @@
-import asyncio
-import contextvars
-import json
 import logging
-import time
 
 from fastapi import APIRouter, HTTPException
 from starlette.responses import StreamingResponse
@@ -26,26 +22,17 @@ from agentic_primitives_gateway.models.agents import (
     UpdateAgentRequest,
 )
 from agentic_primitives_gateway.registry import registry
+from agentic_primitives_gateway.routes._background import BackgroundRunManager, sse_response
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/agents", tags=["agents"])
 
 _store: AgentStore | None = None
 _runner = AgentRunner()
+_bg = BackgroundRunManager(stale_seconds=600)
 
-# Background run tracking: session_id -> (task, queue, started_at)
-_active_runs: dict[str, tuple[asyncio.Task, asyncio.Queue, float]] = {}
-_STALE_RUN_SECONDS = 600  # clean up runs older than 10 minutes
-
-
-def _cleanup_stale_runs() -> None:
-    """Remove completed or stale entries from _active_runs."""
-    now = time.monotonic()
-    to_remove = [
-        sid for sid, (task, _, started) in _active_runs.items() if task.done() or (now - started > _STALE_RUN_SECONDS)
-    ]
-    for sid in to_remove:
-        _active_runs.pop(sid, None)
+# Re-export for tests
+_active_runs = _bg.runs
 
 
 def set_agent_store(store: AgentStore) -> None:
@@ -281,59 +268,19 @@ async def chat_with_agent_stream(name: str, request: ChatRequest) -> StreamingRe
     if spec.provider_overrides:
         set_provider_overrides(spec.provider_overrides)
 
-    _cleanup_stale_runs()
-
     session_id = request.session_id or ""
-    queue: asyncio.Queue[dict | None] = asyncio.Queue()
-
-    # Snapshot the current request context (provider overrides, AWS creds)
-    # so the background task uses the same provider routing.
-    ctx = contextvars.copy_context()
-
-    async def _run_in_background() -> None:
-        """Consume the runner generator and feed events into the queue."""
-        try:
-            async for event in _runner.run_stream(
-                spec=spec,
-                message=request.message,
-                session_id=request.session_id,
-            ):
-                await queue.put(event)
-        except Exception as exc:
-            await queue.put({"type": "error", "detail": str(exc)})
-        finally:
-            await queue.put(None)  # sentinel
-
-    # create_task with context= ensures the task inherits our contextvars
-    task = asyncio.create_task(_run_in_background(), context=ctx)
-    _active_runs[session_id] = (task, queue, time.monotonic())
-
-    async def event_generator():
-        while True:
-            event = await queue.get()
-            if event is None:
-                break
-            sse_event = {k: v for k, v in event.items() if k not in ("full_result", "tool_input")}
-            yield f"data: {json.dumps(sse_event, default=str)}\n\n"
-
-    return StreamingResponse(
-        event_generator(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",
-        },
+    queue, _ = _bg.start(
+        session_id,
+        _runner.run_stream(spec=spec, message=request.message, session_id=request.session_id),
     )
+    return sse_response(queue, strip_fields=frozenset({"full_result", "tool_input"}))
 
 
 @router.get("/{name}/sessions/{session_id}/status")
 async def get_session_status(name: str, session_id: str) -> dict:
     """Check if a run is currently active for this session."""
-    _cleanup_stale_runs()
-    entry = _active_runs.get(session_id)
-    if entry and not entry[0].done():
-        return {"status": "running"}
-    return {"status": "idle"}
+    _bg.cleanup()
+    return {"status": _bg.get_status(session_id)}
 
 
 @router.get("/{name}/sessions/{session_id}", response_model=SessionHistoryResponse)

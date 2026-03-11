@@ -1,8 +1,5 @@
-import asyncio
-import contextvars
 import json
 import logging
-import time
 
 from fastapi import APIRouter, HTTPException
 from starlette.responses import StreamingResponse
@@ -18,28 +15,17 @@ from agentic_primitives_gateway.models.teams import (
     UpdateTeamRequest,
 )
 from agentic_primitives_gateway.registry import registry
+from agentic_primitives_gateway.routes._background import BackgroundRunManager
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/teams", tags=["teams"])
 
 _store: TeamStore | None = None
 _runner = TeamRunner()
+_bg = BackgroundRunManager(stale_seconds=600, grace_seconds=60)
 
-# Background run tracking: team_run_id -> (task, queue, events, started_at)
-_active_team_runs: dict[str, tuple[asyncio.Task, asyncio.Queue, list[dict], float]] = {}
-_STALE_RUN_SECONDS = 600
-
-
-def _cleanup_stale_runs() -> None:
-    now = time.monotonic()
-    to_remove = [
-        rid
-        for rid, (task, _, _, started) in _active_team_runs.items()
-        if (task.done() and (now - started > 60))  # keep completed runs for 60s for event replay
-        or (now - started > _STALE_RUN_SECONDS)
-    ]
-    for rid in to_remove:
-        _active_team_runs.pop(rid, None)
+# Re-export for tests
+_active_team_runs = _bg.runs
 
 
 def set_team_store(store: TeamStore) -> None:
@@ -125,86 +111,54 @@ async def run_team_stream(name: str, request: TeamRunRequest) -> StreamingRespon
     if spec is None:
         raise HTTPException(status_code=404, detail=f"Team '{name}' not found")
 
-    _cleanup_stale_runs()
+    # Use a placeholder key since team_run_id is generated inside the runner.
+    # We'll re-key once the first team_start event arrives.
+    placeholder = f"__pending_{id(spec)}"
+    queue, event_log = _bg.start(
+        placeholder,
+        _runner.run_stream(team_spec=spec, message=request.message),
+        record_events=True,
+    )
 
-    queue: asyncio.Queue[dict | None] = asyncio.Queue()
-    event_log: list[dict] = []
-    ctx = contextvars.copy_context()
-    team_run_id_holder: list[str] = []
+    # Wrap the SSE response to re-key on the first team_start event
+    rekeyed = False
 
-    async def _run_in_background() -> None:
-        try:
-            async for event in _runner.run_stream(team_spec=spec, message=request.message):
-                if event.get("type") == "team_start" and event.get("team_run_id"):
-                    team_run_id_holder.append(event["team_run_id"])
-                event_log.append(event)
-                await queue.put(event)
-        except Exception as exc:
-            err_event = {"type": "error", "detail": str(exc)}
-            event_log.append(err_event)
-            await queue.put(err_event)
-        finally:
-            await queue.put(None)
-
-    task = asyncio.create_task(_run_in_background(), context=ctx)
-
-    # We don't know team_run_id yet (it's generated inside the runner),
-    # so use a placeholder key until the first event arrives.
-    placeholder_key = f"__pending_{id(task)}"
-    _active_team_runs[placeholder_key] = (task, queue, event_log, time.monotonic())
-
-    async def event_generator():
-        real_key_set = False
+    async def _rekey_generator():
+        nonlocal rekeyed
         while True:
             event = await queue.get()
             if event is None:
                 break
-            # Once we see team_run_id, re-key the active runs dict
-            if not real_key_set and team_run_id_holder:
-                nonlocal placeholder_key
-                entry = _active_team_runs.pop(placeholder_key, None)
-                if entry:
-                    _active_team_runs[team_run_id_holder[0]] = entry
-                real_key_set = True
+            if not rekeyed and event.get("type") == "team_start" and event.get("team_run_id"):
+                _bg.rekey(placeholder, event["team_run_id"])
+                rekeyed = True
             yield f"data: {json.dumps(event, default=str)}\n\n"
 
     return StreamingResponse(
-        event_generator(),
+        _rekey_generator(),
         media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",
-        },
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
 
 @router.get("/{name}/runs/{team_run_id}/status")
 async def get_team_run_status(name: str, team_run_id: str) -> dict:
     """Check if a team run is currently active."""
-    _cleanup_stale_runs()
-    entry = _active_team_runs.get(team_run_id)
-    if entry and not entry[0].done():
-        return {"status": "running"}
-    return {"status": "idle"}
+    _bg.cleanup()
+    return {"status": _bg.get_status(team_run_id)}
 
 
 @router.get("/{name}/runs/{team_run_id}/events")
 async def get_team_run_events(name: str, team_run_id: str) -> dict:
-    """Return all SSE events recorded for a team run.
-
-    Allows the UI to replay events and reconstruct full state
-    (task board, activity log, streaming content, response).
-    """
-    _cleanup_stale_runs()
-    entry = _active_team_runs.get(team_run_id)
-    if entry is None:
+    """Return all recorded SSE events for a team run (for UI replay)."""
+    _bg.cleanup()
+    events = _bg.get_events(team_run_id)
+    if not events and not _bg.runs.get(team_run_id):
         return {"team_run_id": team_run_id, "status": "unknown", "events": []}
-
-    task, _, event_log, _ = entry
     return {
         "team_run_id": team_run_id,
-        "status": "running" if not task.done() else "idle",
-        "events": event_log,
+        "status": _bg.get_status(team_run_id),
+        "events": events,
     }
 
 

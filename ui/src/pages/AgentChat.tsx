@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useAutoScroll } from "../hooks/useAutoScroll";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../api/client";
 import type { StreamArtifact, StreamEvent } from "../api/types";
@@ -70,7 +71,7 @@ export default function AgentChat() {
   const [memoryRefreshKey, setMemoryRefreshKey] = useState(0);
   const historyLoadedRef = useRef(false);
   const [polling, setPolling] = useState(false);
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useAutoScroll([turns, sending]);
   const abortRef = useRef<AbortController | null>(null);
 
   // Sync session_id into URL and localStorage (once on mount)
@@ -164,10 +165,6 @@ export default function AgentChat() {
     };
   }, [name, sessionId, isReturningSession]);
 
-  useEffect(() => {
-    scrollRef.current?.scrollTo(0, scrollRef.current.scrollHeight);
-  }, [turns, sending]);
-
   const handleSend = useCallback(
     async (message: string) => {
       if (!name) return;
@@ -193,7 +190,7 @@ export default function AgentChat() {
           if (done) break;
 
           buffer += typeof value === "string" ? value : decoder.decode(value as Uint8Array, { stream: true });
-          const events = parseSSE(buffer);
+          const events = parseSSE<StreamEvent>(buffer);
           const lastNewline = buffer.lastIndexOf("\n");
           buffer = lastNewline >= 0 ? buffer.slice(lastNewline + 1) : buffer;
 

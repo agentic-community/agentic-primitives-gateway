@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useAutoScroll } from "../hooks/useAutoScroll";
 import { Link, useParams } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -6,6 +7,7 @@ import { api } from "../api/client";
 import type { TeamSpec, TeamStreamEvent } from "../api/types";
 import ChatInput from "../components/ChatInput";
 import LoadingSpinner from "../components/LoadingSpinner";
+import { parseSSE } from "../lib/sse";
 
 interface TaskInfo {
   id: string;
@@ -16,20 +18,6 @@ interface TaskInfo {
   result?: string;
   error?: string;
   streamContent?: string;
-}
-
-function parseSSE(chunk: string): TeamStreamEvent[] {
-  const events: TeamStreamEvent[] = [];
-  for (const line of chunk.split("\n")) {
-    if (line.startsWith("data: ")) {
-      try {
-        events.push(JSON.parse(line.slice(6)));
-      } catch {
-        // skip
-      }
-    }
-  }
-  return events;
 }
 
 const phaseLabels: Record<string, string> = {
@@ -131,7 +119,7 @@ export default function TeamRun() {
   const [response, setResponse] = useState<string>("");
   const [stats, setStats] = useState<{ created: number; completed: number; workers: string[] } | null>(null);
   const [showModal, setShowModal] = useState(false);
-  const logRef = useRef<HTMLDivElement>(null);
+  const logRef = useAutoScroll([activityLog]);
   const abortRef = useRef<AbortController | null>(null);
   const bgCheckRef = useRef(false);
 
@@ -139,10 +127,6 @@ export default function TeamRun() {
     if (!name) return;
     api.getTeam(name).then(setTeam).catch((e) => setError(e.message)).finally(() => setLoading(false));
   }, [name]);
-
-  useEffect(() => {
-    logRef.current?.scrollTo(0, logRef.current.scrollHeight);
-  }, [activityLog]);
 
   // Abort stream on unmount
   useEffect(() => {
@@ -311,7 +295,7 @@ export default function TeamRun() {
           if (streamDone) break;
 
           buffer += typeof value === "string" ? value : decoder.decode(value as Uint8Array, { stream: true });
-          const events = parseSSE(buffer);
+          const events = parseSSE<TeamStreamEvent>(buffer);
           const lastNewline = buffer.lastIndexOf("\n");
           buffer = lastNewline >= 0 ? buffer.slice(lastNewline + 1) : buffer;
 

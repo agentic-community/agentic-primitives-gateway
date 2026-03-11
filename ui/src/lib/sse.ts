@@ -1,10 +1,7 @@
-import type { StreamEvent } from "../api/types";
-
 /** Parse SSE `data:` lines from a chunk into typed events. */
-export function parseSSE(chunk: string): StreamEvent[] {
-  const events: StreamEvent[] = [];
-  const lines = chunk.split("\n");
-  for (const line of lines) {
+export function parseSSE<T = Record<string, unknown>>(chunk: string): T[] {
+  const events: T[] = [];
+  for (const line of chunk.split("\n")) {
     if (line.startsWith("data: ")) {
       try {
         events.push(JSON.parse(line.slice(6)));
