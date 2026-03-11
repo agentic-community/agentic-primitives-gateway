@@ -10,7 +10,7 @@ default:
 # ---------------------------------------------------------------------------
 # Lint
 # ---------------------------------------------------------------------------
-precommit:
+lint:
   stage: lint
   variables:
     PRE_COMMIT_HOME: "$CI_PROJECT_DIR/.cache/pre-commit"
