@@ -100,6 +100,23 @@ class TestAgentMemoryEndpoint:
         assert resp.status_code == 404
 
 
+class TestSessionHistoryEndpoint:
+    def test_returns_empty_history(self) -> None:
+        client = TestClient(app)
+        client.post("/api/v1/agents", json=SAMPLE_AGENT)
+        resp = client.get("/api/v1/agents/test-agent/sessions/some-session-id")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["agent_name"] == "test-agent"
+        assert data["session_id"] == "some-session-id"
+        assert data["messages"] == []
+
+    def test_404_for_unknown_agent(self) -> None:
+        client = TestClient(app)
+        resp = client.get("/api/v1/agents/nonexistent/sessions/abc")
+        assert resp.status_code == 404
+
+
 class TestStreamingEndpoint:
     def test_returns_sse_response(self) -> None:
         """Noop gateway returns empty content, but SSE envelope should work."""

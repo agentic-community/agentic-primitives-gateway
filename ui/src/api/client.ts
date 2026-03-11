@@ -14,6 +14,7 @@ import type {
   PolicyListResponse,
   ProvidersResponse,
   ReadinessResponse,
+  SessionHistoryResponse,
   TeamListResponse,
   TeamRunRequest,
   TeamRunResponse,
@@ -90,15 +91,15 @@ export const api = {
     request<AgentToolsResponse>(`/api/v1/agents/${name}/tools`),
   getToolCatalog: () =>
     request<ToolCatalogResponse>("/api/v1/agents/tool-catalog"),
-  chatStream: (name: string, data: ChatRequest): ReadableStream<string> => {
+  chatStream: (name: string, data: ChatRequest, signal?: AbortSignal): ReadableStream<string> => {
     const body = JSON.stringify(data);
-    // Return a ReadableStream that the caller can consume
     return new ReadableStream({
       async start(controller) {
         const res = await fetch(`/api/v1/agents/${name}/chat/stream`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body,
+          signal,
         });
         if (!res.ok || !res.body) {
           const err = await res.text().catch(() => res.statusText);
@@ -120,6 +121,10 @@ export const api = {
       },
     });
   },
+  getSessionHistory: (name: string, sessionId: string) =>
+    request<SessionHistoryResponse>(`/api/v1/agents/${name}/sessions/${sessionId}`),
+  getSessionStatus: (name: string, sessionId: string) =>
+    request<{ status: string }>(`/api/v1/agents/${name}/sessions/${sessionId}/status`),
   getAgentMemory: (name: string, sessionId?: string) => {
     const params = sessionId ? `?session_id=${sessionId}` : "";
     return request<AgentMemoryResponse>(
@@ -150,7 +155,7 @@ export const api = {
       method: "POST",
       body: JSON.stringify(data),
     }),
-  runTeamStream: (name: string, data: TeamRunRequest): ReadableStream<string> => {
+  runTeamStream: (name: string, data: TeamRunRequest, signal?: AbortSignal): ReadableStream<string> => {
     const body = JSON.stringify(data);
     return new ReadableStream({
       async start(controller) {
@@ -158,6 +163,7 @@ export const api = {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body,
+          signal,
         });
         if (!res.ok || !res.body) {
           const err = await res.text().catch(() => res.statusText);

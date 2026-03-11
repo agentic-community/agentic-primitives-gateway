@@ -27,8 +27,15 @@ interface Turn {
 
 const MEMORY_TOOLS = new Set(["remember", "forget", "recall", "search_memory", "list_memories"]);
 
-function generateSessionId() {
-  return crypto.randomUUID();
+const SESSION_STORAGE_PREFIX = "agent-session:";
+
+function getOrCreateSessionId(agentName: string): [string, boolean] {
+  const key = SESSION_STORAGE_PREFIX + agentName;
+  const existing = localStorage.getItem(key);
+  if (existing) return [existing, true];
+  const id = crypto.randomUUID();
+  localStorage.setItem(key, id);
+  return [id, false];
 }
 
 /** Update a specific turn in the turns array by index. */
@@ -45,11 +52,117 @@ function updateTurn(
 export default function AgentChat() {
   const { name } = useParams<{ name: string }>();
   const { agent, loading, error } = useAgent(name!);
-  const [sessionId] = useState(generateSessionId);
+
+  // Session ID: from URL param > localStorage > generate new.
+  // isReturningSession tracks whether this is a returning visit (existing session).
+  const [sessionState] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    const fromUrl = params.get("session_id");
+    if (fromUrl) return { id: fromUrl, returning: true };
+    const [id, returning] = getOrCreateSessionId(name!);
+    return { id, returning };
+  });
+  const sessionId = sessionState.id;
+  const isReturningSession = sessionState.returning;
+
   const [turns, setTurns] = useState<Turn[]>([]);
   const [sending, setSending] = useState(false);
   const [memoryRefreshKey, setMemoryRefreshKey] = useState(0);
+  const historyLoadedRef = useRef(false);
+  const [polling, setPolling] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
+
+  // Sync session_id into URL and localStorage (once on mount)
+  useEffect(() => {
+    if (!name) return;
+    localStorage.setItem(SESSION_STORAGE_PREFIX + name, sessionId);
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("session_id") !== sessionId) {
+      url.searchParams.set("session_id", sessionId);
+      window.history.replaceState(null, "", url.toString());
+    }
+  }, [name, sessionId]);
+
+  // Abort stream on unmount
+  useEffect(() => {
+    return () => {
+      abortRef.current?.abort();
+    };
+  }, []);
+
+  // Load conversation history and poll for in-progress background runs.
+  useEffect(() => {
+    if (!name || historyLoadedRef.current) return;
+    historyLoadedRef.current = true;
+
+    const POLL_INTERVAL = 3000;
+    const MAX_POLLS = 15;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let stopped = false;
+
+    function restoreTurns(messages: { role: string; content: string }[]) {
+      const restored: Turn[] = [];
+      for (let i = 0; i < messages.length; i += 2) {
+        const userMsg = messages[i];
+        const assistantMsg = messages[i + 1];
+        if (userMsg?.role === "user" && assistantMsg?.role === "assistant") {
+          restored.push({
+            userMessage: userMsg.content,
+            assistantContent: assistantMsg.content,
+            toolsCalled: [], turnsUsed: 1, done: true,
+            subAgents: [], artifacts: [],
+          });
+        }
+      }
+      return restored.reverse();
+    }
+
+    async function poll(attempt: number) {
+      if (attempt >= MAX_POLLS) {
+        setPolling(false);
+        return;
+      }
+      try {
+        const [history, status] = await Promise.all([
+          api.getSessionHistory(name!, sessionId),
+          api.getSessionStatus(name!, sessionId),
+        ]);
+        if (history.messages && history.messages.length > 0) {
+          const restored = restoreTurns(history.messages);
+          if (restored.length > 0) setTurns(restored);
+        }
+        if (status.status === "running") {
+          setPolling(true);
+          if (!stopped) timer = setTimeout(() => poll(attempt + 1), POLL_INTERVAL);
+          return;
+        }
+      } catch { /* ignore */ }
+      setPolling(false);
+    }
+
+    // First load: get history, and if returning, check for active run
+    api.getSessionHistory(name!, sessionId).then((history) => {
+      if (history.messages && history.messages.length > 0) {
+        const restored = restoreTurns(history.messages);
+        if (restored.length > 0) setTurns(restored);
+      }
+      // If returning session, check for active background run
+      if (isReturningSession) {
+        api.getSessionStatus(name!, sessionId).then((status) => {
+          if (status.status === "running") {
+            setPolling(true);
+            if (!stopped) timer = setTimeout(() => poll(0), POLL_INTERVAL);
+          }
+        }).catch(() => {});
+      }
+    }).catch(() => {});
+
+    return () => {
+      stopped = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [name, sessionId, isReturningSession]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo(0, scrollRef.current.scrollHeight);
@@ -66,8 +179,11 @@ export default function AgentChat() {
       setTurns((prev) => [...prev, emptyTurn]);
       setSending(true);
 
+      const controller = new AbortController();
+      abortRef.current = controller;
+
       try {
-        const stream = api.chatStream(name, { message, session_id: sessionId });
+        const stream = api.chatStream(name, { message, session_id: sessionId }, controller.signal);
         const reader = stream.getReader();
         const decoder = new TextDecoder();
         let buffer = "";
@@ -86,6 +202,7 @@ export default function AgentChat() {
           }
         }
       } catch (err) {
+        if (err instanceof DOMException && err.name === "AbortError") return;
         setTurns((prev) =>
           updateTurn(prev, turnIndex, (t) => ({
             ...t,
@@ -94,11 +211,20 @@ export default function AgentChat() {
           })),
         );
       } finally {
+        abortRef.current = null;
         setSending(false);
       }
     },
     [name, sessionId, turns.length],
   );
+
+  const handleNewSession = useCallback(() => {
+    if (!name) return;
+    const newId = crypto.randomUUID();
+    localStorage.setItem(SESSION_STORAGE_PREFIX + name, newId);
+    // Navigate to same page with new session — triggers full remount
+    window.location.href = `/ui/agents/${name}/chat?session_id=${newId}`;
+  }, [name]);
 
   function handleStreamEvent(event: StreamEvent, turnIndex: number) {
     switch (event.type) {
@@ -147,7 +273,7 @@ export default function AgentChat() {
 
       case "tool_call_result":
         if (event.name.startsWith("call_")) {
-          // Static delegation: call_researcher → mark "researcher" done
+          // Static delegation: call_researcher -> mark "researcher" done
           const agentName = event.name.replace("call_", "");
           setTurns((prev) =>
             updateTurn(prev, turnIndex, (t) => ({
@@ -229,6 +355,13 @@ export default function AgentChat() {
             </button>
             <span>|</span>
             <span>turns: {turnsUsed}</span>
+            <span>|</span>
+            <button
+              className="hover:text-gray-700 dark:hover:text-gray-300"
+              onClick={handleNewSession}
+            >
+              new session
+            </button>
           </div>
         </div>
       </div>
@@ -247,7 +380,7 @@ export default function AgentChat() {
 
       {/* Messages */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto space-y-3 pb-4">
-        {turns.length === 0 && (
+        {turns.length === 0 && !polling && (
           <p className="text-center text-sm text-gray-400 dark:text-gray-500 py-16">
             Start a conversation with {agent.name}
           </p>
@@ -290,11 +423,19 @@ export default function AgentChat() {
             ) : null}
           </div>
         ))}
+        {polling && (
+          <div className="mr-12 rounded-lg bg-gray-50 dark:bg-gray-900 px-4 py-3">
+            <div className="flex items-center gap-2 text-xs text-gray-400 dark:text-gray-500">
+              <span className="inline-block w-1.5 h-1.5 rounded-full bg-indigo-500 animate-pulse" />
+              Agent is working in the background...
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Input */}
       <div className="border-t border-gray-200 dark:border-gray-800 pt-3">
-        <ChatInput onSend={handleSend} disabled={sending} />
+        <ChatInput onSend={handleSend} disabled={sending || polling} />
       </div>
     </div>
   );

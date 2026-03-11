@@ -128,3 +128,11 @@ class AgentMemoryResponse(BaseModel):
     memory_enabled: bool
     namespace: str
     stores: list[MemoryStoreInfo] = Field(default_factory=list)
+
+
+class SessionHistoryResponse(BaseModel):
+    """Response for GET /api/v1/agents/{name}/sessions/{session_id}."""
+
+    agent_name: str
+    session_id: str
+    messages: list[dict[str, str]] = Field(default_factory=list)

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { api } from "../api/client";
@@ -112,11 +112,13 @@ function TaskCard({ task }: { task: TaskInfo }) {
 
 export default function TeamRun() {
   const { name } = useParams<{ name: string }>();
+  const [, setSearchParams] = useSearchParams();
   const [team, setTeam] = useState<TeamSpec | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const [prompt, setPrompt] = useState<string>("");
+  const [teamRunId, setTeamRunId] = useState<string>("");
   const [phase, setPhase] = useState<string>("");
   const [tasks, setTasks] = useState<TaskInfo[]>([]);
   const [activityLog, setActivityLog] = useState<string[]>([]);
@@ -124,6 +126,7 @@ export default function TeamRun() {
   const [stats, setStats] = useState<{ created: number; completed: number; workers: string[] } | null>(null);
   const [showModal, setShowModal] = useState(false);
   const logRef = useRef<HTMLDivElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     if (!name) return;
@@ -133,6 +136,13 @@ export default function TeamRun() {
   useEffect(() => {
     logRef.current?.scrollTo(0, logRef.current.scrollHeight);
   }, [activityLog]);
+
+  // Abort stream on unmount
+  useEffect(() => {
+    return () => {
+      abortRef.current?.abort();
+    };
+  }, []);
 
   const addLog = useCallback((msg: string) => {
     setActivityLog((prev) => [...prev, msg]);
@@ -148,9 +158,13 @@ export default function TeamRun() {
       setActivityLog([]);
       setResponse("");
       setStats(null);
+      setTeamRunId("");
+
+      const controller = new AbortController();
+      abortRef.current = controller;
 
       try {
-        const stream = api.runTeamStream(name, { message });
+        const stream = api.runTeamStream(name, { message }, controller.signal);
         const reader = stream.getReader();
         const decoder = new TextDecoder();
         let buffer = "";
@@ -168,6 +182,10 @@ export default function TeamRun() {
           for (const event of events) {
             switch (event.type) {
               case "team_start":
+                setTeamRunId(event.team_run_id);
+                if (name) {
+                  setSearchParams({ run_id: event.team_run_id }, { replace: true });
+                }
                 addLog(`Team run started: ${event.team_run_id}`);
                 break;
               case "phase_change":
@@ -181,7 +199,7 @@ export default function TeamRun() {
                 ]);
                 addLog(`${event.count} tasks created:`);
                 for (const t of event.tasks) {
-                  addLog(`  → ${t.title}${t.suggested_worker ? ` [${t.suggested_worker}]` : ""}`);
+                  addLog(`  -> ${t.title}${t.suggested_worker ? ` [${t.suggested_worker}]` : ""}`);
                 }
                 break;
               case "task_claimed":
@@ -200,13 +218,13 @@ export default function TeamRun() {
                 setTasks((prev) => prev.map((t) =>
                   t.id === event.task_id ? { ...t, status: "failed", error: event.error } : t,
                 ));
-                addLog(`[${event.agent}] failed: ${event.task_id} — ${event.error}`);
+                addLog(`[${event.agent}] failed: ${event.task_id} -- ${event.error}`);
                 break;
               case "worker_start":
                 addLog(`[${event.agent}] started looking for tasks`);
                 break;
               case "worker_done":
-                addLog(`[${event.agent}] finished — no more tasks`);
+                addLog(`[${event.agent}] finished -- no more tasks`);
                 break;
               case "worker_error":
                 addLog(`Worker ${event.agent} error: ${event.error}`);
@@ -229,18 +247,20 @@ export default function TeamRun() {
                   completed: event.tasks_completed,
                   workers: event.workers_used,
                 });
-                addLog(`Done — ${event.tasks_completed}/${event.tasks_created} tasks completed`);
+                addLog(`Done -- ${event.tasks_completed}/${event.tasks_created} tasks completed`);
                 break;
             }
           }
         }
       } catch (err) {
+        if (err instanceof DOMException && err.name === "AbortError") return;
         addLog(`Error: ${err instanceof Error ? err.message : "Request failed"}`);
       } finally {
+        abortRef.current = null;
         setRunning(false);
       }
     },
-    [name, addLog],
+    [name, addLog, setSearchParams],
   );
 
   if (loading) return <LoadingSpinner className="mt-32" />;
@@ -274,6 +294,17 @@ export default function TeamRun() {
             <span className="font-mono">synth: {team.synthesizer}</span>
             <span>|</span>
             <span>workers: {team.workers.join(", ")}</span>
+            {teamRunId && (
+              <>
+                <span>|</span>
+                <button
+                  className="font-mono hover:text-gray-700 dark:hover:text-gray-300"
+                  onClick={() => navigator.clipboard.writeText(teamRunId)}
+                >
+                  run: {teamRunId.slice(0, 8)}...
+                </button>
+              </>
+            )}
             {phase && (
               <>
                 <span>|</span>

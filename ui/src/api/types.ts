@@ -237,3 +237,9 @@ export interface AgentMemoryResponse {
   namespace: string;
   stores: MemoryStoreInfo[];
 }
+
+export interface SessionHistoryResponse {
+  agent_name: string;
+  session_id: string;
+  messages: { role: string; content: string }[];
+}

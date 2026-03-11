@@ -393,7 +393,9 @@ class AgentCoreMemoryProvider(SyncRunnerMixin, MemoryProvider):
                 actor_id=actor_id,
                 session_id=session_id,
             )
-            conv_messages = [ConversationalMessage(text=text, role=MessageRole(role)) for text, role in messages]
+            conv_messages = [
+                ConversationalMessage(text=text, role=MessageRole(role.upper())) for text, role in messages
+            ]
             return session.add_turns(messages=conv_messages)
 
         result = await self._run_sync(_create)
@@ -497,7 +499,12 @@ class AgentCoreMemoryProvider(SyncRunnerMixin, MemoryProvider):
                 if isinstance(msg, dict):
                     content = msg.get("content", {})
                     text = content.get("text", str(msg)) if isinstance(content, dict) else str(content)
-                    role = msg.get("role", "")
+                    role = msg.get("role", "").lower()
+                    msgs.append({"text": text, "role": role})
+                elif hasattr(msg, "content") and hasattr(msg, "role"):
+                    content = msg.content
+                    text = content.get("text", str(content)) if isinstance(content, dict) else str(content)
+                    role = str(msg.role).split(".")[-1].lower()
                     msgs.append({"text": text, "role": role})
                 else:
                     msgs.append({"text": str(msg), "role": ""})
@@ -555,7 +562,9 @@ class AgentCoreMemoryProvider(SyncRunnerMixin, MemoryProvider):
 
         def _fork():
             manager = self._make_manager(memory_id, boto_session)
-            conv_messages = [ConversationalMessage(text=text, role=MessageRole(role)) for text, role in messages]
+            conv_messages = [
+                ConversationalMessage(text=text, role=MessageRole(role.upper())) for text, role in messages
+            ]
             return manager.fork_conversation(
                 actor_id=actor_id,
                 session_id=session_id,
