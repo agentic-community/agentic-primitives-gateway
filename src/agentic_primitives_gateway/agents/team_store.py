@@ -29,6 +29,14 @@ class TeamStore(ABC):
     @abstractmethod
     async def delete(self, name: str) -> bool: ...
 
+    def create_background_run_manager(self, **kwargs: Any) -> Any:
+        """Create a BackgroundRunManager with this store's event persistence."""
+        return None
+
+    def create_session_registry(self) -> Any:
+        """Create a SessionRegistry for this backend."""
+        return None
+
 
 class FileTeamStore(TeamStore):
     """JSON file-backed team store, same pattern as FileAgentStore."""

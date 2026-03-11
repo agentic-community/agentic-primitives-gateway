@@ -37,7 +37,18 @@ class RedisAgentStore(AgentStore):
 
     def __init__(self, redis_url: str = "redis://localhost:6379/0") -> None:
         self._redis = _get_redis(redis_url)
+        self._redis_url = redis_url
         logger.info("RedisAgentStore initialized (url=%s)", redis_url.split("@")[-1])
+
+    def create_background_run_manager(self, **kwargs: Any) -> Any:
+        from agentic_primitives_gateway.routes._background import BackgroundRunManager, RedisEventStore
+
+        return BackgroundRunManager(event_store=RedisEventStore(self._redis_url), **kwargs)
+
+    def create_session_registry(self) -> Any:
+        from agentic_primitives_gateway.agents.session_registry import RedisSessionRegistry
+
+        return RedisSessionRegistry(redis_url=self._redis_url)
 
     def seed(self, specs: dict[str, dict[str, Any]]) -> None:
         """Seed agents from config. Runs synchronously at startup via asyncio."""
@@ -96,7 +107,18 @@ class RedisTeamStore(TeamStore):
 
     def __init__(self, redis_url: str = "redis://localhost:6379/0") -> None:
         self._redis = _get_redis(redis_url)
+        self._redis_url = redis_url
         logger.info("RedisTeamStore initialized (url=%s)", redis_url.split("@")[-1])
+
+    def create_background_run_manager(self, **kwargs: Any) -> Any:
+        from agentic_primitives_gateway.routes._background import BackgroundRunManager, RedisEventStore
+
+        return BackgroundRunManager(event_store=RedisEventStore(self._redis_url), **kwargs)
+
+    def create_session_registry(self) -> Any:
+        from agentic_primitives_gateway.agents.session_registry import RedisSessionRegistry
+
+        return RedisSessionRegistry(redis_url=self._redis_url)
 
     def seed(self, specs: dict[str, dict[str, Any]]) -> None:
         import asyncio

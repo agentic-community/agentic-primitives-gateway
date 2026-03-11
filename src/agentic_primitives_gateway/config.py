@@ -208,12 +208,21 @@ class EnforcementConfig(BaseModel):
     seed_policies: list[SeedPolicyConfig] = Field(default_factory=list)
 
 
+class StoreConfig(BaseModel):
+    """Pluggable store backend configuration.
+
+    ``backend`` is a dotted class path or a short alias (``file``, ``redis``).
+    ``config`` is passed as kwargs to the store constructor.
+    """
+
+    backend: str = "file"
+    config: dict[str, Any] = Field(default_factory=dict)
+
+
 class AgentsConfig(BaseModel):
     """Configuration for the agents subsystem."""
 
-    store_backend: str = "file"  # "file" or "redis"
-    store_path: str = "agents.json"  # for file backend
-    redis_url: str = "redis://localhost:6379/0"  # for redis backend
+    store: StoreConfig = StoreConfig()
     default_model: str = "us.anthropic.claude-sonnet-4-20250514-v1:0"
     max_turns: int = 20
     specs: dict[str, dict[str, Any]] = Field(default_factory=dict)
@@ -222,10 +231,20 @@ class AgentsConfig(BaseModel):
 class TeamsConfig(BaseModel):
     """Configuration for the teams subsystem."""
 
-    store_backend: str = "file"  # "file" or "redis"
-    store_path: str = "teams.json"  # for file backend
-    redis_url: str = "redis://localhost:6379/0"  # for redis backend
+    store: StoreConfig = StoreConfig()
     specs: dict[str, dict[str, Any]] = Field(default_factory=dict)
+
+
+# Well-known store backend aliases → dotted class paths
+AGENT_STORE_ALIASES: dict[str, str] = {
+    "file": "agentic_primitives_gateway.agents.store.FileAgentStore",
+    "redis": "agentic_primitives_gateway.agents.redis_store.RedisAgentStore",
+}
+
+TEAM_STORE_ALIASES: dict[str, str] = {
+    "file": "agentic_primitives_gateway.agents.team_store.FileTeamStore",
+    "redis": "agentic_primitives_gateway.agents.redis_store.RedisTeamStore",
+}
 
 
 class Settings(BaseSettings):

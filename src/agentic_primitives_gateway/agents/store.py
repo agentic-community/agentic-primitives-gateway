@@ -29,6 +29,22 @@ class AgentStore(ABC):
     @abstractmethod
     async def delete(self, name: str) -> bool: ...
 
+    def create_background_run_manager(self, **kwargs: Any) -> Any:
+        """Create a BackgroundRunManager with this store's event persistence.
+
+        Override in backends that support cross-replica event stores (e.g. Redis).
+        Returns None if no special manager is needed (in-memory default is used).
+        """
+        return None
+
+    def create_session_registry(self) -> Any:
+        """Create a SessionRegistry for this backend.
+
+        Override in backends that support cross-replica session tracking.
+        Returns None if no registry is needed (in-memory default is used).
+        """
+        return None
+
 
 class FileAgentStore(AgentStore):
     """JSON-file-backed agent store.

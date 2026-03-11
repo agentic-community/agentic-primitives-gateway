@@ -84,61 +84,43 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logger.info("agentic-primitives-gateway build=%s", BUILD_REF)
     registry.initialize()
 
-    # Initialize agent store
-    from agentic_primitives_gateway.agents.store import AgentStore
+    # Initialize stores via pluggable backend config
+    from agentic_primitives_gateway.config import AGENT_STORE_ALIASES, TEAM_STORE_ALIASES
     from agentic_primitives_gateway.routes.agents import set_agent_store
 
-    agent_store: AgentStore
-    if settings.agents.store_backend == "redis":
-        from agentic_primitives_gateway.agents.redis_store import RedisAgentStore
-
-        agent_store = RedisAgentStore(redis_url=settings.agents.redis_url)
-    else:
-        from agentic_primitives_gateway.agents.store import FileAgentStore
-
-        agent_store = FileAgentStore(path=settings.agents.store_path)
+    agent_store_cls = _load_class(AGENT_STORE_ALIASES.get(settings.agents.store.backend, settings.agents.store.backend))
+    agent_store = agent_store_cls(**settings.agents.store.config)
     if settings.agents.specs:
         agent_store.seed(settings.agents.specs)
     set_agent_store(agent_store)
 
-    # Initialize Redis-backed components if configured
-    if settings.agents.store_backend == "redis":
-        from agentic_primitives_gateway.agents.session_registry import RedisSessionRegistry
-        from agentic_primitives_gateway.routes._background import BackgroundRunManager, RedisEventStore
-        from agentic_primitives_gateway.routes.agents import _runner, set_agent_bg
-
-        redis_url = settings.agents.redis_url
-        set_agent_bg(BackgroundRunManager(stale_seconds=600, event_store=RedisEventStore(redis_url)))
-        session_reg = RedisSessionRegistry(redis_url=redis_url)
-        _runner.set_session_registry(session_reg)
-
-    # Initialize team store
-    from agentic_primitives_gateway.agents.team_store import TeamStore
+    # Wire up background run manager + session registry from the store backend
     from agentic_primitives_gateway.routes.agents import _runner as agent_runner
+    from agentic_primitives_gateway.routes.agents import set_agent_bg
+
+    agent_bg = agent_store.create_background_run_manager(stale_seconds=600)
+    if agent_bg:
+        set_agent_bg(agent_bg)
+    agent_session_reg = agent_store.create_session_registry()
+    if agent_session_reg:
+        agent_runner.set_session_registry(agent_session_reg)
+
     from agentic_primitives_gateway.routes.teams import get_team_runner, set_team_store
 
-    team_store: TeamStore
-    if settings.teams.store_backend == "redis":
-        from agentic_primitives_gateway.agents.redis_store import RedisTeamStore
-
-        team_store = RedisTeamStore(redis_url=settings.teams.redis_url)
-    else:
-        from agentic_primitives_gateway.agents.team_store import FileTeamStore
-
-        team_store = FileTeamStore(path=settings.teams.store_path)
+    team_store_cls = _load_class(TEAM_STORE_ALIASES.get(settings.teams.store.backend, settings.teams.store.backend))
+    team_store = team_store_cls(**settings.teams.store.config)
     if settings.teams.specs:
         team_store.seed(settings.teams.specs)
     set_team_store(team_store)
     get_team_runner().set_stores(agent_store, team_store, agent_runner)
 
-    if settings.teams.store_backend == "redis":
-        from agentic_primitives_gateway.agents.session_registry import RedisSessionRegistry
-        from agentic_primitives_gateway.routes._background import BackgroundRunManager, RedisEventStore
+    team_bg = team_store.create_background_run_manager(stale_seconds=600, grace_seconds=60)
+    if team_bg:
         from agentic_primitives_gateway.routes.teams import set_team_bg
 
-        redis_url = settings.teams.redis_url
-        set_team_bg(BackgroundRunManager(stale_seconds=600, grace_seconds=60, event_store=RedisEventStore(redis_url)))
-        team_session_reg = RedisSessionRegistry(redis_url=redis_url)
+        set_team_bg(team_bg)
+    team_session_reg = team_store.create_session_registry()
+    if team_session_reg:
         get_team_runner().set_session_registry(team_session_reg)
 
     # Seed policies from config into the policy provider
