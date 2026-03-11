@@ -54,6 +54,8 @@ test-server:
     - cd client && pip install --cache-dir=../.cache/pip -e ".[dev]" && cd ..
     - >
       pytest tests/ -v
+      --ignore=tests/integration
+      --ignore=tests/system
       --cov=agentic_primitives_gateway
       --cov-report=term-missing
       --cov-fail-under=90

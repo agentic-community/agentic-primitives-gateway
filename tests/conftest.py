@@ -48,6 +48,18 @@ def _init_registry() -> None:
                 "backend": "agentic_primitives_gateway.primitives.browser.noop.NoopBrowserProvider",
                 "config": {},
             },
+            "policy": {
+                "backend": "agentic_primitives_gateway.primitives.policy.noop.NoopPolicyProvider",
+                "config": {},
+            },
+            "evaluations": {
+                "backend": "agentic_primitives_gateway.primitives.evaluations.noop.NoopEvaluationsProvider",
+                "config": {},
+            },
+            "tasks": {
+                "backend": "agentic_primitives_gateway.primitives.tasks.noop.NoopTasksProvider",
+                "config": {},
+            },
         }
     )
     registry.initialize(test_settings)

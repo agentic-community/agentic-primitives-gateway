@@ -1064,3 +1064,129 @@ class TestBedrockConverseProvider:
 
         provider = BedrockConverseProvider()
         assert await provider.healthcheck() is False
+
+
+# ── route_request_stream ─────────────────────────────────────────────────
+
+
+@patch(f"{_PATCH_PREFIX}.get_boto3_session")
+class TestRouteRequestStream:
+    """Tests for the streaming Bedrock Converse API path."""
+
+    @pytest.mark.asyncio
+    async def test_stream_text_only(self, mock_get_session):
+        events = [
+            {"contentBlockDelta": {"delta": {"text": "Hello"}}},
+            {"contentBlockDelta": {"delta": {"text": " world"}}},
+            {"messageStop": {"stopReason": "end_turn"}},
+            {"metadata": {"usage": {"inputTokens": 10, "outputTokens": 5}}},
+        ]
+        mock_client = MagicMock()
+        mock_client.converse_stream.return_value = {"stream": iter(events)}
+        mock_get_session.return_value.client.return_value = mock_client
+
+        provider = BedrockConverseProvider()
+        collected = []
+        async for event in provider.route_request_stream({"messages": [{"role": "user", "content": "Hi"}]}):
+            collected.append(event)
+
+        types = [e["type"] for e in collected]
+        assert "content_delta" in types
+        assert "message_stop" in types
+        assert "metadata" in types
+        assert collected[0]["delta"] == "Hello"
+        assert collected[1]["delta"] == " world"
+
+    @pytest.mark.asyncio
+    async def test_stream_tool_use(self, mock_get_session):
+        events = [
+            {
+                "contentBlockStart": {
+                    "start": {"toolUse": {"toolUseId": "tc-1", "name": "get_weather"}},
+                }
+            },
+            {"contentBlockDelta": {"delta": {"toolUse": {"input": '{"city":'}}}},
+            {"contentBlockDelta": {"delta": {"toolUse": {"input": '"NYC"}'}}}},
+            {"contentBlockStop": {}},
+            {"messageStop": {"stopReason": "tool_use"}},
+        ]
+        mock_client = MagicMock()
+        mock_client.converse_stream.return_value = {"stream": iter(events)}
+        mock_get_session.return_value.client.return_value = mock_client
+
+        provider = BedrockConverseProvider()
+        collected = []
+        async for event in provider.route_request_stream({"messages": [{"role": "user", "content": "Weather?"}]}):
+            collected.append(event)
+
+        types = [e["type"] for e in collected]
+        assert "tool_use_start" in types
+        assert "tool_use_complete" in types
+
+        complete = next(e for e in collected if e["type"] == "tool_use_complete")
+        assert complete["name"] == "get_weather"
+        assert complete["input"] == {"city": "NYC"}
+
+    @pytest.mark.asyncio
+    async def test_stream_tool_use_invalid_json(self, mock_get_session):
+        events = [
+            {
+                "contentBlockStart": {
+                    "start": {"toolUse": {"toolUseId": "tc-1", "name": "tool"}},
+                }
+            },
+            {"contentBlockDelta": {"delta": {"toolUse": {"input": "not-json"}}}},
+            {"contentBlockStop": {}},
+        ]
+        mock_client = MagicMock()
+        mock_client.converse_stream.return_value = {"stream": iter(events)}
+        mock_get_session.return_value.client.return_value = mock_client
+
+        provider = BedrockConverseProvider()
+        collected = []
+        async for event in provider.route_request_stream({"messages": [{"role": "user", "content": "Hi"}]}):
+            collected.append(event)
+
+        complete = next(e for e in collected if e["type"] == "tool_use_complete")
+        assert complete["input"] == {"raw": "not-json"}
+
+    @pytest.mark.asyncio
+    async def test_stream_empty(self, mock_get_session):
+        mock_client = MagicMock()
+        mock_client.converse_stream.return_value = {"stream": None}
+        mock_get_session.return_value.client.return_value = mock_client
+
+        provider = BedrockConverseProvider()
+        collected = []
+        async for event in provider.route_request_stream({"messages": [{"role": "user", "content": "Hi"}]}):
+            collected.append(event)
+
+        assert collected == []
+
+    @pytest.mark.asyncio
+    async def test_stream_with_inference_config_and_tools(self, mock_get_session):
+        events = [
+            {"contentBlockDelta": {"delta": {"text": "ok"}}},
+            {"messageStop": {"stopReason": "end_turn"}},
+        ]
+        mock_client = MagicMock()
+        mock_client.converse_stream.return_value = {"stream": iter(events)}
+        mock_get_session.return_value.client.return_value = mock_client
+
+        provider = BedrockConverseProvider()
+        collected = []
+        async for event in provider.route_request_stream(
+            {
+                "messages": [{"role": "user", "content": "Hi"}],
+                "temperature": 0.5,
+                "max_tokens": 100,
+                "tools": [{"name": "calc", "description": "calc", "input_schema": {"type": "object"}}],
+                "tool_choice": {"type": "auto"},
+            }
+        ):
+            collected.append(event)
+
+        call_kwargs = mock_client.converse_stream.call_args[1]
+        assert call_kwargs["inferenceConfig"]["temperature"] == 0.5
+        assert call_kwargs["inferenceConfig"]["maxTokens"] == 100
+        assert "toolConfig" in call_kwargs

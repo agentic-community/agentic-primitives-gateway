@@ -273,3 +273,167 @@ class TestEntraIdentityProvider:
             client_credential="override-secret",
             authority="https://login.microsoftonline.com/override-tenant",
         )
+
+    # ── Control plane: credential providers ─────────────────────
+
+    def _mock_graph_auth(self, mock_msal, mock_creds):
+        mock_app = self._setup_msal(mock_msal, mock_creds)
+        mock_app.acquire_token_for_client.return_value = {"access_token": "graph-tok"}
+        return mock_app
+
+    @pytest.mark.asyncio
+    async def test_create_credential_provider_api_key(self, mock_msal, mock_requests, mock_creds):
+        self._mock_graph_auth(mock_msal, mock_creds)
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = {"id": "app-1", "displayName": "my-app"}
+        mock_requests.post.return_value = mock_resp
+
+        provider = EntraIdentityProvider(tenant_id="t", client_id="c", client_secret="s")
+        result = await provider.create_credential_provider("my-app", "api_key", {})
+        assert result["provider_type"] == "api_key"
+        assert result["arn"] == "app-1"
+
+    @pytest.mark.asyncio
+    async def test_create_credential_provider_oauth2(self, mock_msal, mock_requests, mock_creds):
+        self._mock_graph_auth(mock_msal, mock_creds)
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = {"id": "sp-1"}
+        mock_requests.post.return_value = mock_resp
+
+        provider = EntraIdentityProvider(tenant_id="t", client_id="c", client_secret="s")
+        result = await provider.create_credential_provider("my-sp", "oauth2", {"app_id": "app-1"})
+        assert result["provider_type"] == "oauth2"
+
+    @pytest.mark.asyncio
+    async def test_get_credential_provider_app(self, mock_msal, mock_requests, mock_creds):
+        self._mock_graph_auth(mock_msal, mock_creds)
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = {"value": [{"displayName": "my-app", "id": "app-1"}]}
+        mock_requests.get.return_value = mock_resp
+
+        provider = EntraIdentityProvider(tenant_id="t", client_id="c", client_secret="s")
+        result = await provider.get_credential_provider("my-app")
+        assert result["provider_type"] == "api_key"
+
+    @pytest.mark.asyncio
+    async def test_get_credential_provider_sp(self, mock_msal, mock_requests, mock_creds):
+        self._mock_graph_auth(mock_msal, mock_creds)
+        mock_resp_empty = MagicMock()
+        mock_resp_empty.raise_for_status = MagicMock()
+        mock_resp_empty.json.return_value = {"value": []}
+        mock_resp_sp = MagicMock()
+        mock_resp_sp.raise_for_status = MagicMock()
+        mock_resp_sp.json.return_value = {"value": [{"displayName": "my-sp", "id": "sp-1"}]}
+        mock_requests.get.side_effect = [mock_resp_empty, mock_resp_sp]
+
+        provider = EntraIdentityProvider(tenant_id="t", client_id="c", client_secret="s")
+        result = await provider.get_credential_provider("my-sp")
+        assert result["provider_type"] == "oauth2"
+
+    @pytest.mark.asyncio
+    async def test_update_credential_provider_app(self, mock_msal, mock_requests, mock_creds):
+        self._mock_graph_auth(mock_msal, mock_creds)
+        mock_resp_get = MagicMock()
+        mock_resp_get.raise_for_status = MagicMock()
+        mock_resp_get.json.return_value = {"value": [{"id": "app-1"}]}
+        mock_requests.get.return_value = mock_resp_get
+        mock_resp_patch = MagicMock()
+        mock_resp_patch.raise_for_status = MagicMock()
+        mock_requests.patch.return_value = mock_resp_patch
+
+        provider = EntraIdentityProvider(tenant_id="t", client_id="c", client_secret="s")
+        result = await provider.update_credential_provider("my-app", {"displayName": "new"})
+        assert result["provider_type"] == "api_key"
+
+    @pytest.mark.asyncio
+    async def test_delete_credential_provider(self, mock_msal, mock_requests, mock_creds):
+        self._mock_graph_auth(mock_msal, mock_creds)
+        mock_resp_get = MagicMock()
+        mock_resp_get.raise_for_status = MagicMock()
+        mock_resp_get.json.return_value = {"value": [{"id": "app-1"}]}
+        mock_requests.get.return_value = mock_resp_get
+        mock_resp_del = MagicMock()
+        mock_resp_del.raise_for_status = MagicMock()
+        mock_requests.delete.return_value = mock_resp_del
+
+        provider = EntraIdentityProvider(tenant_id="t", client_id="c", client_secret="s")
+        await provider.delete_credential_provider("my-app")
+
+    # ── Control plane: workload identities ──────────────────────
+
+    @pytest.mark.asyncio
+    async def test_create_workload_identity_graph(self, mock_msal, mock_requests, mock_creds):
+        self._mock_graph_auth(mock_msal, mock_creds)
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = {
+            "displayName": "wl",
+            "id": "wl-1",
+            "web": {"redirectUris": ["http://cb"]},
+        }
+        mock_requests.post.return_value = mock_resp
+
+        provider = EntraIdentityProvider(tenant_id="t", client_id="c", client_secret="s")
+        result = await provider.create_workload_identity("wl", allowed_return_urls=["http://cb"])
+        assert result["name"] == "wl"
+
+    @pytest.mark.asyncio
+    async def test_get_workload_identity(self, mock_msal, mock_requests, mock_creds):
+        self._mock_graph_auth(mock_msal, mock_creds)
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = {"value": [{"displayName": "wl", "id": "wl-1", "web": {"redirectUris": []}}]}
+        mock_requests.get.return_value = mock_resp
+
+        provider = EntraIdentityProvider(tenant_id="t", client_id="c", client_secret="s")
+        result = await provider.get_workload_identity("wl")
+        assert result["name"] == "wl"
+
+    @pytest.mark.asyncio
+    async def test_update_workload_identity(self, mock_msal, mock_requests, mock_creds):
+        self._mock_graph_auth(mock_msal, mock_creds)
+        mock_resp_get = MagicMock()
+        mock_resp_get.raise_for_status = MagicMock()
+        mock_resp_get.json.return_value = {"value": [{"id": "wl-1"}]}
+        mock_requests.get.return_value = mock_resp_get
+        mock_resp_patch = MagicMock()
+        mock_resp_patch.raise_for_status = MagicMock()
+        mock_requests.patch.return_value = mock_resp_patch
+
+        provider = EntraIdentityProvider(tenant_id="t", client_id="c", client_secret="s")
+        result = await provider.update_workload_identity("wl", allowed_return_urls=["http://new"])
+        assert result["allowed_return_urls"] == ["http://new"]
+
+    @pytest.mark.asyncio
+    async def test_delete_workload_identity_graph(self, mock_msal, mock_requests, mock_creds):
+        self._mock_graph_auth(mock_msal, mock_creds)
+        mock_resp_get = MagicMock()
+        mock_resp_get.raise_for_status = MagicMock()
+        mock_resp_get.json.return_value = {"value": [{"id": "wl-1"}]}
+        mock_requests.get.return_value = mock_resp_get
+        mock_resp_del = MagicMock()
+        mock_resp_del.raise_for_status = MagicMock()
+        mock_requests.delete.return_value = mock_resp_del
+
+        provider = EntraIdentityProvider(tenant_id="t", client_id="c", client_secret="s")
+        await provider.delete_workload_identity("wl")
+
+    @pytest.mark.asyncio
+    async def test_list_workload_identities(self, mock_msal, mock_requests, mock_creds):
+        self._mock_graph_auth(mock_msal, mock_creds)
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = {
+            "value": [
+                {"displayName": "wl-1", "id": "id-1", "web": {"redirectUris": []}},
+                {"displayName": "wl-2", "id": "id-2", "web": None},
+            ]
+        }
+        mock_requests.get.return_value = mock_resp
+
+        provider = EntraIdentityProvider(tenant_id="t", client_id="c", client_secret="s")
+        result = await provider.list_workload_identities()
+        assert len(result) == 2
