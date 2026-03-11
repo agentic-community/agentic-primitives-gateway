@@ -155,6 +155,16 @@ export const api = {
       method: "POST",
       body: JSON.stringify(data),
     }),
+  getTeamRunStatus: (name: string, runId: string) =>
+    request<{ status: string }>(`/api/v1/teams/${name}/runs/${runId}/status`),
+  getTeamRun: (name: string, runId: string) =>
+    request<{ team_run_id: string; team_name: string; status: string; tasks: Array<{ id: string; title: string; status: string; assigned_to: string; suggested_worker: string; result: string }>; tasks_created: number; tasks_completed: number }>(
+      `/api/v1/teams/${name}/runs/${runId}`,
+    ),
+  getTeamRunEvents: (name: string, runId: string) =>
+    request<{ team_run_id: string; status: string; events: Array<Record<string, unknown>> }>(
+      `/api/v1/teams/${name}/runs/${runId}/events`,
+    ),
   runTeamStream: (name: string, data: TeamRunRequest, signal?: AbortSignal): ReadableStream<string> => {
     const body = JSON.stringify(data);
     return new ReadableStream({

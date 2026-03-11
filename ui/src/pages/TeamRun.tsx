@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link, useParams, useSearchParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { api } from "../api/client";
@@ -110,15 +110,21 @@ function TaskCard({ task }: { task: TaskInfo }) {
   );
 }
 
+const RUN_STORAGE_PREFIX = "team-run:";
+
 export default function TeamRun() {
   const { name } = useParams<{ name: string }>();
-  const [, setSearchParams] = useSearchParams();
   const [team, setTeam] = useState<TeamSpec | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
+  const [polling, setPolling] = useState(false);
   const [prompt, setPrompt] = useState<string>("");
-  const [teamRunId, setTeamRunId] = useState<string>("");
+  const [teamRunId, setTeamRunId] = useState<string>(() => {
+    if (!name) return "";
+    const params = new URLSearchParams(window.location.search);
+    return params.get("run_id") || localStorage.getItem(RUN_STORAGE_PREFIX + name) || "";
+  });
   const [phase, setPhase] = useState<string>("");
   const [tasks, setTasks] = useState<TaskInfo[]>([]);
   const [activityLog, setActivityLog] = useState<string[]>([]);
@@ -127,6 +133,7 @@ export default function TeamRun() {
   const [showModal, setShowModal] = useState(false);
   const logRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const bgCheckRef = useRef(false);
 
   useEffect(() => {
     if (!name) return;
@@ -144,6 +151,134 @@ export default function TeamRun() {
     };
   }, []);
 
+  // Replay a list of recorded events to reconstruct UI state.
+  const replayEvents = useCallback(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (events: Array<Record<string, any>>) => {
+      let synthContent = "";
+      const newTasks: TaskInfo[] = [];
+      const logs: string[] = [];
+
+      for (const event of events) {
+        switch (event.type) {
+          case "team_start":
+            logs.push(`Team run started: ${event.team_run_id}`);
+            break;
+          case "phase_change":
+            setPhase(event.phase);
+            logs.push(`Phase: ${phaseLabels[event.phase] ?? event.phase}`);
+            break;
+          case "tasks_created":
+            for (const t of event.tasks) {
+              newTasks.push({ id: t.id, title: t.title, status: "pending", suggestedWorker: t.suggested_worker });
+              logs.push(`  -> ${t.title}${t.suggested_worker ? ` [${t.suggested_worker}]` : ""}`);
+            }
+            logs.push(`${event.count} tasks created`);
+            break;
+          case "task_claimed": {
+            const idx = newTasks.findIndex((t) => t.id === event.task_id);
+            if (idx >= 0) newTasks[idx] = { ...newTasks[idx], status: "in_progress", agent: event.agent };
+            logs.push(`[${event.agent}] claimed: ${event.title}`);
+            break;
+          }
+          case "task_completed": {
+            const idx = newTasks.findIndex((t) => t.id === event.task_id);
+            if (idx >= 0) newTasks[idx] = { ...newTasks[idx], status: "done", result: event.result };
+            logs.push(`[${event.agent}] completed: ${event.task_id}`);
+            break;
+          }
+          case "task_failed": {
+            const idx = newTasks.findIndex((t) => t.id === event.task_id);
+            if (idx >= 0) newTasks[idx] = { ...newTasks[idx], status: "failed", error: event.error };
+            logs.push(`[${event.agent}] failed: ${event.task_id} -- ${event.error}`);
+            break;
+          }
+          case "worker_start":
+            logs.push(`[${event.agent}] started looking for tasks`);
+            break;
+          case "worker_done":
+            logs.push(`[${event.agent}] finished -- no more tasks`);
+            break;
+          case "worker_error":
+            logs.push(`Worker ${event.agent} error: ${event.error}`);
+            break;
+          case "agent_token":
+            if (event.agent === "synthesizer") {
+              synthContent += event.content;
+            } else if (event.task_id) {
+              const idx = newTasks.findIndex((t) => t.id === event.task_id);
+              if (idx >= 0) newTasks[idx] = { ...newTasks[idx], streamContent: (newTasks[idx].streamContent ?? "") + event.content };
+            }
+            break;
+          case "done":
+            if (event.response) synthContent = event.response;
+            setPhase("done");
+            setStats({ created: event.tasks_created, completed: event.tasks_completed, workers: event.workers_used ?? [] });
+            logs.push(`Done -- ${event.tasks_completed}/${event.tasks_created} tasks completed`);
+            break;
+        }
+      }
+
+      setTasks(newTasks);
+      setActivityLog(logs);
+      if (synthContent) setResponse(synthContent);
+    },
+    [],
+  );
+
+  // Restore state from a previous run (background or completed)
+  useEffect(() => {
+    if (!name || !teamRunId || bgCheckRef.current || running) return;
+    bgCheckRef.current = true;
+
+    // Sync run_id to URL
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("run_id") !== teamRunId) {
+      url.searchParams.set("run_id", teamRunId);
+      window.history.replaceState(null, "", url.toString());
+    }
+
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const POLL_INTERVAL = 3000;
+    const MAX_POLLS = 30;
+
+    async function pollEvents(attempt: number) {
+      if (attempt >= MAX_POLLS) {
+        setPolling(false);
+        return;
+      }
+      try {
+        const data = await api.getTeamRunEvents(name!, teamRunId);
+        if (data.events && data.events.length > 0) {
+          replayEvents(data.events);
+        }
+        if (data.status === "running") {
+          setPolling(true);
+          if (!stopped) timer = setTimeout(() => pollEvents(attempt + 1), POLL_INTERVAL);
+          return;
+        }
+      } catch { /* ignore */ }
+      setPolling(false);
+    }
+
+    // Fetch events and replay them to reconstruct full UI state
+    api.getTeamRunEvents(name, teamRunId).then((data) => {
+      if (data.events && data.events.length > 0) {
+        replayEvents(data.events);
+      }
+      if (data.status === "running") {
+        setPolling(true);
+        if (!stopped) timer = setTimeout(() => pollEvents(0), POLL_INTERVAL);
+      }
+    }).catch(() => {});
+
+    return () => {
+      stopped = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [name, teamRunId, running, replayEvents]);
+
   const addLog = useCallback((msg: string) => {
     setActivityLog((prev) => [...prev, msg]);
   }, []);
@@ -159,6 +294,7 @@ export default function TeamRun() {
       setResponse("");
       setStats(null);
       setTeamRunId("");
+      setPolling(false);
 
       const controller = new AbortController();
       abortRef.current = controller;
@@ -183,8 +319,11 @@ export default function TeamRun() {
             switch (event.type) {
               case "team_start":
                 setTeamRunId(event.team_run_id);
-                if (name) {
-                  setSearchParams({ run_id: event.team_run_id }, { replace: true });
+                localStorage.setItem(RUN_STORAGE_PREFIX + name, event.team_run_id);
+                {
+                  const url = new URL(window.location.href);
+                  url.searchParams.set("run_id", event.team_run_id);
+                  window.history.replaceState(null, "", url.toString());
                 }
                 addLog(`Team run started: ${event.team_run_id}`);
                 break;
@@ -260,7 +399,7 @@ export default function TeamRun() {
         setRunning(false);
       }
     },
-    [name, addLog, setSearchParams],
+    [name, addLog],
   );
 
   if (loading) return <LoadingSpinner className="mt-32" />;
@@ -332,7 +471,7 @@ export default function TeamRun() {
           <h2 className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
             Task Board {tasks.length > 0 && `(${tasks.filter((t) => t.status === "done").length}/${tasks.length})`}
           </h2>
-          {tasks.length === 0 && !running && (
+          {tasks.length === 0 && !running && !polling && (
             <p className="text-sm text-gray-400 dark:text-gray-500 py-8 text-center">
               Send a message to start a team run
             </p>
@@ -341,6 +480,12 @@ export default function TeamRun() {
             <div className="flex items-center gap-2 text-xs text-gray-400 py-4">
               <span className="inline-block w-1.5 h-1.5 rounded-full bg-indigo-500 animate-pulse" />
               Planner is creating tasks...
+            </div>
+          )}
+          {polling && (
+            <div className="flex items-center gap-2 text-xs text-gray-400 py-4">
+              <span className="inline-block w-1.5 h-1.5 rounded-full bg-indigo-500 animate-pulse" />
+              Team is working in the background...
             </div>
           )}
           {tasks.map((task) => (
@@ -412,7 +557,7 @@ export default function TeamRun() {
 
       {/* Input */}
       <div className="border-t border-gray-200 dark:border-gray-800 pt-3">
-        <ChatInput onSend={handleSend} disabled={running} />
+        <ChatInput onSend={handleSend} disabled={running || polling} />
       </div>
 
       {/* Expanded response modal */}
