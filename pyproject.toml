@@ -65,6 +65,9 @@ dev = [
     "pre-commit>=4.0.0",
     "types-PyYAML>=6.0.0",
 ]
+all = [
+    "agentic-primitives-gateway[mem0,agentcore,langfuse,keycloak,entra,okta,selenium,jupyter,cedar,redis]",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/agentic_primitives_gateway"]

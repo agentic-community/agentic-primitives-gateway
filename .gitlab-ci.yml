@@ -10,7 +10,7 @@ default:
 # ---------------------------------------------------------------------------
 # Lint
 # ---------------------------------------------------------------------------
-lint:
+precommit:
   stage: lint
   variables:
     PRE_COMMIT_HOME: "$CI_PROJECT_DIR/.cache/pre-commit"
@@ -35,7 +35,7 @@ typecheck:
     paths:
       - .cache/pip
   script:
-    - pip install --cache-dir=.cache/pip -e ".[dev,agentcore,langfuse,mem0]"
+    - pip install --cache-dir=.cache/pip -e ".[dev,all]"
     - cd client && pip install --cache-dir=../.cache/pip -e ".[dev]" && cd ..
     - mypy
 
@@ -50,7 +50,7 @@ test-server:
     paths:
       - .cache/pip
   script:
-    - pip install --cache-dir=.cache/pip -e ".[dev,agentcore,langfuse,mem0,selenium,cedar,entra,keycloak,okta]" pytest-cov
+    - pip install --cache-dir=.cache/pip -e ".[dev,all]" pytest-cov
     - cd client && pip install --cache-dir=../.cache/pip -e ".[dev]" && cd ..
     - >
       pytest tests/ -v
