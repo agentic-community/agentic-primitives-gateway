@@ -1370,3 +1370,112 @@ class AgenticPlatformClient:
         resp = await self._post(f"/api/v1/agents/{name}/chat", json=body)
         self._raise_for_status(resp)
         return self._json_dict(resp)
+
+    async def get_agent_tools(self, name: str) -> dict[str, Any]:
+        """List tools available to an agent with provider info."""
+        resp = await self._get(f"/api/v1/agents/{name}/tools")
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def get_agent_memory(self, name: str, session_id: str | None = None) -> dict[str, Any]:
+        """Introspect memory stores for an agent."""
+        params = f"?session_id={session_id}" if session_id else ""
+        resp = await self._get(f"/api/v1/agents/{name}/memory{params}")
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def list_agent_sessions(self, name: str) -> dict[str, Any]:
+        """List all conversation sessions for an agent."""
+        resp = await self._get(f"/api/v1/agents/{name}/sessions")
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def get_session_history(self, name: str, session_id: str) -> dict[str, Any]:
+        """Get conversation history for a session."""
+        resp = await self._get(f"/api/v1/agents/{name}/sessions/{session_id}")
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def get_session_status(self, name: str, session_id: str) -> dict[str, Any]:
+        """Check if a background run is active for a session."""
+        resp = await self._get(f"/api/v1/agents/{name}/sessions/{session_id}/status")
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def delete_session(self, name: str, session_id: str) -> None:
+        """Delete a session's conversation history."""
+        resp = await self._delete(f"/api/v1/agents/{name}/sessions/{session_id}")
+        self._raise_for_status(resp)
+
+    # ── Teams ─────────────────────────────────────────────────────────
+
+    async def create_team(self, spec: dict[str, Any]) -> dict[str, Any]:
+        """Create a new team."""
+        resp = await self._post("/api/v1/teams", json=spec)
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def list_teams(self) -> dict[str, Any]:
+        """List all teams."""
+        resp = await self._get("/api/v1/teams")
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def get_team(self, name: str) -> dict[str, Any]:
+        """Get a team spec by name."""
+        resp = await self._get(f"/api/v1/teams/{name}")
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def update_team(self, name: str, updates: dict[str, Any]) -> dict[str, Any]:
+        """Update a team (partial update)."""
+        resp = await self._request("PUT", f"/api/v1/teams/{name}", json=updates)
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def delete_team(self, name: str) -> dict[str, Any]:
+        """Delete a team."""
+        resp = await self._delete(f"/api/v1/teams/{name}")
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def run_team(self, name: str, message: str) -> dict[str, Any]:
+        """Run a team (non-streaming).
+
+        Args:
+            name: The team name.
+            message: The request to decompose and execute.
+        """
+        resp = await self._post(f"/api/v1/teams/{name}/run", json={"message": message})
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def list_team_runs(self, name: str) -> dict[str, Any]:
+        """List all known runs for a team."""
+        resp = await self._get(f"/api/v1/teams/{name}/runs")
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def get_team_run(self, name: str, run_id: str) -> dict[str, Any]:
+        """Get task board state for a team run."""
+        resp = await self._get(f"/api/v1/teams/{name}/runs/{run_id}")
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def get_team_run_status(self, name: str, run_id: str) -> dict[str, Any]:
+        """Check if a team run is active."""
+        resp = await self._get(f"/api/v1/teams/{name}/runs/{run_id}/status")
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def get_team_run_events(self, name: str, run_id: str) -> dict[str, Any]:
+        """Get all recorded SSE events for a team run (for replay)."""
+        resp = await self._get(f"/api/v1/teams/{name}/runs/{run_id}/events")
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def delete_team_run(self, name: str, run_id: str) -> dict[str, Any]:
+        """Delete a team run's data (tasks, events)."""
+        resp = await self._delete(f"/api/v1/teams/{name}/runs/{run_id}")
+        self._raise_for_status(resp)
+        return self._json_dict(resp)

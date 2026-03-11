@@ -26,6 +26,10 @@ def _mock_handler(request: httpx.Request) -> httpx.Response:
     if path.startswith("/api/v1/agents"):
         return _handle_agents(method, path, request)
 
+    # Team endpoints
+    if path.startswith("/api/v1/teams"):
+        return _handle_teams(method, path, request)
+
     # Identity data plane endpoints
     if path.startswith("/api/v1/identity"):
         return _handle_identity(method, path, request)
@@ -68,6 +72,8 @@ def _mock_handler(request: httpx.Request) -> httpx.Response:
 _tools_store: dict[str, dict] = {}
 
 _agents_store: dict[str, dict] = {}
+_teams_store: dict[str, dict] = {}
+_team_runs: dict[str, dict] = {}  # run_id -> {events, status}
 
 _ci_sessions: dict[str, dict] = {}
 
@@ -130,6 +136,50 @@ def _handle_agents(method: str, path: str, request: httpx.Request) -> httpx.Resp
                 },
             )
 
+        # GET /{name}/tools
+        if len(parts) == 2 and parts[1] == "tools" and method == "GET":
+            agent = _agents_store.get(name)
+            if agent is None:
+                return httpx.Response(404, json={"detail": f"Agent '{name}' not found"})
+            tools = []
+            for prim, cfg in agent.get("primitives", {}).items():
+                if cfg.get("enabled", True):
+                    tools.append({"name": f"{prim}_tool", "description": "mock", "primitive": prim, "provider": "default"})
+            return httpx.Response(200, json={"agent_name": name, "tools": tools})
+
+        # GET /{name}/memory
+        if len(parts) == 2 and parts[1] == "memory" and method == "GET":
+            agent = _agents_store.get(name)
+            if agent is None:
+                return httpx.Response(404, json={"detail": f"Agent '{name}' not found"})
+            mem = agent.get("primitives", {}).get("memory", {})
+            return httpx.Response(200, json={
+                "agent_name": name,
+                "memory_enabled": mem.get("enabled", False),
+                "namespace": mem.get("namespace", ""),
+                "stores": [],
+            })
+
+        # GET /{name}/sessions
+        if len(parts) == 2 and parts[1] == "sessions" and method == "GET":
+            agent = _agents_store.get(name)
+            if agent is None:
+                return httpx.Response(404, json={"detail": f"Agent '{name}' not found"})
+            return httpx.Response(200, json={"agent_name": name, "sessions": []})
+
+        # /{name}/sessions/{session_id}[/status]
+        if len(parts) >= 3 and parts[1] == "sessions":
+            agent = _agents_store.get(name)
+            if agent is None:
+                return httpx.Response(404, json={"detail": f"Agent '{name}' not found"})
+            session_id = parts[2]
+            if len(parts) == 4 and parts[3] == "status" and method == "GET":
+                return httpx.Response(200, json={"status": "idle"})
+            if len(parts) == 3 and method == "GET":
+                return httpx.Response(200, json={"agent_name": name, "session_id": session_id, "messages": []})
+            if len(parts) == 3 and method == "DELETE":
+                return httpx.Response(200, json={"status": "deleted"})
+
         # Single-segment routes: GET, PUT, DELETE /{name}
         if len(parts) == 1:
             if method == "GET":
@@ -152,6 +202,81 @@ def _handle_agents(method: str, path: str, request: httpx.Request) -> httpx.Resp
                 if name not in _agents_store:
                     return httpx.Response(404, json={"detail": f"Agent '{name}' not found"})
                 del _agents_store[name]
+                return httpx.Response(200, json={"status": "deleted"})
+
+    return httpx.Response(404, json={"detail": "Not found"})
+
+
+def _handle_teams(method: str, path: str, request: httpx.Request) -> httpx.Response:
+    """Mock handler for team CRUD and run endpoints."""
+    rest = path.removeprefix("/api/v1/teams")
+
+    # POST "" (create team)
+    if rest == "" and method == "POST":
+        body = json.loads(request.content)
+        team = {
+            "name": body["name"],
+            "description": body.get("description", ""),
+            "planner": body["planner"],
+            "synthesizer": body["synthesizer"],
+            "workers": body["workers"],
+            "max_concurrent": body.get("max_concurrent"),
+            "global_max_turns": body.get("global_max_turns", 100),
+            "global_timeout_seconds": body.get("global_timeout_seconds", 300),
+        }
+        if team["name"] in _teams_store:
+            return httpx.Response(409, json={"detail": f"Team '{team['name']}' already exists"})
+        _teams_store[team["name"]] = team
+        return httpx.Response(201, json=team)
+
+    # GET "" (list teams)
+    if rest == "" and method == "GET":
+        return httpx.Response(200, json={"teams": list(_teams_store.values())})
+
+    if rest.startswith("/"):
+        parts = rest.lstrip("/").split("/")
+        name = parts[0]
+
+        # GET /{name}/runs
+        if len(parts) == 2 and parts[1] == "runs" and method == "GET":
+            if name not in _teams_store:
+                return httpx.Response(404, json={"detail": f"Team '{name}' not found"})
+            return httpx.Response(200, json={"team_name": name, "runs": []})
+
+        # /{name}/runs/{run_id}[/status|/events]
+        if len(parts) >= 3 and parts[1] == "runs":
+            run_id = parts[2]
+            if len(parts) == 4 and parts[3] == "status" and method == "GET":
+                return httpx.Response(200, json={"status": "idle"})
+            if len(parts) == 4 and parts[3] == "events" and method == "GET":
+                return httpx.Response(200, json={"team_run_id": run_id, "status": "unknown", "events": []})
+            if len(parts) == 3 and method == "GET":
+                return httpx.Response(200, json={"team_run_id": run_id, "team_name": name, "status": "idle", "tasks": [], "tasks_created": 0, "tasks_completed": 0})
+            if len(parts) == 3 and method == "DELETE":
+                return httpx.Response(200, json={"status": "deleted"})
+
+        # Single-segment routes: GET, PUT, DELETE /{name}
+        if len(parts) == 1:
+            if method == "GET":
+                team = _teams_store.get(name)
+                if team is None:
+                    return httpx.Response(404, json={"detail": f"Team '{name}' not found"})
+                return httpx.Response(200, json=team)
+
+            if method == "PUT":
+                team = _teams_store.get(name)
+                if team is None:
+                    return httpx.Response(404, json={"detail": f"Team '{name}' not found"})
+                body = json.loads(request.content)
+                for k, v in body.items():
+                    if v is not None:
+                        team[k] = v
+                return httpx.Response(200, json=team)
+
+            if method == "DELETE":
+                if name not in _teams_store:
+                    return httpx.Response(404, json={"detail": f"Team '{name}' not found"})
+                del _teams_store[name]
                 return httpx.Response(200, json={"status": "deleted"})
 
     return httpx.Response(404, json={"detail": "Not found"})
@@ -744,6 +869,8 @@ def _clear_store():
     _tools_store.clear()
     _ci_sessions.clear()
     _agents_store.clear()
+    _teams_store.clear()
+    _team_runs.clear()
     _policy_engines.clear()
     _policies.clear()
     _evaluators.clear()
@@ -757,6 +884,8 @@ def _clear_store():
     _tools_store.clear()
     _ci_sessions.clear()
     _agents_store.clear()
+    _teams_store.clear()
+    _team_runs.clear()
     _policy_engines.clear()
     _policies.clear()
     _evaluators.clear()

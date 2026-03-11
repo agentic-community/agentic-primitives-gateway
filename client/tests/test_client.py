@@ -437,6 +437,149 @@ class TestClientAgents:
             assert exc_info.value.status_code == 404
 
 
+class TestClientAgentSessions:
+    @pytest.mark.asyncio
+    async def test_list_sessions(self, make_client) -> None:
+        async with make_client() as client:
+            await client.create_agent({"name": "sess-agent", "model": "m"})
+            result = await client.list_agent_sessions("sess-agent")
+            assert "sessions" in result
+
+    @pytest.mark.asyncio
+    async def test_get_session_history(self, make_client) -> None:
+        async with make_client() as client:
+            await client.create_agent({"name": "hist-agent", "model": "m"})
+            result = await client.get_session_history("hist-agent", "s1")
+            assert result["agent_name"] == "hist-agent"
+            assert result["session_id"] == "s1"
+            assert isinstance(result["messages"], list)
+
+    @pytest.mark.asyncio
+    async def test_get_session_status(self, make_client) -> None:
+        async with make_client() as client:
+            await client.create_agent({"name": "stat-agent", "model": "m"})
+            result = await client.get_session_status("stat-agent", "s1")
+            assert result["status"] == "idle"
+
+    @pytest.mark.asyncio
+    async def test_delete_session(self, make_client) -> None:
+        async with make_client() as client:
+            await client.create_agent({"name": "del-agent", "model": "m"})
+            await client.delete_session("del-agent", "s1")  # should not raise
+
+    @pytest.mark.asyncio
+    async def test_get_agent_tools(self, make_client) -> None:
+        async with make_client() as client:
+            await client.create_agent({"name": "tool-agent", "model": "m", "primitives": {"memory": {"enabled": True}}})
+            result = await client.get_agent_tools("tool-agent")
+            assert result["agent_name"] == "tool-agent"
+            assert len(result["tools"]) > 0
+
+    @pytest.mark.asyncio
+    async def test_get_agent_memory(self, make_client) -> None:
+        async with make_client() as client:
+            await client.create_agent({"name": "mem-agent", "model": "m", "primitives": {"memory": {"enabled": True, "namespace": "agent:{agent_name}"}}})
+            result = await client.get_agent_memory("mem-agent")
+            assert result["agent_name"] == "mem-agent"
+            assert result["memory_enabled"] is True
+
+
+class TestClientTeams:
+    @pytest.mark.asyncio
+    async def test_create_team(self, make_client) -> None:
+        async with make_client() as client:
+            result = await client.create_team({"name": "t1", "planner": "p", "synthesizer": "s", "workers": ["w"]})
+            assert result["name"] == "t1"
+
+    @pytest.mark.asyncio
+    async def test_create_team_conflict(self, make_client) -> None:
+        async with make_client() as client:
+            await client.create_team({"name": "dup", "planner": "p", "synthesizer": "s", "workers": ["w"]})
+            with pytest.raises(AgenticPlatformError) as exc_info:
+                await client.create_team({"name": "dup", "planner": "p", "synthesizer": "s", "workers": ["w"]})
+            assert exc_info.value.status_code == 409
+
+    @pytest.mark.asyncio
+    async def test_list_teams(self, make_client) -> None:
+        async with make_client() as client:
+            await client.create_team({"name": "lt1", "planner": "p", "synthesizer": "s", "workers": ["w"]})
+            result = await client.list_teams()
+            assert len(result["teams"]) >= 1
+
+    @pytest.mark.asyncio
+    async def test_get_team(self, make_client) -> None:
+        async with make_client() as client:
+            await client.create_team({"name": "gt1", "planner": "p", "synthesizer": "s", "workers": ["w"]})
+            result = await client.get_team("gt1")
+            assert result["name"] == "gt1"
+
+    @pytest.mark.asyncio
+    async def test_get_team_not_found(self, make_client) -> None:
+        async with make_client() as client:
+            with pytest.raises(AgenticPlatformError) as exc_info:
+                await client.get_team("nonexistent")
+            assert exc_info.value.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_update_team(self, make_client) -> None:
+        async with make_client() as client:
+            await client.create_team({"name": "ut1", "planner": "p", "synthesizer": "s", "workers": ["w"]})
+            result = await client.update_team("ut1", {"description": "updated"})
+            assert result["description"] == "updated"
+
+    @pytest.mark.asyncio
+    async def test_delete_team(self, make_client) -> None:
+        async with make_client() as client:
+            await client.create_team({"name": "dt1", "planner": "p", "synthesizer": "s", "workers": ["w"]})
+            result = await client.delete_team("dt1")
+            assert result["status"] == "deleted"
+
+    @pytest.mark.asyncio
+    async def test_delete_team_not_found(self, make_client) -> None:
+        async with make_client() as client:
+            with pytest.raises(AgenticPlatformError) as exc_info:
+                await client.delete_team("nonexistent")
+            assert exc_info.value.status_code == 404
+
+
+class TestClientTeamRuns:
+    @pytest.mark.asyncio
+    async def test_list_team_runs(self, make_client) -> None:
+        async with make_client() as client:
+            await client.create_team({"name": "lr1", "planner": "p", "synthesizer": "s", "workers": ["w"]})
+            result = await client.list_team_runs("lr1")
+            assert "runs" in result
+
+    @pytest.mark.asyncio
+    async def test_get_team_run_status(self, make_client) -> None:
+        async with make_client() as client:
+            await client.create_team({"name": "sr1", "planner": "p", "synthesizer": "s", "workers": ["w"]})
+            result = await client.get_team_run_status("sr1", "nonexistent-run")
+            assert result["status"] == "idle"
+
+    @pytest.mark.asyncio
+    async def test_get_team_run_events(self, make_client) -> None:
+        async with make_client() as client:
+            await client.create_team({"name": "er1", "planner": "p", "synthesizer": "s", "workers": ["w"]})
+            result = await client.get_team_run_events("er1", "nonexistent-run")
+            assert result["status"] == "unknown"
+            assert result["events"] == []
+
+    @pytest.mark.asyncio
+    async def test_get_team_run(self, make_client) -> None:
+        async with make_client() as client:
+            await client.create_team({"name": "tr1", "planner": "p", "synthesizer": "s", "workers": ["w"]})
+            result = await client.get_team_run("tr1", "nonexistent-run")
+            assert result["tasks"] == []
+
+    @pytest.mark.asyncio
+    async def test_delete_team_run(self, make_client) -> None:
+        async with make_client() as client:
+            await client.create_team({"name": "dr1", "planner": "p", "synthesizer": "s", "workers": ["w"]})
+            result = await client.delete_team_run("dr1", "nonexistent-run")
+            assert result["status"] == "deleted"
+
+
 class TestClientCodeInterpreter:
     @pytest.mark.asyncio
     async def test_start_code_session(self, make_client) -> None:
