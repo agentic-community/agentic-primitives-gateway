@@ -142,6 +142,14 @@ See [Agent Delegation Guide](../guides/agent-delegation.md) for more details.
 
 The `namespace` field controls where memories are stored. See [Memory Namespaces Guide](../guides/memory-namespaces.md).
 
+## Sessions & Background Runs
+
+Each chat uses a `session_id` to track conversation history. When `auto_memory` is enabled, completed turns are stored in the memory provider and can be retrieved later.
+
+**Background execution:** Streaming chat runs in a background `asyncio.Task`. If the client disconnects (page refresh, navigation), the run continues to completion and stores the result. On reconnect, the UI polls `/{name}/sessions/{id}/status` and loads the conversation from `/{name}/sessions/{id}`.
+
+**Multiple sessions:** Each agent can have many sessions. The UI stores session IDs in localStorage and provides a session picker to switch between them.
+
 ## API
 
 | Method | Path | Description |
@@ -152,7 +160,11 @@ The `namespace` field controls where memories are stored. See [Memory Namespaces
 | `PUT` | `/api/v1/agents/{name}` | Update agent |
 | `DELETE` | `/api/v1/agents/{name}` | Delete agent |
 | `POST` | `/api/v1/agents/{name}/chat` | Chat (non-streaming) |
-| `POST` | `/api/v1/agents/{name}/chat/stream` | Chat (SSE streaming) |
+| `POST` | `/api/v1/agents/{name}/chat/stream` | Chat (SSE streaming, background task) |
+| `GET` | `/api/v1/agents/{name}/sessions` | List sessions |
+| `GET` | `/api/v1/agents/{name}/sessions/{id}` | Get conversation history |
+| `GET` | `/api/v1/agents/{name}/sessions/{id}/status` | Check run status |
+| `DELETE` | `/api/v1/agents/{name}/sessions/{id}` | Delete session |
 | `GET` | `/api/v1/agents/{name}/tools` | List agent's tools with providers |
 | `GET` | `/api/v1/agents/{name}/memory` | Introspect memory stores |
 | `GET` | `/api/v1/agents/tool-catalog` | List all available primitives/tools |

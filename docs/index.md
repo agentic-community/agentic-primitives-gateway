@@ -20,10 +20,13 @@ Agent (any framework)  -->  Gateway REST API  -->  Backend Provider
 - **Self-creating agents** — a meta-agent creates specialist agents at runtime, delegates work, and cleans up
 - **Agent teams** with task boards, continuous replanning, and parallel execution
 - **Token streaming** via SSE for real-time UI updates
+- **Background run persistence** — runs continue if the client disconnects; reconnect and resume
+- **Multi-session/run support** — multiple conversations per agent, multiple runs per team
+- **Pluggable store backends** — file (default) or Redis for multi-replica deployments
 - **Policy enforcement** via Cedar with auto-discovered actions
 - **Per-request provider routing** via headers (`X-Provider-Memory: mem0`)
 - **Credential pass-through** preserving caller identity
-- **Web UI** for agent management, streaming chat, sub-agent activity, and API exploration
+- **Web UI** for agent management, streaming chat, team execution, session/run management, and API exploration
 - **Hot-reload** config via Kubernetes ConfigMap watcher
 
 ## Quick Links

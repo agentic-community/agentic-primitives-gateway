@@ -35,7 +35,7 @@ curl -X POST http://localhost:8000/api/v1/agents \
 | Method | Path | Description |
 |--------|------|-------------|
 | `POST` | `/{name}/chat` | Non-streaming chat |
-| `POST` | `/{name}/chat/stream` | SSE streaming chat |
+| `POST` | `/{name}/chat/stream` | SSE streaming chat (background task) |
 
 ### Non-Streaming Chat
 
@@ -64,10 +64,56 @@ Response:
 ```bash
 curl -N -X POST http://localhost:8000/api/v1/agents/my-agent/chat/stream \
   -H "Content-Type: application/json" \
-  -d '{"message": "Hello!"}'
+  -d '{"message": "Hello!", "session_id": "my-session"}'
 ```
 
-Returns `text/event-stream`. See [Streaming](../concepts/streaming.md) for event types.
+Returns `text/event-stream`. The run executes in a background task -- if the client disconnects, the run completes and stores the conversation turn. See [Streaming](../concepts/streaming.md) for event types.
+
+## Sessions
+
+Each chat uses a `session_id` to track conversation history. Multiple sessions can exist per agent.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/{name}/sessions` | List all sessions for this agent |
+| `GET` | `/{name}/sessions/{session_id}` | Get conversation history |
+| `GET` | `/{name}/sessions/{session_id}/status` | Check if a background run is active (`"running"` or `"idle"`) |
+| `DELETE` | `/{name}/sessions/{session_id}` | Delete session history |
+
+### List Sessions
+
+```bash
+curl http://localhost:8000/api/v1/agents/my-agent/sessions
+```
+
+### Get Session History
+
+```bash
+curl http://localhost:8000/api/v1/agents/my-agent/sessions/my-session
+```
+
+```json
+{
+  "agent_name": "my-agent",
+  "session_id": "my-session",
+  "messages": [
+    {"role": "user", "content": "Hello!"},
+    {"role": "assistant", "content": "Hi! How can I help?"}
+  ]
+}
+```
+
+### Check Background Run Status
+
+```bash
+curl http://localhost:8000/api/v1/agents/my-agent/sessions/my-session/status
+```
+
+```json
+{"status": "running"}
+```
+
+Returns `"running"` if a background task is actively processing this session, `"idle"` otherwise. The UI uses this to show a "working in the background" indicator and poll for completion.
 
 ## Introspection
 

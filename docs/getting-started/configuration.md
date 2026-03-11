@@ -91,11 +91,76 @@ By default, the gateway requires client credentials. To allow the server's own c
 allow_server_credentials: true
 ```
 
+## Store Backend Configuration
+
+Agent specs, team specs, and associated components (background run managers, session registries) are managed by pluggable store backends.
+
+### Store Configuration
+
+Each subsystem (agents, teams) has a `store` block with `backend` and `config`:
+
+```yaml
+agents:
+  store:
+    backend: file                     # "file", "redis", or dotted class path
+    config:
+      path: "agents.json"            # Backend-specific kwargs
+```
+
+### Available Backends
+
+| Alias | Class | Config keys | Description |
+|-------|-------|-------------|-------------|
+| `file` | `FileAgentStore` / `FileTeamStore` | `path` | JSON file persistence (default, single-replica) |
+| `redis` | `RedisAgentStore` / `RedisTeamStore` | `redis_url` | Redis hash storage (multi-replica) |
+
+Custom backends can be specified by dotted class path instead of an alias.
+
+### Redis Backend
+
+When using `redis`, the store also creates a `RedisEventStore` (for background run event persistence) and a `RedisSessionRegistry` (for cross-replica browser/code_interpreter session tracking). No additional config needed -- these are wired up automatically.
+
+```yaml
+agents:
+  store:
+    backend: redis
+    config:
+      redis_url: "redis://my-redis:6379/0"
+
+teams:
+  store:
+    backend: redis
+    config:
+      redis_url: "redis://my-redis:6379/0"
+
+providers:
+  tasks:
+    default: redis
+    backends:
+      redis:
+        backend: "agentic_primitives_gateway.primitives.tasks.redis.RedisTasksProvider"
+        config:
+          redis_url: "redis://my-redis:6379/0"
+```
+
+### Tasks Provider
+
+The tasks provider (for team task boards) is configured separately as a standard provider:
+
+| Backend | Description |
+|---------|-------------|
+| `NoopTasksProvider` | Returns empty results (default) |
+| `InMemoryTasksProvider` | In-process task board with asyncio.Lock (dev) |
+| `RedisTasksProvider` | Redis-backed with atomic Lua scripts (multi-replica) |
+
 ## Agent Configuration
 
 ```yaml
 agents:
-  store_path: "agents.json"
+  store:
+    backend: file
+    config:
+      path: "agents.json"
   specs:
     research-assistant:
       model: "us.anthropic.claude-sonnet-4-20250514-v1:0"
@@ -117,13 +182,16 @@ agents:
       temperature: 1.0
 ```
 
-Agents defined in config are seeded into the JSON store on startup. Config values **overwrite** existing agents with the same name.
+Agents defined in config are seeded into the store on startup. Config values **overwrite** existing agents with the same name.
 
 ## Team Configuration
 
 ```yaml
 teams:
-  store_path: "teams.json"
+  store:
+    backend: file
+    config:
+      path: "teams.json"
   specs:
     research-team:
       description: "Researches and codes collaboratively"
@@ -155,6 +223,7 @@ enforcement:
 | `local.yaml` | All noop/in-memory providers, no external deps |
 | `kitchen-sink.yaml` | All providers registered, agent team example, Cedar enforcement |
 | `agentcore.yaml` | All primitives backed by AWS Bedrock AgentCore |
+| `agentcore-redis.yaml` | AgentCore + Redis stores for multi-replica |
 | `milvus-langfuse.yaml` | mem0 + Milvus memory, Langfuse observability |
 | `agents-agentcore.yaml` | Agents with AgentCore backends |
 | `agents-mem0-langfuse.yaml` | Agents with mem0 memory, Langfuse tracing |

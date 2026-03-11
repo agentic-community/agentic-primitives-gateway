@@ -95,13 +95,52 @@ TeamRunner.run(team_spec, message)
 
 See [Teams](teams.md) for the full replanning loop documentation.
 
+## Background Run Infrastructure
+
+Streaming endpoints decouple the run from the HTTP connection using `BackgroundRunManager` (`routes/_background.py`):
+
+```
+Client → SSE Response ← Queue ← asyncio.Task (background)
+         (may disconnect)        (always completes, calls _finalize)
+```
+
+Components:
+
+- **`BackgroundRunManager`** -- tracks active runs in a local dict. Optional `EventStore` persists events/status to Redis for cross-replica visibility.
+- **`RedisEventStore`** -- stores run status and event logs in Redis lists with TTL auto-expiry.
+- **`SessionRegistry`** -- tracks active browser/code_interpreter sessions. `InMemorySessionRegistry` (default) or `RedisSessionRegistry` (multi-replica). Used for observability and orphan cleanup.
+
+## Pluggable Store Backends
+
+Agent/team specs and task boards are stored in pluggable backends:
+
+```
+Config (YAML)                    main.py
+  store:                          _load_class(alias → dotted path)
+    backend: "redis"      →       RedisAgentStore(**config)
+    config:                        ↓
+      redis_url: "..."            store.create_background_run_manager()
+                                  store.create_session_registry()
+```
+
+Each store implements factory methods (`create_background_run_manager()`, `create_session_registry()`) so `main.py` doesn't need backend-specific logic. File stores return `None` (use defaults); Redis stores return Redis-backed instances.
+
+Available backends:
+
+| Alias | Agent Store | Team Store | Tasks Provider |
+|-------|------------|------------|---------------|
+| `file` | `FileAgentStore` | `FileTeamStore` | `InMemoryTasksProvider` |
+| `redis` | `RedisAgentStore` | `RedisTeamStore` | `RedisTasksProvider` |
+
+Custom backends: use a dotted class path instead of an alias.
+
 ## File Organization
 
 ```
 src/agentic_primitives_gateway/
 ├── main.py              # App, lifespan, error handlers, routers
 ├── middleware.py         # RequestContextMiddleware
-├── config.py            # YAML config + Pydantic settings
+├── config.py            # YAML config + Pydantic settings + store aliases
 ├── context.py           # Request-scoped contextvars
 ├── registry.py          # Provider loading + resolution
 ├── metrics.py           # MetricsProxy (Prometheus)
@@ -109,13 +148,25 @@ src/agentic_primitives_gateway/
 ├── agents/
 │   ├── runner.py         # AgentRunner + _RunContext
 │   ├── namespace.py      # Knowledge namespace resolution
-│   ├── store.py          # FileAgentStore
+│   ├── store.py          # AgentStore ABC + FileAgentStore
+│   ├── redis_store.py    # RedisAgentStore + RedisTeamStore
+│   ├── session_registry.py # SessionRegistry ABC + InMemory/Redis
 │   ├── team_runner.py    # TeamRunner
+│   ├── team_store.py     # TeamStore ABC + FileTeamStore
 │   ├── team_prompts.py   # Prompt builders for teams
 │   ├── team_agent_loop.py# Generic LLM loop for team agents
 │   └── tools/            # Tool catalog, handlers, delegation
 ├── enforcement/          # Cedar policy enforcement
 ├── models/               # Pydantic models per primitive
-├── primitives/           # Provider implementations
-└── routes/               # FastAPI routers
+├── primitives/
+│   ├── tasks/
+│   │   ├── in_memory.py  # InMemoryTasksProvider (dev)
+│   │   └── redis.py      # RedisTasksProvider (multi-replica)
+│   └── ...               # Other provider implementations
+└── routes/
+    ├── _background.py    # BackgroundRunManager, EventStore, RedisEventStore
+    ├── _helpers.py       # @handle_provider_errors decorator
+    ├── agents.py         # Agent CRUD, chat, sessions
+    ├── teams.py          # Team CRUD, runs, events
+    └── ...               # Other routers
 ```

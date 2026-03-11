@@ -33,7 +33,7 @@ curl -X POST http://localhost:8000/api/v1/teams \
 | Method | Path | Description |
 |--------|------|-------------|
 | `POST` | `/{name}/run` | Run team (non-streaming) |
-| `POST` | `/{name}/run/stream` | Run team (SSE streaming) |
+| `POST` | `/{name}/run/stream` | Run team (SSE streaming, background task) |
 
 ### Non-Streaming Run
 
@@ -65,4 +65,89 @@ curl -N -X POST http://localhost:8000/api/v1/teams/research-team/run/stream \
   -d '{"message": "Research Python web frameworks and write benchmarks"}'
 ```
 
+The run executes in a background task -- if the client disconnects, the run completes independently. All events are recorded for replay on reconnect.
+
 See [Streaming](../concepts/streaming.md) for team event types, and [Teams](../concepts/teams.md) for the full execution model.
+
+## Runs (History & Status)
+
+Multiple runs can exist per team. Each run has a `team_run_id` generated when the run starts.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/{name}/runs` | List all known runs for this team |
+| `GET` | `/{name}/runs/{id}` | Get task board state (tasks with status/result) |
+| `GET` | `/{name}/runs/{id}/status` | Check if run is active (`"running"` or `"idle"`) |
+| `GET` | `/{name}/runs/{id}/events` | Get all recorded SSE events (for UI replay) |
+| `DELETE` | `/{name}/runs/{id}` | Delete run data (tasks, events) |
+
+### List Runs
+
+```bash
+curl http://localhost:8000/api/v1/teams/research-team/runs
+```
+
+```json
+{
+  "team_name": "research-team",
+  "runs": [
+    {"team_run_id": "abc123", "status": "idle"},
+    {"team_run_id": "def456", "status": "running"}
+  ]
+}
+```
+
+### Get Task Board State
+
+```bash
+curl http://localhost:8000/api/v1/teams/research-team/runs/abc123
+```
+
+```json
+{
+  "team_run_id": "abc123",
+  "team_name": "research-team",
+  "status": "idle",
+  "tasks": [
+    {"id": "t1", "title": "Research frameworks", "status": "done", "assigned_to": "researcher", "result": "..."},
+    {"id": "t2", "title": "Write benchmarks", "status": "done", "assigned_to": "coder", "result": "..."}
+  ],
+  "tasks_created": 2,
+  "tasks_completed": 2
+}
+```
+
+### Get Events for Replay
+
+```bash
+curl http://localhost:8000/api/v1/teams/research-team/runs/abc123/events
+```
+
+Returns all recorded SSE events. The UI replays these to reconstruct the full task board, activity log, streaming content, and synthesized response after a page refresh or navigation.
+
+```json
+{
+  "team_run_id": "abc123",
+  "status": "idle",
+  "events": [
+    {"type": "team_start", "team_run_id": "abc123", "team_name": "research-team"},
+    {"type": "phase_change", "phase": "planning"},
+    {"type": "tasks_created", "count": 2, "tasks": [...]},
+    {"type": "task_claimed", "agent": "researcher", "task_id": "t1", "title": "Research frameworks"},
+    {"type": "task_completed", "agent": "researcher", "task_id": "t1", "result": "..."},
+    {"type": "done", "response": "...", "tasks_created": 2, "tasks_completed": 2, "workers_used": ["researcher", "coder"]}
+  ]
+}
+```
+
+### Check Background Run Status
+
+```bash
+curl http://localhost:8000/api/v1/teams/research-team/runs/abc123/status
+```
+
+```json
+{"status": "running"}
+```
+
+Returns `"running"` if a background task is actively executing this run, `"idle"` otherwise. After a server restart, stale `"running"` statuses in Redis are detected and reported as `"idle"`.

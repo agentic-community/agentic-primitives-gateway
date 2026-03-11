@@ -76,6 +76,23 @@ contentBlockStop   →  we parse the complete JSON, emit tool_use_complete
 
 When a coordinator agent delegates to multiple sub-agents, their streams are merged via a shared `asyncio.Queue`. Each sub-agent task puts events on the queue; the main loop yields them as they arrive. This naturally interleaves events from concurrent sub-agents.
 
+### Background Task Decoupling
+
+Streaming endpoints run the agent/team in a background `asyncio.Task` that feeds events into a queue. The SSE response reads from the queue. If the client disconnects (page refresh, navigation), the task continues to completion.
+
+```
+Client → SSE Response → Queue ← Background Task (asyncio.Task)
+         (may disconnect)        (always completes)
+```
+
+This ensures `_finalize()` runs (storing the conversation turn) and tool calls complete even without a connected client.
+
+### Event Replay
+
+For teams, all events are recorded in an event log (in-memory, optionally persisted to Redis via `RedisEventStore`). When a client reconnects, it can fetch all recorded events via `GET /teams/{name}/runs/{id}/events` and replay them through the same event handler to reconstruct the full UI state: task board, activity log, streaming content, and synthesized response.
+
+For agents, conversation history is reconstructed from the memory provider via `GET /agents/{name}/sessions/{id}`.
+
 ## Client Usage
 
 ### JavaScript/TypeScript

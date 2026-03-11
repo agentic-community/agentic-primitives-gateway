@@ -282,6 +282,16 @@ teams:
       global_timeout_seconds: 300
 ```
 
+## Background Runs & Persistence
+
+**Background execution:** Streaming team runs execute in a background `asyncio.Task`. If the client disconnects, the run completes independently (workers finish their tasks, synthesizer produces the response). All events are recorded for later replay.
+
+**Event replay:** On reconnect, the UI fetches all recorded events from `/{name}/runs/{id}/events` and replays them through the same event handler to reconstruct the full UI state: task board, activity log, streaming content, and synthesized response.
+
+**Task board persistence:** With `RedisTasksProvider`, the task board survives across requests and is visible from any replica. With `InMemoryTasksProvider` (default), tasks exist only in the process that created them.
+
+**Multiple runs:** Each team can have many runs. The UI stores run IDs and provides a run picker to switch between them.
+
 ## API
 
 | Method | Path | Description |
@@ -292,4 +302,9 @@ teams:
 | `PUT` | `/api/v1/teams/{name}` | Update team |
 | `DELETE` | `/api/v1/teams/{name}` | Delete team |
 | `POST` | `/api/v1/teams/{name}/run` | Run team (non-streaming) |
-| `POST` | `/api/v1/teams/{name}/run/stream` | Run team (SSE streaming) |
+| `POST` | `/api/v1/teams/{name}/run/stream` | Run team (SSE streaming, background task) |
+| `GET` | `/api/v1/teams/{name}/runs` | List all runs |
+| `GET` | `/api/v1/teams/{name}/runs/{id}` | Get task board state |
+| `GET` | `/api/v1/teams/{name}/runs/{id}/status` | Check run status |
+| `GET` | `/api/v1/teams/{name}/runs/{id}/events` | Get recorded events for replay |
+| `DELETE` | `/api/v1/teams/{name}/runs/{id}` | Delete run data |
