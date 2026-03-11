@@ -508,6 +508,59 @@ curl -X POST localhost:8000/api/v1/agents/my-assistant/chat \
 
 Agents can also be defined in YAML config under the `agents.specs` key (see Configuration section).
 
+#### Agent Sessions
+
+Each agent chat uses a `session_id` to track conversation history. Sessions persist across page reloads and disconnections.
+
+```bash
+# List all sessions for an agent
+curl http://localhost:8000/api/v1/agents/researcher/sessions
+
+# Get conversation history for a session
+curl http://localhost:8000/api/v1/agents/researcher/sessions/{session_id}
+
+# Check if a background run is active
+curl http://localhost:8000/api/v1/agents/researcher/sessions/{session_id}/status
+
+# Delete a session
+curl -X DELETE http://localhost:8000/api/v1/agents/researcher/sessions/{session_id}
+```
+
+If the client disconnects mid-stream (page refresh, navigation), the agent run continues in the background. On reconnect, the UI polls for completion and restores the conversation.
+
+### Teams (`/api/v1/teams`)
+
+Teams orchestrate multiple agents working off a shared task board. A planner decomposes requests into tasks, workers claim and execute them in parallel, and a synthesizer produces a final response.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/v1/teams` | Create a team |
+| GET | `/api/v1/teams` | List all teams |
+| GET | `/api/v1/teams/{name}` | Get team spec |
+| PUT | `/api/v1/teams/{name}` | Update team |
+| DELETE | `/api/v1/teams/{name}` | Delete team |
+| POST | `/api/v1/teams/{name}/run` | Run team (non-streaming) |
+| POST | `/api/v1/teams/{name}/run/stream` | Run team (SSE streaming) |
+| GET | `/api/v1/teams/{name}/runs` | List all runs for a team |
+| GET | `/api/v1/teams/{name}/runs/{id}` | Get task board state |
+| GET | `/api/v1/teams/{name}/runs/{id}/status` | Check if run is active |
+| GET | `/api/v1/teams/{name}/runs/{id}/events` | Get all SSE events (for UI replay) |
+| DELETE | `/api/v1/teams/{name}/runs/{id}` | Delete run data |
+
+```bash
+# Create a team
+curl -X POST http://localhost:8000/api/v1/teams \
+  -H "Content-Type: application/json" \
+  -d '{"name": "research-team", "planner": "planner", "synthesizer": "synthesizer", "workers": ["researcher", "coder"]}'
+
+# Run a team (streaming)
+curl -N http://localhost:8000/api/v1/teams/research-team/run/stream \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Research and implement a sorting algorithm"}'
+```
+
+Like agent runs, team runs continue in the background if the client disconnects. The UI replays recorded events to reconstruct the full task board, activity log, and response on reconnect.
+
 Interactive API docs are available at `/docs` (Swagger UI) when the server is running.
 
 ---
@@ -789,11 +842,15 @@ When this format is detected (a `backend` key without a `backends` key), it is a
 
 ### Agents Configuration
 
-Agents can be defined in YAML config and are seeded into the agent store on startup. API-created agents are persisted to the `store_path` JSON file.
+Agents can be defined in YAML config and are seeded into the agent store on startup. The store backend is pluggable — `file` (default) persists to JSON, `redis` uses Redis hashes for multi-replica deployments.
 
 ```yaml
 agents:
-  store_path: "agents.json"         # Persistence file for API-created agents
+  store:
+    backend: file                     # "file", "redis", or dotted class path
+    config:
+      path: "agents.json"            # File backend: persistence file
+      # redis_url: "redis://..."     # Redis backend: connection URL
   default_model: "us.anthropic.claude-sonnet-4-20250514-v1:0"
   max_turns: 20                     # Default max tool-call loop turns
   specs:                            # Agents seeded from config
@@ -1616,13 +1673,39 @@ The gateway can serve multiple agents, users, or teams from a single deployment.
 
 **Stateless server.** The gateway holds no tenant-specific state in memory between requests (aside from the in-memory providers, which are dev-only). In Kubernetes, any replica can serve any tenant's request.
 
+**Redis-backed stores for multi-replica.** Agent specs, team specs, and task boards can be stored in Redis for cross-replica consistency. Background run events and session registries are also persisted to Redis when configured. See the `configs/agentcore-redis.yaml` example.
+
+```yaml
+# Multi-replica config example
+agents:
+  store:
+    backend: redis
+    config:
+      redis_url: "redis://my-redis:6379/0"
+
+teams:
+  store:
+    backend: redis
+    config:
+      redis_url: "redis://my-redis:6379/0"
+
+providers:
+  tasks:
+    default: redis
+    backends:
+      redis:
+        backend: "agentic_primitives_gateway.primitives.tasks.redis.RedisTasksProvider"
+        config:
+          redis_url: "redis://my-redis:6379/0"
+```
+
 ### What requires configuration
 
 **Policy enforcement must be explicitly enabled.** The default is `NoopPolicyEnforcer` (all requests allowed). To enforce per-tenant access control, configure `CedarPolicyEnforcer` and create policies that scope access by principal. Without enforcement, any caller can access any primitive with any namespace.
 
 **External backend providers are recommended.** The in-memory providers (`InMemoryProvider`, `NoopPolicyProvider`, `NoopEvaluationsProvider`) share a single process-global store -- all tenants see the same data. For multi-tenant deployments, use external backends (AgentCore, mem0+Milvus, Langfuse) where data isolation is handled by the backend itself.
 
-**Agent definitions are shared.** The `FileAgentStore` exposes all agent specs to all callers via the `/api/v1/agents` API. Any caller can create, read, update, or delete any agent. To restrict agent management, use Cedar policies scoping `agents:create_agent`, `agents:update_agent`, and `agents:delete_agent` to specific principals.
+**Agent definitions are shared.** The agent store (file or Redis) exposes all agent specs to all callers via the `/api/v1/agents` API. Any caller can create, read, update, or delete any agent. To restrict agent management, use Cedar policies scoping `agents:create_agent`, `agents:update_agent`, and `agents:delete_agent` to specific principals.
 
 ### What does NOT work today (known gaps)
 
@@ -1633,6 +1716,8 @@ The gateway can serve multiple agents, users, or teams from a single deployment.
 **No tenant-level rate limiting or quotas.** The gateway does not limit requests per tenant. Rate limiting should be handled by the reverse proxy or API gateway in front of the gateway.
 
 **No tenant-scoped agent store.** Agent specs are global -- there is no concept of "tenant A's agents" vs "tenant B's agents" at the storage level. Cedar policies can restrict who can manage which agents, but the underlying store is shared.
+
+**Background runs are per-replica.** The `asyncio.Task` running an agent or team job exists on one replica. If that replica restarts, the run is lost. Redis persists the events and status for cross-replica visibility, but cannot resume a lost task. Session registries track active browser/code_interpreter sessions for orphan cleanup.
 
 ### Deployment patterns
 

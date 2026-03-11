@@ -16,26 +16,31 @@ FastAPI service providing pluggable primitives (memory, observability, gateway, 
   - `primitives/` — Abstract base classes + backend implementations per primitive; `_sync.py` provides `SyncRunnerMixin` for executor-based async wrappers
   - `routes/` — FastAPI routers, one per primitive plus health and agents; `_helpers.py` provides `@handle_provider_errors` decorator
   - `enforcement/` — Policy enforcement layer: `base.py` (PolicyEnforcer ABC), `noop.py` (default allow-all), `cedar.py` (local Cedar evaluation via cedarpy), `middleware.py` (Starlette middleware mapping requests to Cedar principals/actions/resources)
+  - `routes/_background.py` — `BackgroundRunManager` (asyncio.Task + Queue decoupling), `EventStore` ABC, `RedisEventStore`, `sse_response()` helper
   - `agents/` — Declarative agent orchestration
     - `runner.py` — `AgentRunner` with `_RunContext` dataclass; `run()` (non-streaming) and `run_stream()` (SSE) share init/request/finalize via helpers
-    - `store.py` — `FileAgentStore` (JSON persistence, YAML seed with overwrite)
+    - `store.py` — `AgentStore` ABC + `FileAgentStore` (JSON persistence, YAML seed with overwrite)
+    - `redis_store.py` — `RedisAgentStore` + `RedisTeamStore` (Redis hash-backed, optional)
+    - `session_registry.py` — `SessionRegistry` ABC + `InMemorySessionRegistry` + `RedisSessionRegistry`
     - `namespace.py` — Shared namespace resolution for agent memory (knowledge vs session scoping)
+    - `team_runner.py` — `TeamRunner` orchestrates multi-agent team execution (plan → execute → synthesize)
+    - `team_store.py` — `TeamStore` ABC + `FileTeamStore`
     - `tools/` — Tool system package
       - `handlers.py` — Handler functions per primitive (memory, browser, code_interpreter, tools, identity)
       - `catalog.py` — `ToolDefinition`, `_TOOL_CATALOG`, `build_tool_list`, `to_gateway_tools`, `execute_tool`
       - `delegation.py` — Agent-as-tool delegation (`_build_agent_tools`, `MAX_AGENT_DEPTH`)
 - `ui/` — React + Vite + TypeScript + Tailwind CSS web UI
   - `src/components/` — Reusable components (ChatMessage, ToolCallBlock, SubAgentBlock, ArtifactBlock, MemoryPanel, ToolsPanel, CollapsibleSection, etc.)
-  - `src/pages/` — Dashboard, AgentList (CRUD + edit), AgentChat (streaming + sub-agents), PolicyManager, PrimitiveExplorer
-  - `src/hooks/` — Data fetching hooks built on generic `useFetch<T>`
+  - `src/pages/` — Dashboard, AgentList (CRUD + edit), AgentChat (streaming + sub-agents + session resume), TeamList, TeamRun (streaming + event replay + background resume), PolicyManager, PrimitiveExplorer
+  - `src/hooks/` — Data fetching hooks built on generic `useFetch<T>`, `useAutoScroll`
   - `src/lib/` — Shared utilities (cn, theme with CODE_THEME/PROSE_CLASSES, SSE parser)
   - `src/api/` — API client + TypeScript types
   - Production build outputs to `src/agentic_primitives_gateway/static/`
   - FastAPI serves the built SPA at `/ui/` with client-side routing fallback
 - `client/` — Separate `agentic-primitives-gateway-client` package (httpx-based, no server dependency)
-- `tests/` — Server unit/system tests (pytest, async); 893+ tests
+- `tests/` — Server unit/system tests (pytest, async); 1087+ tests
 - `client/tests/` — Client unit tests (100 tests)
-- `configs/` — YAML presets (local, agentcore, kitchen-sink, milvus-langfuse, agents-agentcore, agents-mem0-langfuse, agents-mixed)
+- `configs/` — YAML presets (local, agentcore, agentcore-redis, kitchen-sink, milvus-langfuse, agents-agentcore, agents-mem0-langfuse, agents-mixed)
 - `examples/` — Example agents (langchain, strands)
 - `deploy/helm/` — Kubernetes Helm chart
 
@@ -43,7 +48,11 @@ FastAPI service providing pluggable primitives (memory, observability, gateway, 
 
 Each primitive has an abstract base class (`primitives/*/base.py`) with multiple backend implementations (noop, in_memory, agentcore, mem0, langfuse, etc.). The registry dynamically loads provider classes via `importlib` at startup from config. Requests flow through `RequestContextMiddleware` (in `middleware.py`) that extracts credentials and provider routing headers into contextvars, then through `PolicyEnforcementMiddleware` for Cedar policy evaluation, then routes call `registry.{primitive}` which resolves the correct backend.
 
-The agents subsystem sits above the primitives. An agent spec (system prompt + model + enabled tools + hooks) defines a declarative agent. The `AgentRunner` (in `agents/runner.py`) uses a `_RunContext` dataclass to share state across phases. `run()` and `run_stream()` share initialization, request building, session management, and finalization — only LLM calling and tool execution differ. Streaming uses SSE with token-by-token delivery and real-time sub-agent event forwarding. Tool calls within a turn execute in parallel via `asyncio.gather` (non-streaming) or `asyncio.Queue` (streaming). Agents can delegate to other agents as tools (agent-as-tool pattern) with configurable depth limiting (`MAX_AGENT_DEPTH=3`). Agent specs are stored in `FileAgentStore` (JSON persistence) and seeded from YAML config on startup (config overwrites existing agents).
+The agents subsystem sits above the primitives. An agent spec (system prompt + model + enabled tools + hooks) defines a declarative agent. The `AgentRunner` (in `agents/runner.py`) uses a `_RunContext` dataclass to share state across phases. `run()` and `run_stream()` share initialization, request building, session management, and finalization — only LLM calling and tool execution differ. Streaming uses SSE with token-by-token delivery and real-time sub-agent event forwarding. Tool calls within a turn execute in parallel via `asyncio.gather` (non-streaming) or `asyncio.Queue` (streaming). Agents can delegate to other agents as tools (agent-as-tool pattern) with configurable depth limiting (`MAX_AGENT_DEPTH=3`). Agent specs are stored in `FileAgentStore` (JSON persistence) or `RedisAgentStore` (Redis hash) and seeded from YAML config on startup (config overwrites existing agents).
+
+The teams subsystem (`agents/team_runner.py`) orchestrates multi-agent execution: a planner decomposes requests into tasks, workers claim and execute them in parallel, a re-planner evaluates results and creates follow-ups, and a synthesizer produces a final response. Task boards are managed by the tasks primitive (`InMemoryTasksProvider` for dev, `RedisTasksProvider` for multi-replica with atomic Lua-scripted claiming).
+
+Streaming endpoints use `BackgroundRunManager` (`routes/_background.py`) to decouple runs from HTTP connections. The runner executes in an `asyncio.Task` that feeds events into a queue; the SSE response reads from the queue. If the client disconnects, the task completes independently and stores the result. An optional `RedisEventStore` persists events and status to Redis for cross-replica visibility. `SessionRegistry` tracks active browser/code_interpreter sessions for observability and orphan cleanup.
 
 ## Build & Run
 
@@ -64,7 +73,7 @@ python -m pytest tests/ -v
 ## Test Commands
 
 ```bash
-# All server tests (893+ unit/system + integration)
+# All server tests (1087+ unit/system + integration)
 python -m pytest tests/ -v
 
 # All client tests (100 tests)
@@ -105,6 +114,11 @@ pre-commit run --all-files # Run all hooks on entire repo
 - **JupyterCodeInterpreterProvider** — `primitives/code_interpreter/jupyter.py` provides code execution via Jupyter Server or Enterprise Gateway. Uses WebSocket for execution and kernel-based file I/O (works without the Contents REST API).
 - **AgentCorePolicyProvider** — `primitives/policy/agentcore.py` provides Cedar-based policy management via `bedrock-agentcore-control`. Supports engine CRUD, policy CRUD, and policy generation. Uses `SyncRunnerMixin` + `get_boto3_session()`.
 - **AgentCoreEvaluationsProvider** — `primitives/evaluations/agentcore.py` provides LLM-as-a-judge evaluations via dual clients: `bedrock-agentcore-control` for evaluator CRUD and `bedrock-agentcore` for runtime evaluation. Uses `SyncRunnerMixin`.
+- **Background run manager** — `routes/_background.py` provides `BackgroundRunManager` which decouples streaming runs from HTTP connections via `asyncio.Task` + `Queue`. Runs complete even if the client disconnects. Optional `EventStore` (e.g. `RedisEventStore`) persists events/status to Redis for cross-replica visibility. `sse_response()` helper creates `StreamingResponse` from a queue.
+- **Redis stores** — `agents/redis_store.py` provides `RedisAgentStore` and `RedisTeamStore` implementing the `AgentStore`/`TeamStore` ABCs with Redis hash storage. `primitives/tasks/redis.py` provides `RedisTasksProvider` with atomic Lua-scripted `claim_task`, `update_task`, and `add_note`. All Redis is optional — enabled via `store.backend: redis` in config.
+- **Session registry** — `agents/session_registry.py` provides `SessionRegistry` ABC with `InMemorySessionRegistry` (default) and `RedisSessionRegistry`. Tracks active browser/code_interpreter sessions for observability and orphan cleanup. Injected into `AgentRunner` and `TeamRunner` via `set_session_registry()`.
+- **Multi-session/run support** — Agents support multiple conversation sessions per agent; teams support multiple runs per team. `GET /agents/{name}/sessions` lists sessions, `GET /teams/{name}/runs` lists runs. Sessions/runs can be deleted via `DELETE` endpoints.
+- **Pluggable store backends** — `AgentsConfig` and `TeamsConfig` have a `store` field with `backend` (alias or dotted path) and `config` (kwargs). Aliases: `file` → `FileAgentStore`, `redis` → `RedisAgentStore`. Custom backends can also be specified by dotted path. Stores implement factory methods `create_background_run_manager()` and `create_session_registry()` so `main.py` doesn't need backend-specific logic. `AGENT_STORE_ALIASES` and `TEAM_STORE_ALIASES` in `config.py` map short names to classes.
 
 ## Style
 
@@ -118,7 +132,7 @@ pre-commit run --all-files # Run all hooks on entire repo
 
 ## Web UI
 
-React + Vite SPA served at `/ui/`. Pages: Dashboard (health, providers, agents), Agent List (CRUD with inline edit), Agent Chat (token-streaming, sub-agent activity, tool artifacts), Policy Manager, Primitive Explorer. Shared `useFetch<T>` hook, `CollapsibleSection` component, and centralized theme constants (`CODE_THEME`, `PROSE_CLASSES`) reduce duplication.
+React + Vite SPA served at `/ui/`. Pages: Dashboard (health, providers, agents), Agent List (CRUD with inline edit), Agent Chat (token-streaming, sub-agent activity, tool artifacts, session resume with polling, multi-session picker), Team List (CRUD), Team Run (streaming task board, event replay on reconnect, background run indicator, multi-run picker), Policy Manager, Primitive Explorer. Shared `useFetch<T>` hook, `useAutoScroll` hook, `CollapsibleSection` component, `sseStream()` fetch wrapper, and centralized theme constants (`CODE_THEME`, `PROSE_CLASSES`) reduce duplication.
 
 ```bash
 # Development (hot reload, proxies API to :8000)
