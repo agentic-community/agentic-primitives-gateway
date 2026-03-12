@@ -187,10 +187,19 @@ export default function TeamRun() {
             setPhase(event.phase);
             logs.push(`Phase: ${phaseLabels[event.phase] ?? event.phase}`);
             break;
+          case "task_created": {
+            const tc = event.task;
+            if (!newTasks.some((nt) => nt.id === tc.id)) {
+              newTasks.push({ id: tc.id, title: tc.title, status: "pending", suggestedWorker: tc.suggested_worker });
+              logs.push(`Task created: ${tc.title}${tc.suggested_worker ? ` [${tc.suggested_worker}]` : ""}`);
+            }
+            break;
+          }
           case "tasks_created":
             for (const t of event.tasks) {
-              newTasks.push({ id: t.id, title: t.title, status: "pending", suggestedWorker: t.suggested_worker });
-              logs.push(`  -> ${t.title}${t.suggested_worker ? ` [${t.suggested_worker}]` : ""}`);
+              if (!newTasks.some((nt) => nt.id === t.id)) {
+                newTasks.push({ id: t.id, title: t.title, status: "pending", suggestedWorker: t.suggested_worker });
+              }
             }
             logs.push(`${event.count} tasks created`);
             break;
@@ -298,22 +307,44 @@ export default function TeamRun() {
               switch (event.type) {
                 case "phase_change":
                   setPhase(event.phase);
+                  setActivityLog((prev) => [...prev, `Phase: ${phaseLabels[event.phase] ?? event.phase}`]);
+                  break;
+                case "task_created":
+                  setTasks((prev) => {
+                    if (prev.some((t) => t.id === event.task.id)) return prev;
+                    return [...prev, { id: event.task.id, title: event.task.title, status: "pending", suggestedWorker: event.task.suggested_worker }];
+                  });
+                  setActivityLog((prev) => [...prev, `Task created: ${event.task.title}${event.task.suggested_worker ? ` [${event.task.suggested_worker}]` : ""}`]);
                   break;
                 case "tasks_created":
                   setTasks((prev) => {
                     const existingIds = new Set(prev.map((t) => t.id));
                     const newOnes = event.tasks.filter((t) => !existingIds.has(t.id));
+                    if (newOnes.length === 0) return prev;
                     return [...prev, ...newOnes.map((t) => ({ id: t.id, title: t.title, status: "pending", suggestedWorker: t.suggested_worker }))];
                   });
+                  setActivityLog((prev) => [...prev, `${event.count} tasks created`]);
                   break;
                 case "task_claimed":
                   setTasks((prev) => prev.map((t) => t.id === event.task_id ? { ...t, status: "in_progress", agent: event.agent } : t));
+                  setActivityLog((prev) => [...prev, `[${event.agent}] claimed: ${event.title}`]);
                   break;
                 case "task_completed":
                   setTasks((prev) => prev.map((t) => t.id === event.task_id ? { ...t, status: "done", result: event.result } : t));
+                  setActivityLog((prev) => [...prev, `[${event.agent}] completed: ${event.task_id}`]);
                   break;
                 case "task_failed":
                   setTasks((prev) => prev.map((t) => t.id === event.task_id ? { ...t, status: "failed", error: event.error } : t));
+                  setActivityLog((prev) => [...prev, `[${event.agent}] failed: ${event.task_id} -- ${event.error}`]);
+                  break;
+                case "worker_start":
+                  setActivityLog((prev) => [...prev, `[${event.agent}] started looking for tasks`]);
+                  break;
+                case "worker_done":
+                  setActivityLog((prev) => [...prev, `[${event.agent}] finished -- no more tasks`]);
+                  break;
+                case "worker_error":
+                  setActivityLog((prev) => [...prev, `Worker ${event.agent} error: ${event.error}`]);
                   break;
                 case "agent_token":
                   if (event.agent === "synthesizer") {
@@ -328,6 +359,7 @@ export default function TeamRun() {
                   if (event.response) setResponse(event.response);
                   setPhase("done");
                   setStats({ created: event.tasks_created, completed: event.tasks_completed, workers: event.workers_used ?? [] });
+                  setActivityLog((prev) => [...prev, `Done -- ${event.tasks_completed}/${event.tasks_created} tasks completed`]);
                   break;
               }
             }
@@ -457,15 +489,21 @@ export default function TeamRun() {
                 setPhase(event.phase);
                 addLog(`Phase: ${phaseLabels[event.phase] ?? event.phase}`);
                 break;
+              case "task_created":
+                setTasks((prev) => {
+                  if (prev.some((t) => t.id === event.task.id)) return prev;
+                  return [...prev, { id: event.task.id, title: event.task.title, status: "pending", suggestedWorker: event.task.suggested_worker }];
+                });
+                addLog(`Task created: ${event.task.title}${event.task.suggested_worker ? ` [${event.task.suggested_worker}]` : ""}`);
+                break;
               case "tasks_created":
-                setTasks((prev) => [
-                  ...prev,
-                  ...event.tasks.map((t) => ({ id: t.id, title: t.title, status: "pending", suggestedWorker: t.suggested_worker })),
-                ]);
-                addLog(`${event.count} tasks created:`);
-                for (const t of event.tasks) {
-                  addLog(`  -> ${t.title}${t.suggested_worker ? ` [${t.suggested_worker}]` : ""}`);
-                }
+                setTasks((prev) => {
+                  const existingIds = new Set(prev.map((t) => t.id));
+                  const newOnes = event.tasks.filter((t) => !existingIds.has(t.id));
+                  if (newOnes.length === 0) return prev;
+                  return [...prev, ...newOnes.map((t) => ({ id: t.id, title: t.title, status: "pending", suggestedWorker: t.suggested_worker }))];
+                });
+                addLog(`${event.count} tasks created`);
                 break;
               case "task_claimed":
                 setTasks((prev) => prev.map((t) =>

@@ -270,8 +270,25 @@ class TeamRunner:
         try:
             if phase == "planning":
                 await _emit({"type": "phase_change", "phase": "planning"})
+                seen_task_ids: set[str] = set()
                 async for event in self._run_planner_stream(team_spec, team_run_id, message):
                     await _emit(event)
+                    # Poll for newly created tasks after every event
+                    new_tasks = await registry.tasks.list_tasks(team_run_id)
+                    for t in new_tasks:
+                        if t.id not in seen_task_ids:
+                            seen_task_ids.add(t.id)
+                            await _emit(
+                                {
+                                    "type": "task_created",
+                                    "task": {
+                                        "id": t.id,
+                                        "title": t.title,
+                                        "priority": t.priority,
+                                        "suggested_worker": t.suggested_worker,
+                                    },
+                                }
+                            )
 
                 all_tasks = await registry.tasks.list_tasks(team_run_id)
                 await _emit(
@@ -383,9 +400,26 @@ class TeamRunner:
         # Phase 1: Initial planning
         await self._team_checkpoint(team_spec, team_run_id, message, "planning")
         yield {"type": "phase_change", "phase": "planning"}
+        seen_task_ids: set[str] = set()
         async for event in self._run_planner_stream(team_spec, team_run_id, message):
             yield event
+            # Poll for newly created tasks after every event. Tools execute
+            # between LLM turns, so new tasks appear after tool completion.
+            new_tasks = await registry.tasks.list_tasks(team_run_id)
+            for t in new_tasks:
+                if t.id not in seen_task_ids:
+                    seen_task_ids.add(t.id)
+                    yield {
+                        "type": "task_created",
+                        "task": {
+                            "id": t.id,
+                            "title": t.title,
+                            "priority": t.priority,
+                            "suggested_worker": t.suggested_worker,
+                        },
+                    }
 
+        # Still emit the final tasks_created for completeness (catches any missed)
         all_tasks = await registry.tasks.list_tasks(team_run_id)
         yield {
             "type": "tasks_created",
@@ -492,6 +526,7 @@ class TeamRunner:
 
         tasks_before = await registry.tasks.list_tasks(team_run_id)
         count_before = len(tasks_before)
+        seen_task_ids = {t.id for t in tasks_before}
         tools = self._planner_tools(team_run_id, team_spec.planner)
 
         await event_queue.put({"type": "phase_change", "phase": "replanning"})
@@ -499,6 +534,22 @@ class TeamRunner:
             planner_spec, prompt, tools, "planner", max_turns=planner_spec.max_turns
         ):
             await event_queue.put(event)
+            # Poll for newly created tasks during re-planning
+            current_tasks = await registry.tasks.list_tasks(team_run_id)
+            for t in current_tasks:
+                if t.id not in seen_task_ids:
+                    seen_task_ids.add(t.id)
+                    await event_queue.put(
+                        {
+                            "type": "task_created",
+                            "task": {
+                                "id": t.id,
+                                "title": t.title,
+                                "priority": t.priority,
+                                "suggested_worker": t.suggested_worker,
+                            },
+                        }
+                    )
 
         tasks_after = await registry.tasks.list_tasks(team_run_id)
         new_tasks = tasks_after[count_before:]

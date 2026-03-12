@@ -227,6 +227,7 @@ export type TeamStreamEvent =
   | { type: "team_start"; team_run_id: string; team_name: string }
   | { type: "phase_change"; phase: string }
   | { type: "tasks_created"; count: number; tasks: { id: string; title: string; priority: number; suggested_worker?: string }[] }
+  | { type: "task_created"; task: { id: string; title: string; priority: number; suggested_worker?: string } }
   | { type: "task_claimed"; agent: string; task_id: string; title: string }
   | { type: "task_completed"; agent: string; task_id: string; result: string }
   | { type: "task_failed"; agent: string; task_id: string; error: string }

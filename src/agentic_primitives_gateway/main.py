@@ -147,11 +147,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if checkpoint_store and heartbeat:
         get_team_runner().set_checkpoint_store(checkpoint_store, replica_id=heartbeat.replica_id)
 
-    # Initialize auth backend
+    # Initialize auth backend (defaults to noop if not configured)
     auth_cfg = settings.auth
     auth_cls_path = AUTH_BACKEND_ALIASES.get(auth_cfg.backend, auth_cfg.backend)
     auth_cls = _load_class(auth_cls_path)
-    # Pass backend-specific config as kwargs
     auth_kwargs: dict = {}
     if auth_cfg.backend == "api_key":
         auth_kwargs["api_keys"] = auth_cfg.api_keys
