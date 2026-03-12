@@ -7,15 +7,23 @@ from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from starlette.responses import Response
 
 from agentic_primitives_gateway._build_info import BUILD_REF
+from agentic_primitives_gateway.auth.base import AuthBackend
 from agentic_primitives_gateway.auth.middleware import AuthenticationMiddleware
-from agentic_primitives_gateway.config import Settings, settings
+from agentic_primitives_gateway.config import (
+    AGENT_STORE_ALIASES,
+    AUTH_BACKEND_ALIASES,
+    TEAM_STORE_ALIASES,
+    Settings,
+    settings,
+)
 from agentic_primitives_gateway.context import get_request_id
+from agentic_primitives_gateway.enforcement.base import PolicyEnforcer
 from agentic_primitives_gateway.enforcement.middleware import PolicyEnforcementMiddleware
 from agentic_primitives_gateway.middleware import RequestContextMiddleware
 from agentic_primitives_gateway.registry import _load_class, registry
@@ -86,7 +94,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     registry.initialize()
 
     # Initialize stores via pluggable backend config
-    from agentic_primitives_gateway.config import AGENT_STORE_ALIASES, TEAM_STORE_ALIASES
     from agentic_primitives_gateway.routes.agents import set_agent_store
 
     agent_store_cls = _load_class(AGENT_STORE_ALIASES.get(settings.agents.store.backend, settings.agents.store.backend))
@@ -137,9 +144,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         get_team_runner().set_checkpoint_store(checkpoint_store, replica_id=heartbeat.replica_id)
 
     # Initialize auth backend
-    from agentic_primitives_gateway.auth.base import AuthBackend
-    from agentic_primitives_gateway.config import AUTH_BACKEND_ALIASES
-
     auth_cfg = settings.auth
     auth_cls_path = AUTH_BACKEND_ALIASES.get(auth_cfg.backend, auth_cfg.backend)
     auth_cls = _load_class(auth_cls_path)
@@ -157,8 +161,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await _seed_policies()
 
     # Initialize policy enforcer
-    from agentic_primitives_gateway.enforcement.base import PolicyEnforcer
-
     enforcer_cfg = settings.enforcement
     enforcer_cls = _load_class(enforcer_cfg.backend)
     enforcer: PolicyEnforcer = enforcer_cls(**enforcer_cfg.config)
@@ -225,15 +227,11 @@ app.add_middleware(
 
 @app.exception_handler(ValueError)
 async def value_error_handler(request: Request, exc: ValueError) -> Response:
-    from fastapi.responses import JSONResponse
-
     return JSONResponse(status_code=400, content={"detail": str(exc)})
 
 
 @app.exception_handler(ConnectionError)
 async def connection_error_handler(request: Request, exc: ConnectionError) -> Response:
-    from fastapi.responses import JSONResponse
-
     logger.warning("Connection error on %s %s: %s", request.method, request.url.path, exc)
     return JSONResponse(
         status_code=503,
@@ -243,8 +241,6 @@ async def connection_error_handler(request: Request, exc: ConnectionError) -> Re
 
 @app.exception_handler(TimeoutError)
 async def timeout_error_handler(request: Request, exc: TimeoutError) -> Response:
-    from fastapi.responses import JSONResponse
-
     logger.warning("Timeout on %s %s: %s", request.method, request.url.path, exc)
     return JSONResponse(
         status_code=504,
@@ -254,8 +250,6 @@ async def timeout_error_handler(request: Request, exc: TimeoutError) -> Response
 
 @app.exception_handler(Exception)
 async def general_error_handler(request: Request, exc: Exception) -> Response:
-    from fastapi.responses import JSONResponse
-
     logger.exception("Unhandled error on %s %s", request.method, request.url.path)
     return JSONResponse(
         status_code=500,

@@ -31,9 +31,11 @@ from agentic_primitives_gateway.agents.team_prompts import (
 )
 from agentic_primitives_gateway.agents.team_store import TeamStore
 from agentic_primitives_gateway.agents.tools import ToolDefinition, build_tool_list
+from agentic_primitives_gateway.auth.models import AuthenticatedPrincipal
 from agentic_primitives_gateway.context import (
     get_authenticated_principal,
     get_provider_override,
+    set_authenticated_principal,
     set_provider_overrides,
 )
 from agentic_primitives_gateway.models.agents import AgentSpec, PrimitiveConfig
@@ -154,9 +156,6 @@ class TeamRunner:
             await self._checkpoint_store.release_lock(checkpoint_key)
 
     async def _resume_team_from_data(self, data: dict[str, Any]) -> None:
-        from agentic_primitives_gateway.auth.models import AuthenticatedPrincipal
-        from agentic_primitives_gateway.context import set_authenticated_principal
-
         p = data.get("principal")
         if not p or "id" not in p:
             raise ValueError("Team checkpoint is missing principal data")

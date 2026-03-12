@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import logging
 from typing import Any
 
@@ -151,8 +152,6 @@ class AgentCoreBrowserProvider(BrowserProvider, SyncRunnerMixin):
         }
 
     async def screenshot(self, session_id: str) -> str:
-        import base64
-
         page = self._get_page(session_id)
         data = await page.screenshot(type="png")
         return base64.b64encode(data).decode()

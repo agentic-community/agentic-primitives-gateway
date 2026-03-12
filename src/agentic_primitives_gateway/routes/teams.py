@@ -1,3 +1,4 @@
+import contextlib
 import logging
 from typing import Any
 
@@ -211,8 +212,6 @@ async def delete_team_run(name: str, team_run_id: str) -> dict:
 
     # Clean up events in Redis
     if _bg._event_store:
-        import contextlib
-
         with contextlib.suppress(Exception):
             await _bg._event_store.delete(team_run_id)
 

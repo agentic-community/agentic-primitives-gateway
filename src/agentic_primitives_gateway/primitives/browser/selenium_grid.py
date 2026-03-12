@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import contextlib
+import json
 import logging
+import urllib.request
 import uuid
 from typing import Any
 
@@ -185,13 +187,9 @@ class SeleniumGridBrowserProvider(BrowserProvider, SyncRunnerMixin):
         return await self._run_sync(driver.execute_script, script)
 
     async def healthcheck(self) -> bool:
-        import urllib.request
-
         hub_url = self._default_hub_url
 
         def _check() -> bool:
-            import json
-
             req = urllib.request.Request(f"{hub_url}/status")
             with urllib.request.urlopen(req, timeout=5) as resp:
                 data = json.loads(resp.read())

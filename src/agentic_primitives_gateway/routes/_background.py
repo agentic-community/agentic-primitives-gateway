@@ -13,6 +13,7 @@ Event persistence is pluggable via ``EventStore``:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import contextvars
 import json
 import logging
@@ -110,8 +111,6 @@ class RedisEventStore(EventStore):
 
     async def rename_key(self, old_key: str, new_key: str) -> None:
         """Rename status, events, and owner keys (best-effort)."""
-        import contextlib
-
         for suffix in (":status", ":events", ":owner"):
             old = f"run:{old_key}{suffix}"
             new = f"run:{new_key}{suffix}"

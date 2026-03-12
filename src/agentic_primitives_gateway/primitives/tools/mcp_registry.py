@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import logging
+import os
 from typing import Any, ClassVar
 
 from agentic_primitives_gateway.context import get_service_credentials
@@ -38,8 +40,6 @@ class MCPRegistryProvider(SyncRunnerMixin, ToolsProvider):
         verify_ssl: bool = True,
         **kwargs: Any,
     ) -> None:
-        import os
-
         self._default_base_url = base_url or os.environ.get("MCP_REGISTRY_URL", "http://localhost:8080")
         self._default_token = token or os.environ.get("MCP_REGISTRY_TOKEN")
         self._verify_ssl = verify_ssl
@@ -69,8 +69,6 @@ class MCPRegistryProvider(SyncRunnerMixin, ToolsProvider):
     @staticmethod
     def _parse_sse_json(text: str) -> dict[str, Any]:
         """Parse SSE response to extract JSON data."""
-        import json
-
         for line in text.strip().split("\n"):
             if line.startswith("data: "):
                 result: dict[str, Any] = json.loads(line[6:])

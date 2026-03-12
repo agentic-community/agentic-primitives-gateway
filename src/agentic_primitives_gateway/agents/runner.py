@@ -18,9 +18,11 @@ from agentic_primitives_gateway.agents.tools import (
     execute_tool,
     to_gateway_tools,
 )
+from agentic_primitives_gateway.auth.models import AuthenticatedPrincipal
 from agentic_primitives_gateway.context import (
     get_authenticated_principal,
     get_provider_override,
+    set_authenticated_principal,
     set_provider_overrides,
 )
 from agentic_primitives_gateway.models.agents import AgentSpec, ChatResponse, ToolArtifact
@@ -632,9 +634,6 @@ class AgentRunner:
 
     async def _resume_from_data(self, data: dict[str, Any]) -> None:
         """Internal resume logic — separated for testability."""
-        from agentic_primitives_gateway.auth.models import AuthenticatedPrincipal
-        from agentic_primitives_gateway.context import set_authenticated_principal
-
         # Reconstruct principal and set in contextvar
         p = data.get("principal")
         if not p or "id" not in p:

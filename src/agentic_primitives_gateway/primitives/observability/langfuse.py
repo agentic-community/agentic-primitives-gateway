@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 import uuid
 from typing import Any
@@ -64,8 +65,6 @@ class LangfuseObservabilityProvider(SyncRunnerMixin, ObservabilityProvider):
         base_url: str | None = None,
         **kwargs: Any,
     ) -> None:
-        import os
-
         # Server-side defaults: provider config → env vars
         self._default_public_key = public_key or os.environ.get("LANGFUSE_PUBLIC_KEY")
         self._default_secret_key = secret_key or os.environ.get("LANGFUSE_SECRET_KEY")

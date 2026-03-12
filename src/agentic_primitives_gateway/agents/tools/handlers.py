@@ -10,6 +10,8 @@ import json
 import logging
 from typing import Any
 
+from agentic_primitives_gateway.models.agents import AgentSpec, PrimitiveConfig
+from agentic_primitives_gateway.models.tasks import TaskNote
 from agentic_primitives_gateway.registry import registry
 
 logger = logging.getLogger(__name__)
@@ -205,8 +207,6 @@ async def task_update(
 
 
 async def task_add_note(team_run_id: str, task_id: str, agent_name: str, content: str) -> str:
-    from agentic_primitives_gateway.models.tasks import TaskNote
-
     note = TaskNote(agent=agent_name, content=content)
     task = await registry.tasks.add_note(team_run_id=team_run_id, task_id=task_id, note=note)
     if task is None:
@@ -238,8 +238,6 @@ async def agent_create(
     ``primitives`` is a JSON string mapping primitive names to config,
     e.g. '{"memory": {"enabled": true}, "browser": {"enabled": true}}'
     """
-    from agentic_primitives_gateway.models.agents import AgentSpec, PrimitiveConfig
-
     try:
         prim_raw = json.loads(primitives) if primitives else {}
     except json.JSONDecodeError:

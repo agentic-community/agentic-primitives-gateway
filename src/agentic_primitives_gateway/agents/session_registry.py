@@ -11,6 +11,7 @@ backend (Selenium Hub, Jupyter Server, AgentCore).
 
 from __future__ import annotations
 
+import json
 import logging
 from abc import ABC, abstractmethod
 from typing import Any
@@ -86,8 +87,6 @@ class RedisSessionRegistry(SessionRegistry):
         return f"sessions:{primitive}"
 
     async def register(self, primitive: str, session_id: str, metadata: dict[str, Any] | None = None) -> None:
-        import json
-
         key = self._key(primitive)
         await self._redis.hset(key, session_id, json.dumps(metadata or {}, default=str))
         await self._redis.expire(key, self._ttl)
@@ -96,8 +95,6 @@ class RedisSessionRegistry(SessionRegistry):
         await self._redis.hdel(self._key(primitive), session_id)
 
     async def list_sessions(self, primitive: str | None = None) -> list[dict[str, Any]]:
-        import json
-
         results = []
         if primitive:
             prims = [primitive]
