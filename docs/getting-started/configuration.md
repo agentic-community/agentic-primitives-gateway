@@ -91,6 +91,49 @@ By default, the gateway requires client credentials. To allow the server's own c
 allow_server_credentials: true
 ```
 
+## Authentication
+
+The gateway supports pluggable authentication backends configured via the `auth` block.
+
+### Backends
+
+```yaml
+# Noop (default) — dev mode, full access
+auth:
+  backend: noop
+
+# API key — static keys mapped to principals
+auth:
+  backend: api_key
+  api_keys:
+    - key: "sk-dev-12345"
+      principal_id: "dev-user"
+      principal_type: "user"
+      groups: ["engineering"]
+      scopes: ["admin"]
+
+# JWT — OIDC token validation
+auth:
+  backend: jwt
+  jwt:
+    issuer: "https://keycloak.example.com/realms/my-realm"
+    audience: ""
+    client_id: "my-app-ui"
+    algorithms: ["RS256"]
+    claims_mapping:
+      groups: "groups"
+      scopes: "scope"
+```
+
+### Resource Ownership
+
+All agents, teams, and related resources track ownership for access control:
+
+- **`owner_id`** is set automatically from the authenticated principal on create.
+- **`shared_with: []`** means private -- only the owner can access. This is the default for API-created resources.
+- **`shared_with: ["*"]`** means all authenticated users can view/use the resource. This is the default for config-seeded resources.
+- The **owner** can edit and delete the resource. Users in **shared groups** can view and use it. Users with the **admin** scope bypass all access checks.
+
 ## Store Backend Configuration
 
 Agent specs, team specs, and associated components (background run managers, session registries) are managed by pluggable store backends.
@@ -228,6 +271,7 @@ enforcement:
 | `agents-agentcore.yaml` | Agents with AgentCore backends |
 | `agents-mem0-langfuse.yaml` | Agents with mem0 memory, Langfuse tracing |
 | `agents-mixed.yaml` | Mixed providers per primitive |
+| `local-jwt.yaml` | Local providers with JWT authentication enabled |
 
 ## Hot Reload
 

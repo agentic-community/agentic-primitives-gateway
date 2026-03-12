@@ -23,10 +23,13 @@ Agent (any framework)  -->  Gateway REST API  -->  Backend Provider
 - **Background run persistence** — runs continue if the client disconnects; reconnect and resume
 - **Multi-session/run support** — multiple conversations per agent, multiple runs per team
 - **Pluggable store backends** — file (default) or Redis for multi-replica deployments
+- **Multi-user authentication** with pluggable backends (noop, API key, JWT/OIDC)
+- **Resource ownership and group-based access control** — users see only their own agents, sessions, and teams
+- **User-scoped memory isolation** — memory namespaces are automatically prefixed per user
 - **Policy enforcement** via Cedar with auto-discovered actions
 - **Per-request provider routing** via headers (`X-Provider-Memory: mem0`)
 - **Credential pass-through** preserving caller identity
-- **Web UI** for agent management, streaming chat, team execution, session/run management, and API exploration
+- **Web UI** with OIDC login flow, agent management, streaming chat, team execution, session/run management, and API exploration
 - **Hot-reload** config via Kubernetes ConfigMap watcher
 
 ## Quick Links

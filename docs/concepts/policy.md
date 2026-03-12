@@ -66,9 +66,14 @@ These paths are never enforced:
 
 ## Principals
 
-The middleware resolves the principal from headers in this order:
+The middleware resolves the principal from the `AuthenticatedPrincipal` contextvar first (set by the auth middleware when JWT auth is configured). If no authenticated principal is present, it falls back to header-based derivation.
 
-1. `X-Agent-Id: my-agent` → `Agent::"my-agent"`
-2. `X-Cred-{service}-*` → `Service::"{service}"`
-3. `X-AWS-Access-Key-Id: AKIA...` → `AWSPrincipal::"AKIA..."`
-4. (none) → `Agent::"anonymous"`
+**Resolution order:**
+
+1. **JWT auth** (if active): `AuthenticatedPrincipal` contextvar → `User::"alice"` (from JWT `sub` claim)
+2. `X-Agent-Id: my-agent` → `Agent::"my-agent"`
+3. `X-Cred-{service}-*` → `Service::"{service}"`
+4. `X-AWS-Access-Key-Id: AKIA...` → `AWSPrincipal::"AKIA..."`
+5. (none) → `Agent::"anonymous"`
+
+Exempt paths (health checks, `/ui/*`, `/auth/*`, etc.) skip enforcement entirely and do not resolve a principal.

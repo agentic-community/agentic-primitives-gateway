@@ -29,6 +29,13 @@ AGENTIC_PRIMITIVES_GATEWAY_CONFIG_FILE=configs/local.yaml \
 
 The gateway starts at `http://localhost:8000`.
 
+!!! note "Authentication"
+    The default `local.yaml` config uses **noop auth** — full access with no credentials needed, ideal for local development. For production deployments, configure JWT/OIDC auth via a config like `configs/local-jwt.yaml`. You can also use API key auth:
+
+    ```bash
+    curl -H "Authorization: Bearer sk-dev-key" http://localhost:8000/api/v1/agents
+    ```
+
 ## Verify It Works
 
 ```bash

@@ -9,7 +9,7 @@ The gateway is a FastAPI service with three layers:
 3. **Provider Registry** -- loads backend implementations, resolves per-request
 
 ```
-Request → RequestContextMiddleware → PolicyEnforcementMiddleware → Route → Registry → Provider
+Request → CORS → RequestContextMiddleware → AuthenticationMiddleware → PolicyEnforcementMiddleware → Route → Registry → Provider
 ```
 
 ## Request Flow
@@ -23,19 +23,24 @@ Client sends: POST /api/v1/memory/my-ns
    - Extracts provider routing → contextvars
    - Generates request ID
 
-2. PolicyEnforcementMiddleware (enforcement/middleware.py)
+2. AuthenticationMiddleware (auth/middleware.py)
+   - Validates credentials (JWT token, API key, or noop pass-through)
+   - Sets AuthenticatedPrincipal in a contextvar (principal_id, type, groups, scopes)
+   - 401 if credentials are invalid or missing (when not using noop)
+
+3. PolicyEnforcementMiddleware (enforcement/middleware.py)
    - Maps path + method → Cedar action (e.g., "memory:store_memory")
    - Evaluates: permit(Agent::"anonymous", Action::"memory:store_memory", resource)?
    - 403 if denied
 
-3. Route handler (routes/memory.py)
+4. Route handler (routes/memory.py)
    - Calls registry.memory.store(namespace, key, content)
 
-4. Registry (registry.py)
+5. Registry (registry.py)
    - Reads provider override from contextvars: "mem0"
    - Returns the mem0 provider instance (wrapped in MetricsProxy)
 
-5. Provider (primitives/memory/mem0_provider.py)
+6. Provider (primitives/memory/mem0_provider.py)
    - Creates boto3 session from request's AWS credentials
    - Calls mem0 with Bedrock embedder
    - Returns result
@@ -61,6 +66,14 @@ memory:
 ```
 
 The registry loads classes via `importlib`, instantiates them with the config dict, wraps them in `MetricsProxy` for Prometheus instrumentation, and stores them by name.
+
+## Authentication
+
+`AuthenticationMiddleware` runs after `RequestContextMiddleware` and before `PolicyEnforcementMiddleware`. It validates the incoming request's credentials -- JWT token, API key, or noop (dev mode) -- based on the configured `auth.backend`, and sets an `AuthenticatedPrincipal` in a contextvar. The principal carries `principal_id`, `principal_type`, `groups`, and `scopes`.
+
+Route handlers check resource-level access via `require_access()` (verifies the caller can view/use a resource based on ownership or sharing) and `require_owner_or_admin()` (verifies the caller owns the resource or has admin scope). These helpers read the principal from the contextvar and raise 403 if access is denied.
+
+For background tasks (agent runs, team runs), the principal flows from the originating request into the `asyncio.Task` via `copy_context()`, so authorization checks remain valid even after the HTTP connection closes.
 
 ## Agent Subsystem
 

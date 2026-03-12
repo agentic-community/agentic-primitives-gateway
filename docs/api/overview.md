@@ -8,7 +8,18 @@ All primitive endpoints are under `/api/v1/{primitive}/`. Agent endpoints are un
 
 ## Authentication
 
-Credentials are passed via request headers:
+The gateway supports pluggable authentication backends (noop, API key, JWT/OIDC). Auth headers:
+
+| Header | Description |
+|--------|-------------|
+| `Authorization: Bearer <token>` | JWT or API key token for user authentication |
+| `X-Api-Key` | Alternative API key header |
+
+When auth is enabled, requests without valid credentials receive a **401 Unauthorized** response. Requests for resources the user does not own or have group access to receive a **403 Forbidden** response.
+
+### Credential Pass-Through
+
+Separate from user authentication, backend credentials are passed via request headers:
 
 | Header | Description |
 |--------|-------------|
@@ -36,7 +47,8 @@ Credentials are passed via request headers:
 | 201 | Created |
 | 204 | Deleted (no body) |
 | 400 | Bad request (ValueError) |
-| 403 | Forbidden by Cedar policy |
+| 401 | Unauthorized (missing or invalid credentials) |
+| 403 | Forbidden (Cedar policy denial or resource not owned by user) |
 | 404 | Not found |
 | 409 | Conflict (e.g., duplicate agent name) |
 | 422 | Validation error |
@@ -52,6 +64,7 @@ Credentials are passed via request headers:
 | `GET` | `/readyz` | Readiness probe (checks all providers) |
 | `GET` | `/metrics` | Prometheus metrics |
 | `GET` | `/api/v1/providers` | List available providers per primitive |
+| `GET` | `/auth/config` | Auth/OIDC configuration for UI (exempt from auth) |
 
 ## Primitives
 

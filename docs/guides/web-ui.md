@@ -64,6 +64,26 @@ Interactive API explorer that:
 - Lets you fill parameters and execute requests
 - Displays responses inline
 
+## Authentication
+
+When JWT auth is configured on the gateway, the UI uses an OIDC Authorization Code + PKCE flow to authenticate users.
+
+**Login flow:**
+
+1. On first visit, the UI fetches `/auth/config` to discover the OIDC provider settings
+2. The browser redirects to the Identity Provider (IdP) login page
+3. After login, the IdP redirects back to the UI callback, which exchanges the authorization code for tokens
+4. The Bearer token is attached to all subsequent API calls automatically
+
+**UI changes when auth is active:**
+
+- The sidebar shows the logged-in username and a logout button
+- Session IDs in localStorage are scoped per user (`{userId}:{agentName}`) so multiple users on the same browser do not share sessions
+
+**IdP requirements:**
+
+- Requires a **public** OIDC client (in Keycloak: set "Client authentication" to OFF)
+
 ## Development
 
 ```bash
