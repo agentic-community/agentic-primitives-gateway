@@ -301,6 +301,7 @@ async def chat_with_agent_stream(name: str, request: ChatRequest) -> StreamingRe
     queue, _ = _bg.start(
         session_id,
         _runner.run_stream(spec=spec, message=request.message, session_id=request.session_id),
+        owner_id=_principal().id,
     )
     return sse_response(queue, strip_fields=frozenset({"full_result", "tool_input"}))
 

@@ -140,6 +140,7 @@ async def run_team_stream(name: str, request: TeamRunRequest) -> StreamingRespon
     queue, _ = _bg.start(
         placeholder,
         _runner.run_stream(team_spec=spec, message=request.message),
+        owner_id=_principal().id,
         record_events=True,
         rekey_field="team_run_id",
     )

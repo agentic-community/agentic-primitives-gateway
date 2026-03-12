@@ -50,6 +50,13 @@ class EventStore(ABC):
     @abstractmethod
     async def delete(self, key: str) -> None: ...
 
+    async def set_owner(self, key: str, owner_id: str, ttl: int = 600) -> None:  # noqa: B027
+        """Store the owner of a run. Default is no-op."""
+
+    async def get_owner(self, key: str) -> str | None:
+        """Get the owner of a run. Default returns None."""
+        return None
+
     async def rename_key(self, old_key: str, new_key: str) -> None:  # noqa: B027
         """Rename keys when a run ID changes. Default is no-op."""
 
@@ -87,14 +94,25 @@ class RedisEventStore(EventStore):
         raw_list = await self._redis.lrange(self._events_key(key), 0, -1)
         return [json.loads(r) for r in raw_list]
 
+    @staticmethod
+    def _owner_key(key: str) -> str:
+        return f"run:{key}:owner"
+
+    async def set_owner(self, key: str, owner_id: str, ttl: int = 600) -> None:
+        await self._redis.set(self._owner_key(key), owner_id, ex=ttl)
+
+    async def get_owner(self, key: str) -> str | None:
+        result = await self._redis.get(self._owner_key(key))
+        return str(result) if result is not None else None
+
     async def delete(self, key: str) -> None:
-        await self._redis.delete(self._status_key(key), self._events_key(key))
+        await self._redis.delete(self._status_key(key), self._events_key(key), self._owner_key(key))
 
     async def rename_key(self, old_key: str, new_key: str) -> None:
-        """Rename status and events keys atomically (best-effort)."""
+        """Rename status, events, and owner keys (best-effort)."""
         import contextlib
 
-        for suffix in (":status", ":events"):
+        for suffix in (":status", ":events", ":owner"):
             old = f"run:{old_key}{suffix}"
             new = f"run:{new_key}{suffix}"
             with contextlib.suppress(Exception):
@@ -176,11 +194,18 @@ class BackgroundRunManager:
                 return events
         return self.get_events(key)
 
+    async def get_owner_async(self, key: str) -> str | None:
+        """Get the owner of a run from the event store."""
+        if self._event_store:
+            return await self._event_store.get_owner(key)
+        return None
+
     def start(
         self,
         key: str,
         coro: Any,
         *,
+        owner_id: str | None = None,
         record_events: bool = False,
         rekey_field: str | None = None,
     ) -> tuple[asyncio.Queue, list[dict[str, Any]]]:
@@ -189,6 +214,7 @@ class BackgroundRunManager:
         Args:
             key: The run identifier (session_id or team_run_id).
             coro: An async generator that yields event dicts.
+            owner_id: The authenticated user who started this run.
             record_events: If True, accumulate events for replay.
             rekey_field: If set, watch for this field in events and re-key.
 
@@ -203,12 +229,15 @@ class BackgroundRunManager:
         manager = self
         store = self._event_store
         ttl = int(self._stale_seconds)
+        run_owner = owner_id
 
         async def _run() -> None:
             rekeyed = False
             current_key = key
             if store:
                 await store.set_status(current_key, "running", ttl=ttl)
+                if run_owner:
+                    await store.set_owner(current_key, run_owner, ttl=ttl)
             try:
                 async for event in coro:
                     if record_events:

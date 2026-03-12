@@ -711,7 +711,9 @@ class AgentRunner:
                 session_ctx["browser"] = result.get("session_id", uuid.uuid4().hex[:16])
             logger.info("Started %s session: %s", primitive, session_ctx[primitive])
             if self._session_registry:
-                await self._session_registry.register(primitive, session_ctx[primitive])
+                principal = get_authenticated_principal()
+                user_id = principal.id if principal else "anonymous"
+                await self._session_registry.register(primitive, session_ctx[primitive], metadata={"user_id": user_id})
         except (NotImplementedError, Exception):
             logger.warning("Failed to start %s session", primitive, exc_info=True)
             session_ctx[primitive] = uuid.uuid4().hex[:16]

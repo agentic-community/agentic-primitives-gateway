@@ -31,7 +31,11 @@ from agentic_primitives_gateway.agents.team_prompts import (
 )
 from agentic_primitives_gateway.agents.team_store import TeamStore
 from agentic_primitives_gateway.agents.tools import ToolDefinition, build_tool_list
-from agentic_primitives_gateway.context import get_provider_override, set_provider_overrides
+from agentic_primitives_gateway.context import (
+    get_authenticated_principal,
+    get_provider_override,
+    set_provider_overrides,
+)
 from agentic_primitives_gateway.models.agents import AgentSpec, PrimitiveConfig
 from agentic_primitives_gateway.models.enums import Primitive
 from agentic_primitives_gateway.models.tasks import TaskStatus
@@ -631,7 +635,11 @@ class TeamRunner:
                     continue
                 logger.info("Started %s session: %s", prim_name, session_ctx[prim_name])
                 if self._session_registry:
-                    await self._session_registry.register(prim_name, session_ctx[prim_name])
+                    principal = get_authenticated_principal()
+                    user_id = principal.id if principal else "anonymous"
+                    await self._session_registry.register(
+                        prim_name, session_ctx[prim_name], metadata={"user_id": user_id}
+                    )
             except Exception:
                 logger.warning("Failed to start %s session", prim_name, exc_info=True)
                 session_ctx[prim_name] = uuid.uuid4().hex[:16]
