@@ -235,6 +235,55 @@ async def delete_team_run(name: str, team_run_id: str) -> dict:
     return {"status": "deleted"}
 
 
+@router.get("/{name}/runs/{team_run_id}/stream")
+async def stream_team_run_events(name: str, team_run_id: str) -> StreamingResponse:
+    """SSE stream of team run events from the event store.
+
+    Replays all existing events, then polls for new events every second
+    until the run completes. Used by the UI to reconnect after a stream
+    drop (e.g. server restart with checkpoint recovery).
+    """
+    import asyncio as _asyncio
+    import json as _json
+
+    store = _get_store()
+    spec = await store.get(name)
+    if spec is None:
+        raise HTTPException(status_code=404, detail=f"Team '{name}' not found")
+    require_access(_principal(), spec.owner_id, spec.shared_with)
+    await _require_run_owner(team_run_id)
+
+    async def _generate():
+        sent = 0
+        idle_count = 0
+        max_idle = 90  # Stop after 90s of no new events
+
+        while idle_count < max_idle:
+            events = await _bg.get_events_async(team_run_id)
+            status = await _bg.get_status_async(team_run_id)
+
+            # Send any new events since last check
+            if len(events) > sent:
+                for event in events[sent:]:
+                    yield f"data: {_json.dumps(event, default=str)}\n\n"
+                sent = len(events)
+                idle_count = 0
+            else:
+                idle_count += 1
+
+            # If the run is done, send remaining events and close
+            if status == "idle" and len(events) > 0 and idle_count > 3:
+                break
+
+            await _asyncio.sleep(1)
+
+    return StreamingResponse(
+        _generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 @router.get("/{name}/runs/{team_run_id}/status")
 async def get_team_run_status(name: str, team_run_id: str) -> dict:
     """Check if a team run is currently active."""

@@ -261,86 +261,87 @@ export default function TeamRun() {
       window.history.replaceState(null, "", url.toString());
     }
 
-    const POLL_INTERVAL = 3000;
-    const MAX_POLLS = 60;
-    // Track event count to detect when new events appear (resume started)
-    let lastEventCount = 0;
-    let idleStreak = 0;
-    const MAX_IDLE_STREAK = 30; // Stop after 60s of idle with no new events
+    // Reconnect via SSE stream — the server replays existing events
+    // then streams new ones as they appear from the resumed run.
+    const reconnectController = new AbortController();
+    setPolling(true);
 
-    async function pollEvents(attempt: number) {
-      console.log("[TeamRun] pollEvents attempt:", attempt, "idleStreak:", idleStreak);
-      if (attempt >= MAX_POLLS) {
-        console.log("[TeamRun] MAX_POLLS reached, stopping");
+    async function connectStream(retryCount: number) {
+      if (retryCount > 60) {
+        console.log("[TeamRun] Reconnect: max retries reached");
         setPolling(false);
         return;
       }
       try {
-        const data = await api.getTeamRunEvents(name!, teamRunId);
-        const eventCount = data.events?.length ?? 0;
-        console.log("[TeamRun] pollEvents — status:", data.status, "events:", eventCount, "prev:", lastEventCount);
+        console.log("[TeamRun] Reconnect: connecting to SSE stream (attempt", retryCount, ")");
+        const stream = api.reconnectTeamStream(name!, teamRunId, reconnectController.signal);
+        const reader = stream.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let synthContent = "";
 
-        if (data.events && eventCount > 0) {
-          replayEvents(data.events);
+        while (true) {
+          const { done: streamDone, value } = await reader.read();
+          if (streamDone) break;
+
+          buffer += typeof value === "string" ? value : decoder.decode(value as Uint8Array, { stream: true });
+          const events = parseSSE<TeamStreamEvent>(buffer);
+          const lastNewline = buffer.lastIndexOf("\n");
+          buffer = lastNewline >= 0 ? buffer.slice(lastNewline + 1) : buffer;
+
+          for (const event of events) {
+            switch (event.type) {
+              case "phase_change":
+                setPhase(event.phase);
+                break;
+              case "tasks_created":
+                setTasks((prev) => {
+                  const existingIds = new Set(prev.map((t) => t.id));
+                  const newOnes = event.tasks.filter((t) => !existingIds.has(t.id));
+                  return [...prev, ...newOnes.map((t) => ({ id: t.id, title: t.title, status: "pending", suggestedWorker: t.suggested_worker }))];
+                });
+                break;
+              case "task_claimed":
+                setTasks((prev) => prev.map((t) => t.id === event.task_id ? { ...t, status: "in_progress", agent: event.agent } : t));
+                break;
+              case "task_completed":
+                setTasks((prev) => prev.map((t) => t.id === event.task_id ? { ...t, status: "done", result: event.result } : t));
+                break;
+              case "task_failed":
+                setTasks((prev) => prev.map((t) => t.id === event.task_id ? { ...t, status: "failed", error: event.error } : t));
+                break;
+              case "agent_token":
+                if (event.agent === "synthesizer") {
+                  synthContent += event.content;
+                  setResponse(synthContent);
+                } else if (event.task_id) {
+                  setTasks((prev) => prev.map((t) => t.id === event.task_id ? { ...t, streamContent: (t.streamContent ?? "") + event.content } : t));
+                }
+                break;
+              case "done":
+                streamDoneRef.current = true;
+                if (event.response) setResponse(event.response);
+                setPhase("done");
+                setStats({ created: event.tasks_created, completed: event.tasks_completed, workers: event.workers_used ?? [] });
+                break;
+            }
+          }
         }
-
-        if (data.status === "running") {
-          idleStreak = 0;
-          lastEventCount = eventCount;
-          setPolling(true);
-          pollTimerRef.current = setTimeout(() => pollEvents(attempt + 1), POLL_INTERVAL);
-          return;
-        }
-
-        // Status is not "running". Check if new events appeared (resume in progress
-        // but status not yet updated, or status TTL expired).
-        if (eventCount > lastEventCount) {
-          console.log("[TeamRun] New events detected despite idle status — keep polling");
-          idleStreak = 0;
-          lastEventCount = eventCount;
-          setPolling(true);
-          pollTimerRef.current = setTimeout(() => pollEvents(attempt + 1), POLL_INTERVAL);
-          return;
-        }
-
-        // No new events and not running. Wait a grace period for resume to start.
-        idleStreak++;
-        if (idleStreak < MAX_IDLE_STREAK) {
-          console.log("[TeamRun] Idle but waiting for resume (streak:", idleStreak, "/", MAX_IDLE_STREAK, ")");
-          setPolling(true);
-          pollTimerRef.current = setTimeout(() => pollEvents(attempt + 1), POLL_INTERVAL);
-          return;
-        }
-
-        console.log("[TeamRun] Idle for too long, stopping poll");
-        setPolling(false);
+        console.log("[TeamRun] Reconnect stream ended");
       } catch (err) {
-        console.log("[TeamRun] pollEvents error (will retry):", err);
-        idleStreak = 0; // Reset on error (server might be restarting)
-        setPolling(true);
-        pollTimerRef.current = setTimeout(() => pollEvents(attempt + 1), POLL_INTERVAL);
+        if (err instanceof DOMException && err.name === "AbortError") return;
+        console.log("[TeamRun] Reconnect error (will retry in 3s):", err);
+        await new Promise((r) => setTimeout(r, 3000));
+        return connectStream(retryCount + 1);
+      } finally {
+        setPolling(false);
       }
     }
 
-    console.log("[TeamRun] Initial fetch of events for:", teamRunId);
-    api.getTeamRunEvents(name, teamRunId).then((data) => {
-      const eventCount = data.events?.length ?? 0;
-      console.log("[TeamRun] Initial fetch — status:", data.status, "events:", eventCount);
-      lastEventCount = eventCount;
-      if (data.events && eventCount > 0) {
-        replayEvents(data.events);
-      }
-      // Always start polling after a stream drop — wait for resume to kick in
-      console.log("[TeamRun] Starting poll loop (status:", data.status, ")");
-      setPolling(true);
-      pollTimerRef.current = setTimeout(() => pollEvents(0), POLL_INTERVAL);
-    }).catch((err) => {
-      console.log("[TeamRun] Initial fetch failed (will poll):", err);
-      setPolling(true);
-      pollTimerRef.current = setTimeout(() => pollEvents(0), POLL_INTERVAL);
-    });
+    connectStream(0);
 
     return () => {
+      reconnectController.abort();
       if (pollTimerRef.current) {
         clearTimeout(pollTimerRef.current);
         pollTimerRef.current = null;

@@ -64,6 +64,35 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   return res.json();
 }
 
+/** Create a ReadableStream from a GET SSE endpoint (for reconnection). */
+function sseGetStream(url: string, signal?: AbortSignal): ReadableStream<string> {
+  return new ReadableStream({
+    async start(controller) {
+      const res = await fetch(url, {
+        headers: { ...authHeaders() },
+        signal,
+      });
+      if (!res.ok || !res.body) {
+        const err = await res.text().catch(() => res.statusText);
+        controller.enqueue(`data: ${JSON.stringify({ type: "error", detail: err })}\n\n`);
+        controller.close();
+        return;
+      }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          controller.enqueue(decoder.decode(value, { stream: true }));
+        }
+      } finally {
+        controller.close();
+      }
+    },
+  });
+}
+
 /** Create a ReadableStream that POSTs to an SSE endpoint and pipes the response. */
 function sseStream(url: string, body: string, signal?: AbortSignal): ReadableStream<string> {
   return new ReadableStream({
@@ -153,6 +182,8 @@ export const api = {
     request<{ deleted: number; kept: number }>(`/api/v1/agents/${name}/sessions/cleanup?keep=${keep}`, { method: "POST" }),
   cancelSessionRun: (name: string, sessionId: string) =>
     request<{ status: string }>(`/api/v1/agents/${name}/sessions/${sessionId}/run`, { method: "DELETE" }),
+  reconnectSessionStream: (name: string, sessionId: string, signal?: AbortSignal): ReadableStream<string> =>
+    sseGetStream(`/api/v1/agents/${name}/sessions/${sessionId}/stream`, signal),
   getAgentMemory: (name: string, sessionId?: string) => {
     const params = sessionId ? `?session_id=${sessionId}` : "";
     return request<AgentMemoryResponse>(
@@ -189,6 +220,8 @@ export const api = {
     ),
   deleteTeamRun: (name: string, runId: string) =>
     request<{ status: string }>(`/api/v1/teams/${name}/runs/${runId}`, { method: "DELETE" }),
+  reconnectTeamStream: (name: string, runId: string, signal?: AbortSignal): ReadableStream<string> =>
+    sseGetStream(`/api/v1/teams/${name}/runs/${runId}/stream`, signal),
   cancelTeamRun: (name: string, runId: string) =>
     request<{ status: string }>(`/api/v1/teams/${name}/runs/${runId}/cancel`, { method: "DELETE" }),
   getTeamRunStatus: (name: string, runId: string) =>

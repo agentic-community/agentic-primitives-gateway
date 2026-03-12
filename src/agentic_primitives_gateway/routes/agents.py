@@ -386,6 +386,51 @@ async def delete_session(name: str, session_id: str) -> dict:
     return {"status": "deleted"}
 
 
+@router.get("/{name}/sessions/{session_id}/stream")
+async def stream_session_events(name: str, session_id: str) -> StreamingResponse:
+    """SSE stream of session events from the event store.
+
+    Replays existing events, then polls for new events every second.
+    Used by the UI to reconnect after a stream drop.
+    """
+    import asyncio as _asyncio
+    import json as _json
+
+    store = _get_store()
+    spec = await store.get(name)
+    if spec is None:
+        raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
+    require_access(_principal(), spec.owner_id, spec.shared_with)
+
+    async def _generate():
+        sent = 0
+        idle_count = 0
+        max_idle = 90
+
+        while idle_count < max_idle:
+            events = await _bg.get_events_async(session_id)
+            status = await _bg.get_status_async(session_id)
+
+            if len(events) > sent:
+                for event in events[sent:]:
+                    yield f"data: {_json.dumps(event, default=str)}\n\n"
+                sent = len(events)
+                idle_count = 0
+            else:
+                idle_count += 1
+
+            if status == "idle" and len(events) > 0 and idle_count > 3:
+                break
+
+            await _asyncio.sleep(1)
+
+    return StreamingResponse(
+        _generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 @router.get("/{name}/sessions/{session_id}/status")
 async def get_session_status(name: str, session_id: str) -> dict:
     """Check if a run is currently active for this session."""
