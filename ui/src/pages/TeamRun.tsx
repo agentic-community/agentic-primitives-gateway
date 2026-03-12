@@ -151,7 +151,6 @@ export default function TeamRun() {
   const logRef = useAutoScroll([activityLog]);
   const abortRef = useRef<AbortController | null>(null);
   const bgCheckRef = useRef(false);
-  const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const streamDoneRef = useRef(false);
 
   useEffect(() => {
@@ -261,91 +260,90 @@ export default function TeamRun() {
       window.history.replaceState(null, "", url.toString());
     }
 
-    // Reconnect via SSE stream — the server replays existing events
-    // then streams new ones as they appear from the resumed run.
+    // Reconnect via SSE — retry connecting until server is back,
+    // then stream events live from the event store.
     const reconnectController = new AbortController();
+    const { signal } = reconnectController;
     setPolling(true);
 
-    async function connectStream(retryCount: number) {
-      if (retryCount > 60) {
-        console.log("[TeamRun] Reconnect: max retries reached");
-        setPolling(false);
-        return;
-      }
-      try {
-        console.log("[TeamRun] Reconnect: connecting to SSE stream (attempt", retryCount, ")");
-        const stream = api.reconnectTeamStream(name!, teamRunId, reconnectController.signal);
-        const reader = stream.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
-        let synthContent = "";
+    (async () => {
+      const MAX_RETRIES = 120; // 120 × 3s = 6 minutes of retrying
+      let synthContent = "";
 
-        while (true) {
-          const { done: streamDone, value } = await reader.read();
-          if (streamDone) break;
+      for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+        if (signal.aborted) break;
 
-          buffer += typeof value === "string" ? value : decoder.decode(value as Uint8Array, { stream: true });
-          const events = parseSSE<TeamStreamEvent>(buffer);
-          const lastNewline = buffer.lastIndexOf("\n");
-          buffer = lastNewline >= 0 ? buffer.slice(lastNewline + 1) : buffer;
+        try {
+          console.log("[TeamRun] SSE reconnect attempt", attempt);
+          const stream = api.reconnectTeamStream(name!, teamRunId, signal);
+          const reader = stream.getReader();
+          const decoder = new TextDecoder();
+          let buffer = "";
 
-          for (const event of events) {
-            switch (event.type) {
-              case "phase_change":
-                setPhase(event.phase);
-                break;
-              case "tasks_created":
-                setTasks((prev) => {
-                  const existingIds = new Set(prev.map((t) => t.id));
-                  const newOnes = event.tasks.filter((t) => !existingIds.has(t.id));
-                  return [...prev, ...newOnes.map((t) => ({ id: t.id, title: t.title, status: "pending", suggestedWorker: t.suggested_worker }))];
-                });
-                break;
-              case "task_claimed":
-                setTasks((prev) => prev.map((t) => t.id === event.task_id ? { ...t, status: "in_progress", agent: event.agent } : t));
-                break;
-              case "task_completed":
-                setTasks((prev) => prev.map((t) => t.id === event.task_id ? { ...t, status: "done", result: event.result } : t));
-                break;
-              case "task_failed":
-                setTasks((prev) => prev.map((t) => t.id === event.task_id ? { ...t, status: "failed", error: event.error } : t));
-                break;
-              case "agent_token":
-                if (event.agent === "synthesizer") {
-                  synthContent += event.content;
-                  setResponse(synthContent);
-                } else if (event.task_id) {
-                  setTasks((prev) => prev.map((t) => t.id === event.task_id ? { ...t, streamContent: (t.streamContent ?? "") + event.content } : t));
-                }
-                break;
-              case "done":
-                streamDoneRef.current = true;
-                if (event.response) setResponse(event.response);
-                setPhase("done");
-                setStats({ created: event.tasks_created, completed: event.tasks_completed, workers: event.workers_used ?? [] });
-                break;
+          // Connected! Process events from the server.
+          while (true) {
+            const { done: streamDone, value } = await reader.read();
+            if (streamDone) break;
+
+            buffer += typeof value === "string" ? value : decoder.decode(value as Uint8Array, { stream: true });
+            const events = parseSSE<TeamStreamEvent>(buffer);
+            const lastNewline = buffer.lastIndexOf("\n");
+            buffer = lastNewline >= 0 ? buffer.slice(lastNewline + 1) : buffer;
+
+            for (const event of events) {
+              switch (event.type) {
+                case "phase_change":
+                  setPhase(event.phase);
+                  break;
+                case "tasks_created":
+                  setTasks((prev) => {
+                    const existingIds = new Set(prev.map((t) => t.id));
+                    const newOnes = event.tasks.filter((t) => !existingIds.has(t.id));
+                    return [...prev, ...newOnes.map((t) => ({ id: t.id, title: t.title, status: "pending", suggestedWorker: t.suggested_worker }))];
+                  });
+                  break;
+                case "task_claimed":
+                  setTasks((prev) => prev.map((t) => t.id === event.task_id ? { ...t, status: "in_progress", agent: event.agent } : t));
+                  break;
+                case "task_completed":
+                  setTasks((prev) => prev.map((t) => t.id === event.task_id ? { ...t, status: "done", result: event.result } : t));
+                  break;
+                case "task_failed":
+                  setTasks((prev) => prev.map((t) => t.id === event.task_id ? { ...t, status: "failed", error: event.error } : t));
+                  break;
+                case "agent_token":
+                  if (event.agent === "synthesizer") {
+                    synthContent += event.content;
+                    setResponse(synthContent);
+                  } else if (event.task_id) {
+                    setTasks((prev) => prev.map((t) => t.id === event.task_id ? { ...t, streamContent: (t.streamContent ?? "") + event.content } : t));
+                  }
+                  break;
+                case "done":
+                  streamDoneRef.current = true;
+                  if (event.response) setResponse(event.response);
+                  setPhase("done");
+                  setStats({ created: event.tasks_created, completed: event.tasks_completed, workers: event.workers_used ?? [] });
+                  break;
+              }
             }
           }
+          // Stream ended cleanly (server closed it) — done
+          console.log("[TeamRun] SSE reconnect stream ended cleanly");
+          break;
+        } catch (err) {
+          if (signal.aborted) break;
+          // Server down or connection failed — wait and retry
+          console.log("[TeamRun] SSE reconnect failed, retrying in 3s:", (err as Error)?.message ?? err);
+          await new Promise((r) => setTimeout(r, 3000));
         }
-        console.log("[TeamRun] Reconnect stream ended");
-      } catch (err) {
-        if (err instanceof DOMException && err.name === "AbortError") return;
-        console.log("[TeamRun] Reconnect error (will retry in 3s):", err);
-        await new Promise((r) => setTimeout(r, 3000));
-        return connectStream(retryCount + 1);
-      } finally {
-        setPolling(false);
       }
-    }
 
-    connectStream(0);
+      setPolling(false);
+    })();
 
     return () => {
       reconnectController.abort();
-      if (pollTimerRef.current) {
-        clearTimeout(pollTimerRef.current);
-        pollTimerRef.current = null;
-      }
     };
   }, [name, teamRunId, running, replayEvents]);
 

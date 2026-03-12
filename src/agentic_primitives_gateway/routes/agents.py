@@ -405,21 +405,29 @@ async def stream_session_events(name: str, session_id: str) -> StreamingResponse
     async def _generate():
         sent = 0
         idle_count = 0
-        max_idle = 90
+        max_idle = 180
+        seen_running = False
 
         while idle_count < max_idle:
             events = await _bg.get_events_async(session_id)
             status = await _bg.get_status_async(session_id)
+
+            if status == "running":
+                seen_running = True
 
             if len(events) > sent:
                 for event in events[sent:]:
                     yield f"data: {_json.dumps(event, default=str)}\n\n"
                 sent = len(events)
                 idle_count = 0
+
+                last_evt = events[-1] if events else {}
+                if isinstance(last_evt, dict) and last_evt.get("type") == "done":
+                    break
             else:
                 idle_count += 1
 
-            if status == "idle" and len(events) > 0 and idle_count > 3:
+            if seen_running and status == "idle" and idle_count > 5:
                 break
 
             await _asyncio.sleep(1)

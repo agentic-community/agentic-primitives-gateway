@@ -264,46 +264,58 @@ export default function AgentChat() {
         setSending(false);
 
         // If the stream ended without a "done" event (e.g. server crash/restart),
-        // start polling for the run status to detect when it resumes.
+        // reconnect via SSE to get events from the event store.
         if (!streamDoneRef.current && name && sessionId) {
-          const POLL_MS = 3000;
-          const MAX = 60;
-          let attempt = 0;
-          const pollForResume = async () => {
-            if (attempt >= MAX) { setPolling(false); return; }
-            attempt++;
-            try {
-              const { status } = await api.getSessionStatus(name, sessionId);
-              if (status === "running") {
-                setPolling(true);
-                setTimeout(pollForResume, POLL_MS);
-                return;
-              }
-              if (status === "idle") {
-                // Run finished — reload history
-                const history = await api.getSessionHistory(name, sessionId);
-                if (history.messages?.length) {
-                  const restored: Turn[] = [];
-                  for (let i = 0; i < history.messages.length; i += 2) {
-                    const u = history.messages[i];
-                    const a = history.messages[i + 1];
-                    if (u?.role === "user" && a?.role === "assistant") {
-                      restored.push({ userMessage: u.content, assistantContent: a.content, toolsCalled: [], turnsUsed: 1, done: true, subAgents: [], artifacts: [] });
-                    }
-                  }
-                  if (restored.length) setTurns(restored.reverse());
-                }
-                setPolling(false);
-                return;
-              }
-            } catch {
-              // Server down — keep polling until it's back
-            }
-            setPolling(true);
-            setTimeout(pollForResume, POLL_MS);
-          };
           setPolling(true);
-          setTimeout(pollForResume, POLL_MS);
+          const reconnectCtrl = new AbortController();
+
+          (async () => {
+            for (let attempt = 0; attempt < 120; attempt++) {
+              if (reconnectCtrl.signal.aborted) break;
+              try {
+                console.log("[AgentChat] SSE reconnect attempt", attempt);
+                const stream = api.reconnectSessionStream(name, sessionId, reconnectCtrl.signal);
+                const reader = stream.getReader();
+                const decoder = new TextDecoder();
+                let buf = "";
+
+                while (true) {
+                  const { done: d, value: v } = await reader.read();
+                  if (d) break;
+                  buf += typeof v === "string" ? v : decoder.decode(v as Uint8Array, { stream: true });
+                  const evts = parseSSE<StreamEvent>(buf);
+                  const nl = buf.lastIndexOf("\n");
+                  buf = nl >= 0 ? buf.slice(nl + 1) : buf;
+                  for (const evt of evts) {
+                    handleStreamEvent(evt, turnIndex);
+                  }
+                }
+                console.log("[AgentChat] SSE reconnect stream ended");
+                break;
+              } catch (err) {
+                if (reconnectCtrl.signal.aborted) break;
+                console.log("[AgentChat] SSE reconnect failed, retrying:", (err as Error)?.message);
+                await new Promise((r) => setTimeout(r, 3000));
+              }
+            }
+            setPolling(false);
+
+            // Reload full history after reconnect completes
+            try {
+              const history = await api.getSessionHistory(name, sessionId);
+              if (history.messages?.length) {
+                const restored: Turn[] = [];
+                for (let i = 0; i < history.messages.length; i += 2) {
+                  const u = history.messages[i];
+                  const a = history.messages[i + 1];
+                  if (u?.role === "user" && a?.role === "assistant") {
+                    restored.push({ userMessage: u.content, assistantContent: a.content, toolsCalled: [], turnsUsed: 1, done: true, subAgents: [], artifacts: [] });
+                  }
+                }
+                if (restored.length) setTurns(restored.reverse());
+              }
+            } catch { /* ignore */ }
+          })();
         }
       }
     },

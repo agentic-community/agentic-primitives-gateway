@@ -256,11 +256,15 @@ async def stream_team_run_events(name: str, team_run_id: str) -> StreamingRespon
     async def _generate():
         sent = 0
         idle_count = 0
-        max_idle = 90  # Stop after 90s of no new events
+        max_idle = 180  # Keep stream open for up to 3 min waiting for resume
+        seen_running = False
 
         while idle_count < max_idle:
             events = await _bg.get_events_async(team_run_id)
             status = await _bg.get_status_async(team_run_id)
+
+            if status == "running":
+                seen_running = True
 
             # Send any new events since last check
             if len(events) > sent:
@@ -268,11 +272,17 @@ async def stream_team_run_events(name: str, team_run_id: str) -> StreamingRespon
                     yield f"data: {_json.dumps(event, default=str)}\n\n"
                 sent = len(events)
                 idle_count = 0
+
+                # Check if the last event is "done" — run completed
+                last_evt = events[-1] if events else {}
+                if isinstance(last_evt, dict) and last_evt.get("type") == "done":
+                    break
             else:
                 idle_count += 1
 
-            # If the run is done, send remaining events and close
-            if status == "idle" and len(events) > 0 and idle_count > 3:
+            # Only close on idle if we've seen it running then go idle
+            # (not on initial connect when status might be stale)
+            if seen_running and status == "idle" and idle_count > 5:
                 break
 
             await _asyncio.sleep(1)
