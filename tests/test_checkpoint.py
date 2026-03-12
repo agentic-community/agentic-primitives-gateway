@@ -20,6 +20,7 @@ class InMemoryCheckpointStore(CheckpointStore):
     def __init__(self) -> None:
         self._data: dict[str, dict[str, Any]] = {}
         self._locks: dict[str, str] = {}
+        self._heartbeats: set[str] = set()
 
     async def save(self, key: str, data: dict[str, Any], ttl: int = 600) -> None:
         self._data[key] = data
@@ -42,6 +43,12 @@ class InMemoryCheckpointStore(CheckpointStore):
 
     async def list_checkpoints(self) -> list[str]:
         return list(self._data.keys())
+
+    async def set_heartbeat(self, replica_id: str, ttl: int = 30) -> None:
+        self._heartbeats.add(replica_id)
+
+    async def is_replica_alive(self, replica_id: str) -> bool:
+        return replica_id in self._heartbeats
 
 
 _ALICE = AuthenticatedPrincipal(id="alice", type="user", groups=frozenset({"engineering"}), scopes=frozenset())
@@ -280,3 +287,90 @@ class TestCheckpointStoreABC:
 
         await store.release_lock("k1")
         assert await store.acquire_lock("k1", "owner-b")
+
+    @pytest.mark.asyncio
+    async def test_in_memory_store_heartbeat(self):
+        store = InMemoryCheckpointStore()
+        assert not await store.is_replica_alive("r1")
+        await store.set_heartbeat("r1")
+        assert await store.is_replica_alive("r1")
+
+
+class TestOrphanRecovery:
+    @pytest.mark.asyncio
+    async def test_recovers_orphaned_checkpoint(self):
+        from agentic_primitives_gateway.agents.checkpoint import recover_orphaned_runs
+
+        store = InMemoryCheckpointStore()
+
+        # Save checkpoint from a dead replica (no heartbeat)
+        await store.save(
+            "alice:sess-1",
+            {
+                "spec_name": "test-agent",
+                "session_id": "sess-1",
+                "actor_id": "test-agent:u:alice",
+                "replica_id": "dead-replica",
+                "principal": {"id": "alice", "type": "user", "groups": [], "scopes": []},
+            },
+        )
+
+        runner = AsyncMock()
+        runner.resume = AsyncMock()
+
+        recovered = await recover_orphaned_runs(store, runner, "live-replica")
+        assert recovered == 1
+        runner.resume.assert_called_once_with("alice:sess-1")
+
+    @pytest.mark.asyncio
+    async def test_skips_alive_replica(self):
+        from agentic_primitives_gateway.agents.checkpoint import recover_orphaned_runs
+
+        store = InMemoryCheckpointStore()
+
+        # Checkpoint from a living replica
+        await store.set_heartbeat("alive-replica")
+        await store.save(
+            "alice:sess-1",
+            {
+                "spec_name": "test-agent",
+                "replica_id": "alive-replica",
+                "principal": {"id": "alice", "type": "user", "groups": [], "scopes": []},
+            },
+        )
+
+        runner = AsyncMock()
+        runner.resume = AsyncMock()
+
+        recovered = await recover_orphaned_runs(store, runner, "other-replica")
+        assert recovered == 0
+        runner.resume.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_no_checkpoints_returns_zero(self):
+        from agentic_primitives_gateway.agents.checkpoint import recover_orphaned_runs
+
+        store = InMemoryCheckpointStore()
+        runner = AsyncMock()
+        recovered = await recover_orphaned_runs(store, runner, "r1")
+        assert recovered == 0
+
+    @pytest.mark.asyncio
+    async def test_recovers_checkpoint_without_replica_id(self):
+        """Old checkpoints without replica_id are treated as orphaned."""
+        from agentic_primitives_gateway.agents.checkpoint import recover_orphaned_runs
+
+        store = InMemoryCheckpointStore()
+        await store.save(
+            "alice:sess-1",
+            {
+                "spec_name": "test-agent",
+                "principal": {"id": "alice", "type": "user", "groups": [], "scopes": []},
+            },
+        )
+
+        runner = AsyncMock()
+        runner.resume = AsyncMock()
+
+        recovered = await recover_orphaned_runs(store, runner, "r1")
+        assert recovered == 1

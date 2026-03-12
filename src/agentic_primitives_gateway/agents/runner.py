@@ -66,6 +66,7 @@ class AgentRunner:
         self._store: AgentStore | None = None
         self._session_registry: Any | None = None
         self._checkpoint_store: CheckpointStore | None = None
+        self._replica_id: str | None = None
 
     def set_store(self, store: AgentStore) -> None:
         """Set the agent store reference (called during app lifespan)."""
@@ -74,8 +75,9 @@ class AgentRunner:
     def set_session_registry(self, registry: Any) -> None:
         self._session_registry = registry
 
-    def set_checkpoint_store(self, store: CheckpointStore) -> None:
+    def set_checkpoint_store(self, store: CheckpointStore, replica_id: str | None = None) -> None:
         self._checkpoint_store = store
+        self._replica_id = replica_id
 
     # ── Public entry points ──────────────────────────────────────────
 
@@ -580,6 +582,7 @@ class AgentRunner:
             "tools_called": ctx.tools_called,
             "content": ctx.content,
             "original_message": original_message,
+            "replica_id": self._replica_id,
             "principal": {
                 "id": principal.id,
                 "type": principal.type,

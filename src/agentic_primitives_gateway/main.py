@@ -106,10 +106,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if agent_session_reg:
         agent_runner.set_session_registry(agent_session_reg)
 
-    # Wire checkpoint store for durable runs (Redis backends only)
+    # Wire checkpoint store + heartbeat for durable runs (Redis backends only)
+    from agentic_primitives_gateway.agents.checkpoint import ReplicaHeartbeat, recover_orphaned_runs
+
     checkpoint_store = agent_store.create_checkpoint_store()
+    heartbeat: ReplicaHeartbeat | None = None
     if checkpoint_store:
-        agent_runner.set_checkpoint_store(checkpoint_store)
+        heartbeat = ReplicaHeartbeat(checkpoint_store)
+        await heartbeat.start()
+        agent_runner.set_checkpoint_store(checkpoint_store, replica_id=heartbeat.replica_id)
 
     from agentic_primitives_gateway.routes.teams import get_team_runner, set_team_store
 
@@ -166,7 +171,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         watcher = ConfigWatcher(config_path, registry)
         await watcher.start()
 
+    # Recover orphaned runs from crashed replicas + start periodic scan
+    if checkpoint_store and heartbeat:
+        heartbeat.set_runner(agent_runner)
+        try:
+            await recover_orphaned_runs(checkpoint_store, agent_runner, heartbeat.replica_id)
+        except Exception:
+            logger.exception("Orphan recovery failed")
+        heartbeat.start_orphan_scanner()
+
     yield
+
+    # ── Graceful shutdown ────────────────────────────────────────────
+    if heartbeat:
+        await heartbeat.stop()
 
     if watcher is not None:
         await watcher.stop()
