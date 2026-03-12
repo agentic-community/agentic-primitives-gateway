@@ -223,10 +223,12 @@ async def recover_orphaned_runs(
     Returns the number of runs recovered.
     """
     checkpoint_keys = await store.list_checkpoints()
+    logger.info("Orphan scan: found %d checkpoint(s) in store", len(checkpoint_keys))
     if not checkpoint_keys:
         return 0
 
-    recovered = 0
+    # Identify orphaned checkpoints
+    orphaned: list[tuple[str, dict[str, Any]]] = []
     for key in checkpoint_keys:
         data = await store.load(key)
         if data is None:
@@ -234,7 +236,7 @@ async def recover_orphaned_runs(
 
         cp_replica = data.get("replica_id")
         if not cp_replica:
-            # Old checkpoint without replica tracking — try to recover
+            # Old checkpoint without replica tracking — treat as orphaned
             pass
         elif await store.is_replica_alive(cp_replica):
             # Owning replica is still alive — skip
@@ -246,15 +248,33 @@ async def recover_orphaned_runs(
             cp_replica or "unknown",
             data.get("type", "agent"),
         )
+        orphaned.append((key, data))
 
+    if not orphaned:
+        return 0
+
+    # Shuffle so multiple replicas starting simultaneously don't all
+    # try to claim the same checkpoints in the same order.
+    import random
+
+    random.shuffle(orphaned)
+
+    # Resume orphaned runs concurrently. Each resume() acquires a
+    # distributed lock internally (SET NX), so only one replica wins
+    # per checkpoint — other replicas skip gracefully.
+    async def _resume_one(key: str, data: dict[str, Any]) -> bool:
         try:
             if data.get("type") == "team" and team_runner is not None:
                 await team_runner.resume(key)
             else:
                 await agent_runner.resume(key)
-            recovered += 1
+            return True
         except Exception:
             logger.exception("Failed to recover orphaned run: %s", key)
+            return False
+
+    results = await asyncio.gather(*[_resume_one(k, d) for k, d in orphaned])
+    recovered = sum(1 for r in results if r)
 
     if recovered:
         logger.info("Recovered %d orphaned run(s)", recovered)

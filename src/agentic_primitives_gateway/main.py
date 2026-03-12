@@ -123,6 +123,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         heartbeat = ReplicaHeartbeat(checkpoint_store)
         await heartbeat.start()
         agent_runner.set_checkpoint_store(checkpoint_store, replica_id=heartbeat.replica_id)
+        logger.info("Checkpoint store enabled (replica=%s)", heartbeat.replica_id)
+    else:
+        logger.info("Checkpoint store not available (agent store backend: %s)", settings.agents.store.backend)
 
     from agentic_primitives_gateway.routes.teams import get_team_runner, set_team_store
 
@@ -182,18 +185,22 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         heartbeat.set_runner(agent_runner, team_runner=team_runner_ref)
 
         async def _initial_recovery() -> None:
+            logger.info("Starting orphan recovery scan...")
             try:
-                await recover_orphaned_runs(
+                count = await recover_orphaned_runs(
                     checkpoint_store,
                     agent_runner,
                     heartbeat.replica_id,
                     team_runner=team_runner_ref,
                 )
+                logger.info("Orphan recovery scan complete: %d run(s) recovered", count)
             except Exception:
                 logger.exception("Orphan recovery failed")
 
         app.state._recovery_task = asyncio.create_task(_initial_recovery())
         heartbeat.start_orphan_scanner()
+    else:
+        logger.info("Orphan recovery disabled (no checkpoint store)")
 
     yield
 

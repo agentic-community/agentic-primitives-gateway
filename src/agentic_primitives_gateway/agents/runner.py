@@ -593,7 +593,7 @@ class AgentRunner:
             },
         }
         try:
-            await self._checkpoint_store.save(self._checkpoint_key(ctx), data)
+            await self._checkpoint_store.save(self._checkpoint_key(ctx), data, ttl=86400)
         except Exception:
             logger.debug("Failed to save checkpoint for %s", ctx.session_id, exc_info=True)
 
@@ -620,10 +620,14 @@ class AgentRunner:
             return
 
         # Acquire distributed lock
-        replica_id = uuid.uuid4().hex[:12]
+        replica_id = self._replica_id or uuid.uuid4().hex[:12]
         if not await self._checkpoint_store.acquire_lock(checkpoint_key, replica_id):
             logger.info("Checkpoint %s is being recovered by another replica", checkpoint_key)
             return
+
+        # Update the checkpoint's replica_id so the orphan scanner skips it
+        data["replica_id"] = replica_id
+        await self._checkpoint_store.save(checkpoint_key, data, ttl=86400)
 
         try:
             await self._resume_from_data(data)

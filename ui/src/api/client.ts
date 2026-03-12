@@ -149,6 +149,8 @@ export const api = {
     request<{ status: string }>(`/api/v1/agents/${name}/sessions/${sessionId}/status`),
   deleteSession: (name: string, sessionId: string) =>
     request<{ status: string }>(`/api/v1/agents/${name}/sessions/${sessionId}`, { method: "DELETE" }),
+  cleanupSessions: (name: string, keep = 5) =>
+    request<{ deleted: number; kept: number }>(`/api/v1/agents/${name}/sessions/cleanup?keep=${keep}`, { method: "POST" }),
   cancelSessionRun: (name: string, sessionId: string) =>
     request<{ status: string }>(`/api/v1/agents/${name}/sessions/${sessionId}/run`, { method: "DELETE" }),
   getAgentMemory: (name: string, sessionId?: string) => {

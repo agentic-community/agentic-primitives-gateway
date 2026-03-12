@@ -89,6 +89,15 @@ class TeamRunner:
         self._checkpoint_store = store
         self._replica_id = replica_id
 
+    def _get_event_store(self) -> Any:
+        """Best-effort: get the team background manager's event store for resume events."""
+        try:
+            from agentic_primitives_gateway.routes.teams import _bg as team_bg
+
+            return team_bg._event_store if team_bg else None
+        except Exception:
+            return None
+
     async def _team_checkpoint(self, team_spec: TeamSpec, team_run_id: str, message: str, phase: str) -> None:
         """Persist team run state for crash recovery. Task board is already durable."""
         if not self._checkpoint_store:
@@ -112,7 +121,7 @@ class TeamRunner:
         }
         try:
             key = f"{principal.id}:{team_run_id}"
-            await self._checkpoint_store.save(key, data)
+            await self._checkpoint_store.save(key, data, ttl=86400)
         except Exception:
             logger.debug("Failed to save team checkpoint for %s", team_run_id, exc_info=True)
 
@@ -143,10 +152,14 @@ class TeamRunner:
         if data.get("type") != "team":
             return  # Not a team checkpoint — skip
 
-        replica_id = uuid.uuid4().hex[:12]
+        replica_id = self._replica_id or uuid.uuid4().hex[:12]
         if not await self._checkpoint_store.acquire_lock(checkpoint_key, replica_id):
             logger.info("Team checkpoint %s is being recovered by another replica", checkpoint_key)
             return
+
+        # Update the checkpoint's replica_id so the orphan scanner skips it
+        data["replica_id"] = replica_id
+        await self._checkpoint_store.save(checkpoint_key, data, ttl=86400)
 
         try:
             await self._resume_team_from_data(data)
@@ -188,20 +201,96 @@ class TeamRunner:
             principal.id,
         )
 
-        # Resume from the checkpointed phase. Earlier phases already completed
-        # and their results are in the task board.
-        if phase == "planning":
-            await self._run_planner(team_spec, team_run_id, message)
-            phase = "execution"
+        # Notify event store so the UI can see the resumed run
+        event_store = self._get_event_store()
+        if event_store:
+            await event_store.set_status(team_run_id, "running")
+            await event_store.append_event(
+                team_run_id,
+                {
+                    "type": "run_resumed",
+                    "team_run_id": team_run_id,
+                    "team_name": spec_name,
+                    "phase": phase,
+                },
+            )
 
-        if phase == "execution":
-            await self._team_checkpoint(team_spec, team_run_id, message, "execution")
-            await self._run_with_replanning(team_spec, team_run_id, message)
-            phase = "synthesis"
+        # Resume using streaming variants so events (tokens, task_claimed,
+        # worker activity) are emitted to the event store for the UI to replay.
+        async def _emit(event: dict[str, Any]) -> None:
+            if event_store:
+                await event_store.append_event(team_run_id, event)
 
-        if phase == "synthesis":
-            await self._team_checkpoint(team_spec, team_run_id, message, "synthesis")
-            await self._run_synthesizer(team_spec, team_run_id, message)
+        # Reset in-progress tasks to pending so workers can re-claim them.
+        # After a crash, tasks may be stuck in "in_progress" from dead workers.
+        try:
+            all_tasks = await registry.tasks.list_tasks(team_run_id)
+            for t in all_tasks:
+                if t.status == "in_progress":
+                    await registry.tasks.update_task(team_run_id, t.id, status="pending")
+                    logger.info("Reset stuck task %s to pending for run %s", t.id, team_run_id)
+        except Exception:
+            logger.debug("Failed to reset stuck tasks for %s", team_run_id, exc_info=True)
+
+        try:
+            if phase == "planning":
+                await _emit({"type": "phase_change", "phase": "planning"})
+                async for event in self._run_planner_stream(team_spec, team_run_id, message):
+                    await _emit(event)
+
+                all_tasks = await registry.tasks.list_tasks(team_run_id)
+                await _emit(
+                    {
+                        "type": "tasks_created",
+                        "count": len(all_tasks),
+                        "tasks": [
+                            {
+                                "id": t.id,
+                                "title": t.title,
+                                "priority": t.priority,
+                                "suggested_worker": t.suggested_worker,
+                            }
+                            for t in all_tasks
+                        ],
+                    }
+                )
+                phase = "execution"
+
+            if phase == "execution":
+                await self._team_checkpoint(team_spec, team_run_id, message, "execution")
+                await _emit({"type": "phase_change", "phase": "execution"})
+                async for event in self._run_with_replanning_stream(team_spec, team_run_id, message):
+                    await _emit(event)
+                phase = "synthesis"
+
+            if phase == "synthesis":
+                await self._team_checkpoint(team_spec, team_run_id, message, "synthesis")
+                await _emit({"type": "phase_change", "phase": "synthesis"})
+                response = ""
+                async for event in self._run_synthesizer_stream(team_spec, team_run_id, message):
+                    if event.get("type") == "agent_token":
+                        response += event.get("content", "")
+                    await _emit(event)
+
+                all_tasks = await registry.tasks.list_tasks(team_run_id)
+                done_count = sum(1 for t in all_tasks if t.status == TaskStatus.DONE)
+                await _emit(
+                    {
+                        "type": "done",
+                        "response": response,
+                        "team_run_id": team_run_id,
+                        "team_name": spec_name,
+                        "phase": "done",
+                        "tasks_created": len(all_tasks),
+                        "tasks_completed": done_count,
+                    }
+                )
+        except Exception:
+            logger.exception("Error during team resume phases for run %s", team_run_id)
+            await _emit({"type": "error", "detail": f"Resume failed for team run {team_run_id}"})
+
+        if event_store:
+            await event_store.set_status(team_run_id, "idle")
 
         await self._delete_team_checkpoint(team_run_id)
         logger.info("Team[%s] run=%s resumed and completed", spec_name, team_run_id)

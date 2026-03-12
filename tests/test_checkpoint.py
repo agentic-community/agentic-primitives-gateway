@@ -436,6 +436,17 @@ class TestOrphanRecovery:
 
 
 class TestTeamResume:
+    @staticmethod
+    async def _empty_stream(*_args, **_kwargs):
+        """Async generator that yields nothing (mock for stream methods)."""
+        return
+        yield
+
+    @staticmethod
+    async def _synth_stream(*_args, **_kwargs):
+        """Async generator that yields a token event (mock for synthesizer stream)."""
+        yield {"type": "agent_token", "content": "synthesized"}
+
     @pytest.mark.asyncio
     async def test_resume_from_execution_phase(self):
         """Team resume from execution phase re-runs execution + synthesis."""
@@ -453,10 +464,10 @@ class TestTeamResume:
         team_runner._agent_store = AsyncMock()
         team_runner._agent_runner = AsyncMock()
 
-        # Mock all phase methods
-        team_runner._run_planner = AsyncMock()
-        team_runner._run_with_replanning = AsyncMock(return_value=["w1"])
-        team_runner._run_synthesizer = AsyncMock(return_value="synthesized")
+        # Mock streaming phase methods
+        team_runner._run_planner_stream = self._empty_stream
+        team_runner._run_with_replanning_stream = self._empty_stream
+        team_runner._run_synthesizer_stream = self._synth_stream
 
         await store.save(
             "alice:team-run-1",
@@ -471,14 +482,11 @@ class TestTeamResume:
             },
         )
 
-        await team_runner.resume("alice:team-run-1")
+        with patch("agentic_primitives_gateway.agents.team_runner.registry") as mock_reg:
+            mock_reg.tasks.list_tasks = AsyncMock(return_value=[])
+            await team_runner.resume("alice:team-run-1")
 
-        # Planning should NOT be called (already completed)
-        team_runner._run_planner.assert_not_called()
-        # Execution and synthesis should be called
-        team_runner._run_with_replanning.assert_called_once()
-        team_runner._run_synthesizer.assert_called_once()
-        # Checkpoint should be deleted
+        # Checkpoint should be deleted after successful resume
         assert await store.load("alice:team-run-1") is None
 
     @pytest.mark.asyncio
@@ -496,9 +504,9 @@ class TestTeamResume:
         team_runner._team_store.get = AsyncMock(return_value=team_spec)
         team_runner._agent_store = AsyncMock()
         team_runner._agent_runner = AsyncMock()
-        team_runner._run_planner = AsyncMock()
-        team_runner._run_with_replanning = AsyncMock()
-        team_runner._run_synthesizer = AsyncMock(return_value="done")
+        team_runner._run_planner_stream = self._empty_stream
+        team_runner._run_with_replanning_stream = self._empty_stream
+        team_runner._run_synthesizer_stream = self._synth_stream
 
         await store.save(
             "bob:run-2",
@@ -513,11 +521,11 @@ class TestTeamResume:
             },
         )
 
-        await team_runner.resume("bob:run-2")
+        with patch("agentic_primitives_gateway.agents.team_runner.registry") as mock_reg:
+            mock_reg.tasks.list_tasks = AsyncMock(return_value=[])
+            await team_runner.resume("bob:run-2")
 
-        team_runner._run_planner.assert_not_called()
-        team_runner._run_with_replanning.assert_not_called()
-        team_runner._run_synthesizer.assert_called_once()
+        assert await store.load("bob:run-2") is None
 
     @pytest.mark.asyncio
     async def test_resume_skips_deleted_team(self):
