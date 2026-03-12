@@ -275,10 +275,14 @@ async def stream_team_run_events(name: str, team_run_id: str) -> StreamingRespon
 
                 # Check if the last event is "done" — run completed
                 last_evt = events[-1] if events else {}
-                if isinstance(last_evt, dict) and last_evt.get("type") == "done":
+                if isinstance(last_evt, dict) and last_evt.get("type") in ("done", "cancelled"):
                     break
             else:
                 idle_count += 1
+
+            # Close on cancelled status immediately
+            if status == "cancelled":
+                break
 
             # Only close on idle if we've seen it running then go idle
             # (not on initial connect when status might be stale)
@@ -310,7 +314,13 @@ async def get_team_run_status(name: str, team_run_id: str) -> dict:
 
 @router.delete("/{name}/runs/{team_run_id}/cancel")
 async def cancel_team_run(name: str, team_run_id: str) -> dict:
-    """Cancel an active team run."""
+    """Cancel an active team run and mark all in-progress tasks as failed.
+
+    Works for both locally-tracked runs (via BackgroundRunManager) and
+    recovered runs (which bypass the manager). For recovered runs, does
+    a "soft cancel" — marks tasks as failed and deletes the checkpoint
+    so the run stops naturally.
+    """
     store = _get_store()
     spec = await store.get(name)
     if spec is None:
@@ -318,9 +328,40 @@ async def cancel_team_run(name: str, team_run_id: str) -> dict:
     require_access(_principal(), spec.owner_id, spec.shared_with)
     await _require_run_owner(team_run_id)
 
-    cancelled = await _bg.cancel(team_run_id)
-    if not cancelled:
-        raise HTTPException(status_code=404, detail="No active run found")
+    # Signal the team runner to stop workers at the next checkpoint
+    _runner.cancel_run(team_run_id)
+
+    # Try to cancel the local background task (works for non-recovered runs)
+    await _bg.cancel(team_run_id)
+
+    # Also try to cancel a recovery task (works for resumed runs on this replica)
+    from agentic_primitives_gateway.agents.checkpoint import cancel_recovery_task
+
+    cancel_recovery_task(team_run_id)
+
+    # Always mark tasks as failed — works for both local and recovered runs
+    try:
+        all_tasks = await registry.tasks.list_tasks(team_run_id)
+        for t in all_tasks:
+            if t.status in ("pending", "in_progress"):
+                await registry.tasks.update_task(team_run_id, t.id, status="failed", result="Run cancelled")
+    except (NotImplementedError, Exception):
+        pass
+
+    # Set event store status to cancelled
+    if _bg._event_store:
+        with contextlib.suppress(Exception):
+            await _bg._event_store.set_status(team_run_id, "cancelled")
+            await _bg._event_store.append_event(team_run_id, {"type": "cancelled"})
+
+    # Delete checkpoint so orphan recovery doesn't resume this run
+    from agentic_primitives_gateway.routes.agents import _runner as agent_runner
+
+    if agent_runner._checkpoint_store:
+        principal = _principal()
+        with contextlib.suppress(Exception):
+            await agent_runner._checkpoint_store.delete(f"{principal.id}:{team_run_id}")
+
     return {"status": "cancelled"}
 
 

@@ -76,6 +76,14 @@ class TeamRunner:
         self._session_registry: Any | None = None
         self._checkpoint_store: Any | None = None
         self._replica_id: str | None = None
+        self._cancel_events: dict[str, asyncio.Event] = {}
+
+    def cancel_run(self, team_run_id: str) -> None:
+        """Signal a running team to stop at the next checkpoint."""
+        event = self._cancel_events.get(team_run_id)
+        if event:
+            event.set()
+            logger.info("Cancel event set for team run %s", team_run_id)
 
     def set_stores(
         self,
@@ -395,73 +403,76 @@ class TeamRunner:
         assert self._agent_store is not None
         assert self._agent_runner is not None
 
-        yield {"type": "team_start", "team_run_id": team_run_id, "team_name": team_spec.name}
+        cancel_event = asyncio.Event()
+        self._cancel_events[team_run_id] = cancel_event
 
-        # Phase 1: Initial planning
-        await self._team_checkpoint(team_spec, team_run_id, message, "planning")
-        yield {"type": "phase_change", "phase": "planning"}
-        seen_task_ids: set[str] = set()
-        async for event in self._run_planner_stream(team_spec, team_run_id, message):
-            yield event
-            # Poll for newly created tasks after every event. Tools execute
-            # between LLM turns, so new tasks appear after tool completion.
-            new_tasks = await registry.tasks.list_tasks(team_run_id)
-            for t in new_tasks:
-                if t.id not in seen_task_ids:
-                    seen_task_ids.add(t.id)
-                    yield {
-                        "type": "task_created",
-                        "task": {
-                            "id": t.id,
-                            "title": t.title,
-                            "priority": t.priority,
-                            "suggested_worker": t.suggested_worker,
-                        },
-                    }
+        try:
+            yield {"type": "team_start", "team_run_id": team_run_id, "team_name": team_spec.name}
 
-        # Still emit the final tasks_created for completeness (catches any missed)
-        all_tasks = await registry.tasks.list_tasks(team_run_id)
-        yield {
-            "type": "tasks_created",
-            "count": len(all_tasks),
-            "tasks": [
-                {"id": t.id, "title": t.title, "priority": t.priority, "suggested_worker": t.suggested_worker}
-                for t in all_tasks
-            ],
-        }
+            # Phase 1: Initial planning
+            await self._team_checkpoint(team_spec, team_run_id, message, "planning")
+            yield {"type": "phase_change", "phase": "planning"}
+            seen_task_ids: set[str] = set()
+            async for event in self._run_planner_stream(team_spec, team_run_id, message):
+                yield event
+                new_tasks = await registry.tasks.list_tasks(team_run_id)
+                for t in new_tasks:
+                    if t.id not in seen_task_ids:
+                        seen_task_ids.add(t.id)
+                        yield {
+                            "type": "task_created",
+                            "task": {
+                                "id": t.id,
+                                "title": t.title,
+                                "priority": t.priority,
+                                "suggested_worker": t.suggested_worker,
+                            },
+                        }
 
-        # Phase 2: Execution with continuous re-planning
-        await self._team_checkpoint(team_spec, team_run_id, message, "execution")
-        yield {"type": "phase_change", "phase": "execution"}
-        workers_used: list[str] = []
-        async for event in self._run_with_replanning_stream(team_spec, team_run_id, message):
-            if event.get("type") == "worker_done" and event["agent"] not in workers_used:
-                workers_used.append(event["agent"])
-            yield event
+            all_tasks = await registry.tasks.list_tasks(team_run_id)
+            yield {
+                "type": "tasks_created",
+                "count": len(all_tasks),
+                "tasks": [
+                    {"id": t.id, "title": t.title, "priority": t.priority, "suggested_worker": t.suggested_worker}
+                    for t in all_tasks
+                ],
+            }
 
-        # Phase 3: Synthesis
-        await self._team_checkpoint(team_spec, team_run_id, message, "synthesis")
-        yield {"type": "phase_change", "phase": "synthesis"}
-        response = ""
-        async for event in self._run_synthesizer_stream(team_spec, team_run_id, message):
-            if event.get("type") == "agent_token":
-                response += event.get("content", "")
-            yield event
+            # Phase 2: Execution with continuous re-planning
+            await self._team_checkpoint(team_spec, team_run_id, message, "execution")
+            yield {"type": "phase_change", "phase": "execution"}
+            workers_used: list[str] = []
+            async for event in self._run_with_replanning_stream(team_spec, team_run_id, message):
+                if event.get("type") == "worker_done" and event["agent"] not in workers_used:
+                    workers_used.append(event["agent"])
+                yield event
 
-        await self._delete_team_checkpoint(team_run_id, team_spec=team_spec)
-        all_tasks = await registry.tasks.list_tasks(team_run_id)
-        done_count = sum(1 for t in all_tasks if t.status == TaskStatus.DONE)
+            # Phase 3: Synthesis
+            await self._team_checkpoint(team_spec, team_run_id, message, "synthesis")
+            yield {"type": "phase_change", "phase": "synthesis"}
+            response = ""
+            async for event in self._run_synthesizer_stream(team_spec, team_run_id, message):
+                if event.get("type") == "agent_token":
+                    response += event.get("content", "")
+                yield event
 
-        yield {
-            "type": "done",
-            "response": response,
-            "team_run_id": team_run_id,
-            "team_name": team_spec.name,
-            "phase": "done",
-            "tasks_created": len(all_tasks),
-            "tasks_completed": done_count,
-            "workers_used": workers_used,
-        }
+            await self._delete_team_checkpoint(team_run_id, team_spec=team_spec)
+            all_tasks = await registry.tasks.list_tasks(team_run_id)
+            done_count = sum(1 for t in all_tasks if t.status == TaskStatus.DONE)
+
+            yield {
+                "type": "done",
+                "response": response,
+                "team_run_id": team_run_id,
+                "team_name": team_spec.name,
+                "phase": "done",
+                "tasks_created": len(all_tasks),
+                "tasks_completed": done_count,
+                "workers_used": workers_used,
+            }
+        finally:
+            self._cancel_events.pop(team_run_id, None)
 
     # ── Phase 1: Planning ────────────────────────────────────────────
 
@@ -624,18 +635,24 @@ class TeamRunner:
 
             worker_tasks = [asyncio.create_task(_worker_wrapper(w)) for w in workers]
 
-            finished = 0
-            while finished < active_count:
-                event = await queue.get()
-                if event is None:
-                    finished += 1
-                    continue
-                yield event
-
-            # Cancel any lingering wrapper tasks (async generator cleanup)
-            for wt in worker_tasks:
-                if not wt.done():
+            try:
+                finished = 0
+                while finished < active_count:
+                    event = await queue.get()
+                    if event is None:
+                        finished += 1
+                        continue
+                    yield event
+            finally:
+                # Cancel any lingering worker tasks (e.g. on generator close / cancellation)
+                active = [wt for wt in worker_tasks if not wt.done()]
+                logger.info("Cancelling %d/%d worker tasks", len(active), len(worker_tasks))
+                for wt in active:
                     wt.cancel()
+                for wt in worker_tasks:
+                    with contextlib.suppress(asyncio.CancelledError, Exception):
+                        await wt
+                logger.info("All worker tasks finished after cancel")
 
             # Re-plan based on newly completed tasks
             logger.info("All workers finished, checking for re-planning...")
@@ -709,8 +726,15 @@ class TeamRunner:
             yield {"type": "worker_error", "agent": worker_name, "error": f"Agent '{worker_name}' not found"}
             return
 
+        cancel_evt = self._cancel_events.get(team_run_id)
+
         yield {"type": "worker_start", "agent": worker_name}
         while True:
+            # Check for cancellation before polling for tasks
+            if cancel_evt and cancel_evt.is_set():
+                logger.info("Worker '%s': cancelled, exiting", worker_name)
+                break
+
             available = await registry.tasks.get_available(team_run_id, worker_name=worker_name)
             if not available:
                 if not await self._has_incomplete_tasks(team_run_id):
@@ -741,7 +765,11 @@ class TeamRunner:
         """Execute claimed tasks in parallel, yielding events as they arrive."""
         event_queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
 
+        cancel_evt = self._cancel_events.get(team_run_id)
+
         async def _run_one(t: Any, _q: asyncio.Queue[dict[str, Any] | None] = event_queue) -> None:
+            if cancel_evt and cancel_evt.is_set():
+                return
             await _q.put({"type": "task_claimed", "agent": worker_name, "task_id": t.id, "title": t.title})
             await registry.tasks.update_task(team_run_id, t.id, status=TaskStatus.IN_PROGRESS)
             try:
@@ -760,6 +788,12 @@ class TeamRunner:
 
         finished_ids: set[int] = set()
         while len(finished_ids) < len(parallel_tasks):
+            # Check cancel event — cancel all sub-tasks and exit
+            if cancel_evt and cancel_evt.is_set():
+                for pt in parallel_tasks:
+                    if not pt.done():
+                        pt.cancel()
+                break
             try:
                 event = await asyncio.wait_for(event_queue.get(), timeout=0.5)
                 if event is not None:
@@ -820,8 +854,9 @@ class TeamRunner:
 
             logger.info("Task '%s' starting streaming execution for '%s'", task_id, title)
             content = ""
+            cancel_evt = self._cancel_events.get(team_run_id)
             async for event in run_agent_with_tools_stream(
-                worker_spec, message, tools, worker_name, max_turns=worker_spec.max_turns
+                worker_spec, message, tools, worker_name, max_turns=worker_spec.max_turns, cancel_event=cancel_evt
             ):
                 evt_type = event.get("type")
                 if evt_type == "agent_token":

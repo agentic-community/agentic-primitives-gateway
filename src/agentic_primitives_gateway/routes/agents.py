@@ -1,3 +1,4 @@
+import contextlib
 import logging
 from typing import Any
 
@@ -460,9 +461,26 @@ async def cancel_session_run(name: str, session_id: str) -> dict:
     if owner and owner != _principal().id and not _principal().is_admin:
         raise HTTPException(status_code=403, detail="Forbidden")
 
-    cancelled = await _bg.cancel(session_id)
-    if not cancelled:
-        raise HTTPException(status_code=404, detail="No active run found for this session")
+    # Try to cancel the local background task (works for non-recovered runs)
+    await _bg.cancel(session_id)
+
+    # Also try to cancel a recovery task (works for resumed runs on this replica)
+    from agentic_primitives_gateway.agents.checkpoint import cancel_recovery_task
+
+    cancel_recovery_task(session_id)
+
+    # Set event store status to cancelled (works for both local and recovered runs)
+    if _bg._event_store:
+        with contextlib.suppress(Exception):
+            await _bg._event_store.set_status(session_id, "cancelled")
+            await _bg._event_store.append_event(session_id, {"type": "cancelled"})
+
+    # Delete checkpoint so orphan recovery doesn't resume this run
+    if _runner._checkpoint_store:
+        principal = _principal()
+        with contextlib.suppress(Exception):
+            await _runner._checkpoint_store.delete(f"{principal.id}:{session_id}")
+
     return {"status": "cancelled"}
 
 

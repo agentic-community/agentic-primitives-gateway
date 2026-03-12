@@ -27,6 +27,7 @@ const phaseLabels: Record<string, string> = {
   replanning: "Re-planning",
   synthesis: "Synthesizing",
   done: "Done",
+  cancelled: "Cancelled",
 };
 
 const statusColors: Record<string, string> = {
@@ -244,6 +245,14 @@ export default function TeamRun() {
             setStats({ created: event.tasks_created, completed: event.tasks_completed, workers: event.workers_used ?? [] });
             logs.push(`Done -- ${event.tasks_completed}/${event.tasks_created} tasks completed`);
             break;
+          case "cancelled":
+            setPhase("cancelled");
+            // Mark all non-done tasks as cancelled
+            for (const t of newTasks) {
+              if (t.status !== "done") t.status = "failed";
+            }
+            logs.push("Run was cancelled");
+            break;
         }
       }
 
@@ -360,6 +369,12 @@ export default function TeamRun() {
                   setPhase("done");
                   setStats({ created: event.tasks_created, completed: event.tasks_completed, workers: event.workers_used ?? [] });
                   setActivityLog((prev) => [...prev, `Done -- ${event.tasks_completed}/${event.tasks_created} tasks completed`]);
+                  break;
+                case "cancelled":
+                  streamDoneRef.current = true;
+                  setPhase("cancelled");
+                  setTasks((prev) => prev.map((t) => t.status === "done" ? t : { ...t, status: "failed" }));
+                  setActivityLog((prev) => [...prev, "Run was cancelled"]);
                   break;
               }
             }
@@ -552,6 +567,12 @@ export default function TeamRun() {
                   workers: event.workers_used,
                 });
                 addLog(`Done -- ${event.tasks_completed}/${event.tasks_created} tasks completed`);
+                break;
+              case "cancelled":
+                streamDoneRef.current = true;
+                setPhase("cancelled");
+                setTasks((prev) => prev.map((t) => t.status === "done" ? t : { ...t, status: "failed" }));
+                addLog("Run was cancelled");
                 break;
             }
           }

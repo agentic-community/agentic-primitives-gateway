@@ -203,6 +203,26 @@ class ReplicaHeartbeat:
                 logger.warning("Orphan scan failed", exc_info=True)
 
 
+# ── Recovery task tracking ────────────────────────────────────────────
+
+# Tracks active recovery tasks so they can be cancelled.
+# Keyed by run ID (session_id or team_run_id).
+_recovery_tasks: dict[str, asyncio.Task[bool]] = {}
+
+
+def cancel_recovery_task(run_id: str) -> bool:
+    """Cancel a recovery task by run ID. Returns True if found and cancelled."""
+    # Check all keys that end with the run_id (key format is "owner:run_id")
+    for key, task in list(_recovery_tasks.items()):
+        if key.endswith(f":{run_id}") or key == run_id:
+            if not task.done():
+                task.cancel()
+                logger.info("Cancelled recovery task for %s", run_id)
+                return True
+            _recovery_tasks.pop(key, None)
+    return False
+
+
 # ── Orphan recovery ──────────────────────────────────────────────────
 
 
@@ -269,11 +289,23 @@ async def recover_orphaned_runs(
             else:
                 await agent_runner.resume(key)
             return True
+        except asyncio.CancelledError:
+            logger.info("Recovery of %s was cancelled", key)
+            return False
         except Exception:
             logger.exception("Failed to recover orphaned run: %s", key)
             return False
+        finally:
+            _recovery_tasks.pop(key, None)
 
-    results = await asyncio.gather(*[_resume_one(k, d) for k, d in orphaned])
+    # Create tasks and track them for cancellation
+    tasks = []
+    for key, data in orphaned:
+        task = asyncio.create_task(_resume_one(key, data))
+        _recovery_tasks[key] = task
+        tasks.append(task)
+
+    results = await asyncio.gather(*tasks)
     recovered = sum(1 for r in results if r)
 
     if recovered:

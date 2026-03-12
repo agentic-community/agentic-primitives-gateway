@@ -197,8 +197,15 @@ class BedrockConverseProvider(SyncRunnerMixin, GatewayProvider):
 
         loop.run_in_executor(None, _drain_stream)
 
-        async for parsed in _parse_bedrock_stream(queue, model_id):
-            yield parsed
+        try:
+            async for parsed in _parse_bedrock_stream(queue, model_id):
+                yield parsed
+        finally:
+            # Close the boto3 EventStream to kill the HTTP connection.
+            # This stops the drain thread immediately instead of letting
+            # the LLM response complete (which could take minutes).
+            if hasattr(stream, "close"):
+                stream.close()
 
     async def list_models(self) -> list[dict[str, Any]]:
         return [

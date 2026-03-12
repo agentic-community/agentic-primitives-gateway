@@ -7,6 +7,7 @@ worker, and synthesizer agents.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import AsyncIterator
 from typing import Any
@@ -112,6 +113,7 @@ async def run_agent_with_tools_stream(
     tools: list[ToolDefinition],
     role_label: str,
     max_turns: int = 20,
+    cancel_event: asyncio.Event | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
     """Streaming version of run_agent_with_tools.
 
@@ -124,6 +126,11 @@ async def run_agent_with_tools_stream(
     content = ""
 
     for _turn in range(max_turns):
+        # Check for cancellation before starting a new turn
+        if cancel_event and cancel_event.is_set():
+            logger.info("Agent[%s] cancelled before turn %d", spec.name, _turn + 1)
+            return
+
         request_dict: dict[str, Any] = {
             "model": spec.model,
             "messages": messages,
@@ -179,6 +186,10 @@ async def run_agent_with_tools_stream(
 
         results = []
         for tc in tool_calls:
+            # Check for cancellation before each tool execution
+            if cancel_event and cancel_event.is_set():
+                logger.info("Agent[%s] cancelled before tool %s", spec.name, tc["name"])
+                return
             logger.info("Agent[%s] stream tool: %s(%s)", spec.name, tc["name"], str(tc.get("input", {}))[:200])
             try:
                 result = await execute_tool(tc["name"], tc.get("input", {}), tools)

@@ -236,7 +236,8 @@ export type TeamStreamEvent =
   | { type: "worker_error"; agent: string; error: string }
   | { type: "agent_token"; agent: string; content: string; task_id?: string }
   | { type: "agent_tool"; agent: string; name: string; task_id?: string }
-  | { type: "done"; response: string; team_run_id: string; team_name: string; phase: string; tasks_created: number; tasks_completed: number; workers_used: string[] };
+  | { type: "done"; response: string; team_run_id: string; team_name: string; phase: string; tasks_created: number; tasks_completed: number; workers_used: string[] }
+  | { type: "cancelled" };
 
 // Agent memory types
 
