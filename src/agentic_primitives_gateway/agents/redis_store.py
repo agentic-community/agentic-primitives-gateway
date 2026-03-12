@@ -51,12 +51,17 @@ class RedisAgentStore(AgentStore):
         return RedisSessionRegistry(redis_url=self._redis_url)
 
     def seed(self, specs: dict[str, dict[str, Any]]) -> None:
-        """Seed agents from config. Runs synchronously at startup via asyncio."""
+        """Seed agents from config. Runs synchronously at startup via asyncio.
+
+        Config-seeded agents default to ``shared_with: ["*"]`` unless
+        the config explicitly sets it.
+        """
         import asyncio
 
         async def _seed() -> None:
             count = 0
             for name, spec_dict in specs.items():
+                spec_dict.setdefault("shared_with", ["*"])
                 new_spec = AgentSpec(name=name, **spec_dict)
                 existing_raw = await self._redis.hget(_AGENT_KEY, name)
                 if existing_raw is None or AgentSpec(**json.loads(existing_raw)) != new_spec:
@@ -126,6 +131,7 @@ class RedisTeamStore(TeamStore):
         async def _seed() -> None:
             count = 0
             for name, spec_dict in specs.items():
+                spec_dict.setdefault("shared_with", ["*"])
                 new_spec = TeamSpec(name=name, **spec_dict)
                 existing_raw = await self._redis.hget(_TEAM_KEY, name)
                 if existing_raw is None or TeamSpec(**json.loads(existing_raw)) != new_spec:

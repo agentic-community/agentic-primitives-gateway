@@ -245,10 +245,11 @@ class TestAgentOwnership:
 
 
 class TestAgentSpecDefaults:
-    def test_default_owner_is_system(self):
+    def test_default_is_private(self):
+        """New agents default to private (empty shared_with)."""
         spec = AgentSpec(name="test", model="m")
         assert spec.owner_id == "system"
-        assert spec.shared_with == ["*"]
+        assert spec.shared_with == []
 
     def test_custom_ownership(self):
         spec = AgentSpec(
@@ -260,18 +261,49 @@ class TestAgentSpecDefaults:
         assert spec.owner_id == "alice"
         assert spec.shared_with == ["engineering"]
 
-    def test_backwards_compat_no_ownership_fields(self):
-        """Specs without ownership fields get safe defaults."""
-        data = {"name": "old-agent", "model": "m"}
-        spec = AgentSpec(**data)
-        assert spec.owner_id == "system"
+    def test_explicit_wildcard(self):
+        """Wildcard must be explicitly set."""
+        spec = AgentSpec(name="test", model="m", shared_with=["*"])
         assert spec.shared_with == ["*"]
 
 
 class TestTeamSpecDefaults:
-    def test_default_owner_is_system(self):
+    def test_default_is_private(self):
         from agentic_primitives_gateway.models.teams import TeamSpec
 
         spec = TeamSpec(name="t", planner="p", synthesizer="s", workers=["w"])
         assert spec.owner_id == "system"
+        assert spec.shared_with == []
+
+
+class TestSeedInjectsWildcard:
+    def test_file_agent_store_seed_adds_wildcard(self, agent_store):
+        """Seeding from config injects shared_with=['*'] by default."""
+        agent_store.seed({"seeded": {"model": "m"}})
+
+        import asyncio
+
+        spec = asyncio.get_event_loop().run_until_complete(agent_store.get("seeded"))
+        assert spec is not None
+        assert spec.shared_with == ["*"]
+        assert spec.owner_id == "system"
+
+    def test_file_agent_store_seed_respects_explicit(self, agent_store):
+        """Seeding from config respects explicitly set shared_with."""
+        agent_store.seed({"private": {"model": "m", "shared_with": ["engineering"]}})
+
+        import asyncio
+
+        spec = asyncio.get_event_loop().run_until_complete(agent_store.get("private"))
+        assert spec is not None
+        assert spec.shared_with == ["engineering"]
+
+    def test_file_team_store_seed_adds_wildcard(self, team_store):
+        """Seeding teams from config injects shared_with=['*'] by default."""
+        team_store.seed({"t": {"planner": "p", "synthesizer": "s", "workers": ["w"]}})
+
+        import asyncio
+
+        spec = asyncio.get_event_loop().run_until_complete(team_store.get("t"))
+        assert spec is not None
         assert spec.shared_with == ["*"]

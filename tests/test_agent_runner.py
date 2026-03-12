@@ -584,6 +584,7 @@ class TestExecToolsStreaming:
         ctx = _RunContext(
             spec=spec,
             session_id="sess",
+            actor_id="test-agent",
             trace_id="trace",
             knowledge_ns="ns",
             depth=0,
@@ -638,6 +639,7 @@ class TestInitContextMemoryInjection:
         ctx = _RunContext(
             spec=spec,
             session_id="s",
+            actor_id="test-agent",
             trace_id="t",
             knowledge_ns="ns",
             depth=0,

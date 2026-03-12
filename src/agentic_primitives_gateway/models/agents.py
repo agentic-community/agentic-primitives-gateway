@@ -34,7 +34,7 @@ class AgentSpec(BaseModel):
     temperature: float = 1.0
     max_tokens: int | None = None
     owner_id: str = "system"
-    shared_with: list[str] = Field(default_factory=lambda: ["*"])
+    shared_with: list[str] = Field(default_factory=list)
 
 
 class CreateAgentRequest(BaseModel):

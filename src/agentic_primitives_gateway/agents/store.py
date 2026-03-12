@@ -86,9 +86,14 @@ class FileAgentStore(AgentStore):
         self._path.write_text(json.dumps(data, indent=2, default=str))
 
     def seed(self, specs: dict[str, dict[str, Any]]) -> None:
-        """Seed agents from YAML config. Overwrites existing agents from config."""
+        """Seed agents from YAML config. Overwrites existing agents from config.
+
+        Config-seeded agents default to ``shared_with: ["*"]`` (accessible
+        to all authenticated users) unless the config explicitly sets it.
+        """
         count = 0
         for name, spec_dict in specs.items():
+            spec_dict.setdefault("shared_with", ["*"])
             new_spec = AgentSpec(name=name, **spec_dict)
             existing = self._agents.get(name)
             if existing is None or existing != new_spec:

@@ -69,10 +69,15 @@ class FileTeamStore(TeamStore):
         self._path.write_text(json.dumps(data, indent=2, default=str))
 
     def seed(self, specs: dict[str, dict[str, Any]]) -> None:
-        """Seed teams from YAML config. Overwrites if changed."""
+        """Seed teams from YAML config. Overwrites if changed.
+
+        Config-seeded teams default to ``shared_with: ["*"]`` (accessible
+        to all authenticated users) unless the config explicitly sets it.
+        """
         changed = False
         for name, raw in specs.items():
             raw["name"] = name
+            raw.setdefault("shared_with", ["*"])
             new_spec = TeamSpec(**raw)
             existing = self._teams.get(name)
             if existing is None or existing != new_spec:

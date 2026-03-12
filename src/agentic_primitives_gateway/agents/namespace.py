@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from agentic_primitives_gateway.auth.models import AuthenticatedPrincipal
 from agentic_primitives_gateway.models.agents import AgentSpec
 
 
@@ -26,3 +27,17 @@ def resolve_knowledge_namespace_for_name(name: str, namespace_template: str | No
     ns = namespace_template or "agent:{agent_name}"
     ns = ns.replace(":{session_id}", "").replace("{session_id}", "")
     return ns.replace("{agent_name}", name).rstrip(":")
+
+
+def resolve_actor_id(agent_name: str, principal: AuthenticatedPrincipal | None) -> str:
+    """Resolve the actor_id for conversation history scoping.
+
+    The actor_id is the primary key for isolating sessions and conversation
+    history in the memory provider. It always includes the principal ID
+    so that different users have isolated conversations.
+
+    The ``:u:`` separator prevents collision with agent names that happen
+    to end with a user ID string.
+    """
+    principal_id = principal.id if principal is not None else "anonymous"
+    return f"{agent_name}:u:{principal_id}"

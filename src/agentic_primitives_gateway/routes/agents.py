@@ -4,7 +4,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from starlette.responses import StreamingResponse
 
-from agentic_primitives_gateway.agents.namespace import resolve_knowledge_namespace_for_name
+from agentic_primitives_gateway.agents.namespace import resolve_actor_id, resolve_knowledge_namespace_for_name
 from agentic_primitives_gateway.agents.runner import AgentRunner
 from agentic_primitives_gateway.agents.store import AgentStore
 from agentic_primitives_gateway.agents.tools import _TOOL_CATALOG, build_tool_list
@@ -317,9 +317,10 @@ async def list_sessions(name: str) -> dict:
     if spec.provider_overrides:
         set_provider_overrides(spec.provider_overrides)
 
+    actor_id = resolve_actor_id(name, _principal())
     sessions: list[dict[str, Any]] = []
     try:
-        sessions = await registry.memory.list_sessions(name)
+        sessions = await registry.memory.list_sessions(actor_id)
     except (NotImplementedError, Exception):
         logger.debug("Failed to list sessions for %s", name)
 
@@ -338,8 +339,9 @@ async def delete_session(name: str, session_id: str) -> dict:
     if spec.provider_overrides:
         set_provider_overrides(spec.provider_overrides)
 
+    actor_id = resolve_actor_id(name, _principal())
     try:
-        await registry.memory.delete_session(actor_id=name, session_id=session_id)
+        await registry.memory.delete_session(actor_id=actor_id, session_id=session_id)
     except (NotImplementedError, Exception):
         logger.debug("Failed to delete session %s/%s", name, session_id)
 
@@ -365,9 +367,10 @@ async def get_session_history(name: str, session_id: str) -> SessionHistoryRespo
     if spec.provider_overrides:
         set_provider_overrides(spec.provider_overrides)
 
+    actor_id = resolve_actor_id(name, _principal())
     messages: list[dict[str, str]] = []
     try:
-        turns = await registry.memory.get_last_turns(actor_id=name, session_id=session_id, k=50)
+        turns = await registry.memory.get_last_turns(actor_id=actor_id, session_id=session_id, k=50)
         for turn in turns:
             for msg in turn:
                 messages.append({"role": msg.get("role", "user"), "content": msg.get("text", "")})

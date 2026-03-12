@@ -53,15 +53,16 @@ class TestAuthMiddlewareNoop:
     """Tests with noop auth backend."""
 
     @pytest.mark.asyncio
-    async def test_noop_sets_anonymous_principal(self):
+    async def test_noop_sets_admin_principal(self):
         app = _make_app(NoopAuthBackend())
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get("/api/v1/test")
             assert resp.status_code == 200
             data = resp.json()
-            assert data["principal_id"] == "anonymous"
-            assert data["principal_type"] == "anonymous"
+            assert data["principal_id"] == "noop"
+            assert data["principal_type"] == "user"
+            assert "admin" in data["scopes"]
 
     @pytest.mark.asyncio
     async def test_no_backend_sets_anonymous(self):
@@ -72,6 +73,7 @@ class TestAuthMiddlewareNoop:
             resp = await client.get("/api/v1/test")
             assert resp.status_code == 200
             data = resp.json()
+            # No backend = anonymous fallback (only for unconfigured state)
             assert data["principal_id"] == "anonymous"
 
 

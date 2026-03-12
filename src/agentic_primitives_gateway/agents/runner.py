@@ -8,7 +8,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any
 
-from agentic_primitives_gateway.agents.namespace import resolve_knowledge_namespace
+from agentic_primitives_gateway.agents.namespace import resolve_actor_id, resolve_knowledge_namespace
 from agentic_primitives_gateway.agents.store import AgentStore
 from agentic_primitives_gateway.agents.tools import (
     MAX_AGENT_DEPTH,
@@ -17,7 +17,11 @@ from agentic_primitives_gateway.agents.tools import (
     execute_tool,
     to_gateway_tools,
 )
-from agentic_primitives_gateway.context import get_provider_override, set_provider_overrides
+from agentic_primitives_gateway.context import (
+    get_authenticated_principal,
+    get_provider_override,
+    set_provider_overrides,
+)
 from agentic_primitives_gateway.models.agents import AgentSpec, ChatResponse, ToolArtifact
 from agentic_primitives_gateway.models.enums import Primitive
 from agentic_primitives_gateway.registry import registry
@@ -34,6 +38,7 @@ class _RunContext:
 
     spec: AgentSpec
     session_id: str
+    actor_id: str
     trace_id: str
     knowledge_ns: str
     depth: int
@@ -217,6 +222,7 @@ class AgentRunner:
         """Set up everything needed before the tool-call loop."""
         prev_overrides = self._apply_overrides(spec)
         knowledge_ns = resolve_knowledge_namespace(spec)
+        actor_id = resolve_actor_id(spec.name, get_authenticated_principal())
 
         tools = build_tool_list(
             spec.primitives,
@@ -230,6 +236,7 @@ class AgentRunner:
         ctx = _RunContext(
             spec=spec,
             session_id=session_id,
+            actor_id=actor_id,
             trace_id=uuid.uuid4().hex,
             knowledge_ns=knowledge_ns,
             depth=depth,
@@ -240,7 +247,7 @@ class AgentRunner:
 
         # Load conversation history
         if spec.hooks.auto_memory:
-            ctx.messages = await self._load_history(spec.name, session_id)
+            ctx.messages = await self._load_history(ctx.actor_id, session_id)
 
         # Inject stored memories as context on first message
         if not ctx.messages and "memory" in spec.primitives and spec.primitives["memory"].enabled:
@@ -503,7 +510,7 @@ class AgentRunner:
         self._restore_overrides(ctx.prev_overrides)
 
         if ctx.spec.hooks.auto_memory:
-            await self._store_turn(ctx.spec.name, ctx.session_id, user_message, ctx.content)
+            await self._store_turn(ctx.actor_id, ctx.session_id, user_message, ctx.content)
         if ctx.spec.hooks.auto_trace:
             await self._trace_conversation(
                 ctx.trace_id,

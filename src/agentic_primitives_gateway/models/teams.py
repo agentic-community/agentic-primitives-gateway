@@ -19,7 +19,7 @@ class TeamSpec(BaseModel):
     global_timeout_seconds: int = 300
     shared_memory_namespace: str | None = None
     owner_id: str = "system"
-    shared_with: list[str] = Field(default_factory=lambda: ["*"])
+    shared_with: list[str] = Field(default_factory=list)
 
 
 class CreateTeamRequest(BaseModel):
