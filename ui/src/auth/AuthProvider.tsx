@@ -7,6 +7,7 @@ import {
   useState,
 } from "react";
 import { UserManager, type User } from "oidc-client-ts";
+import { useNavigate } from "react-router-dom";
 import { setApiAuthToken } from "../api/client";
 
 interface AuthConfig {
@@ -59,6 +60,7 @@ export default function AuthProvider({
   const [backend, setBackend] = useState("noop");
   const managerRef = useRef<UserManager | null>(null);
   const initRef = useRef(false);
+  const navigate = useNavigate();
 
   // Sync the API token immediately when the user changes, before children re-render.
   const setUser = useCallback((u: User | null) => {
@@ -91,9 +93,10 @@ export default function AuthProvider({
           scope: config.scopes || "openid profile email",
           response_type: "code",
           automaticSilentRenew: true,
-          // Keycloak needs this for public clients doing auth code flow
-          // If the client is confidential, PKCE is still fine
-          loadUserInfo: true,
+          // Skip the extra userinfo request — claims are already in the token.
+          loadUserInfo: false,
+          // Short timeout for silent renew (used for token refresh, not initial login).
+          silentRequestTimeoutInSeconds: 5,
         });
         managerRef.current = mgr;
 
@@ -102,21 +105,22 @@ export default function AuthProvider({
           try {
             const callbackUser = await mgr.signinRedirectCallback();
             setUser(callbackUser);
-            // Navigate to the original page or dashboard
             const returnTo =
-              sessionStorage.getItem("auth_return_to") || "/ui/";
+              sessionStorage.getItem("auth_return_to") || "/";
             sessionStorage.removeItem("auth_return_to");
-            window.history.replaceState({}, "", returnTo);
+            // Strip the /ui basename — React Router navigate is relative to it
+            const path = returnTo.replace(/^\/ui/, "") || "/";
+            navigate(path, { replace: true });
           } catch (e) {
             console.error("OIDC callback error:", e);
-            // Redirect to dashboard on callback failure
-            window.history.replaceState({}, "", "/ui/");
+            navigate("/", { replace: true });
           }
           setLoading(false);
           return;
         }
 
-        // Check if we already have a session
+        // Fast path: check if we have a valid (non-expired) session in storage.
+        // This is a synchronous read from sessionStorage — no network calls.
         const existingUser = await mgr.getUser();
         if (existingUser && !existingUser.expired) {
           setUser(existingUser);
@@ -124,20 +128,27 @@ export default function AuthProvider({
           return;
         }
 
-        // Try silent renew first
-        try {
-          const renewedUser = await mgr.signinSilent();
-          if (renewedUser) {
-            setUser(renewedUser);
-            setLoading(false);
-            return;
+        // Expired token: try a quick silent renew (iframe to IdP).
+        // Only attempt this if we HAD a user (meaning the IdP session might still be alive).
+        // Skip if no prior session — go straight to redirect (faster than waiting for iframe timeout).
+        if (existingUser && existingUser.expired) {
+          try {
+            const renewedUser = await mgr.signinSilent();
+            if (renewedUser) {
+              setUser(renewedUser);
+              setLoading(false);
+              return;
+            }
+          } catch {
+            // Silent renew failed — IdP session expired too. Fall through to redirect.
           }
-        } catch {
-          // Silent renew failed — need interactive login
         }
 
-        // No valid session — redirect to login
-        sessionStorage.setItem("auth_return_to", window.location.pathname + window.location.search);
+        // No valid session — redirect to IdP login immediately.
+        sessionStorage.setItem(
+          "auth_return_to",
+          window.location.pathname + window.location.search,
+        );
         await mgr.signinRedirect();
       } catch (e) {
         console.error("Auth initialization error:", e);
@@ -146,27 +157,40 @@ export default function AuthProvider({
     })();
   }, []);
 
-  // Listen for token renewal
+  // Listen for token renewal events (automatic silent renew).
   useEffect(() => {
     const mgr = managerRef.current;
     if (!mgr) return;
 
     const onUserLoaded = (u: User) => setUser(u);
     const onUserUnloaded = () => setUser(null);
+    const onSilentRenewError = () => {
+      // Token refresh failed — redirect to login.
+      sessionStorage.setItem(
+        "auth_return_to",
+        window.location.pathname + window.location.search,
+      );
+      mgr.signinRedirect();
+    };
 
     mgr.events.addUserLoaded(onUserLoaded);
     mgr.events.addUserUnloaded(onUserUnloaded);
+    mgr.events.addSilentRenewError(onSilentRenewError);
 
     return () => {
       mgr.events.removeUserLoaded(onUserLoaded);
       mgr.events.removeUserUnloaded(onUserUnloaded);
+      mgr.events.removeSilentRenewError(onSilentRenewError);
     };
   }, [backend]);
 
   const login = useCallback(() => {
     const mgr = managerRef.current;
     if (mgr) {
-      sessionStorage.setItem("auth_return_to", window.location.pathname + window.location.search);
+      sessionStorage.setItem(
+        "auth_return_to",
+        window.location.pathname + window.location.search,
+      );
       mgr.signinRedirect();
     }
   }, []);
