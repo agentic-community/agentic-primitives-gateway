@@ -8,6 +8,7 @@ import type {
   UpdateTeamRequest,
 } from "../api/types";
 import LoadingSpinner from "../components/LoadingSpinner";
+import SharedWithInput from "../components/SharedWithInput";
 import { useTeams } from "../hooks/useTeams";
 
 interface TeamFormProps {
@@ -96,6 +97,7 @@ function TeamForm({ initial, onDone, onCancel }: TeamFormProps) {
   const [workers, setWorkers] = useState<string[]>(initial?.workers ?? []);
   const [globalMaxTurns, setGlobalMaxTurns] = useState(initial?.global_max_turns ?? 100);
   const [globalTimeout, setGlobalTimeout] = useState(initial?.global_timeout_seconds ?? 300);
+  const [sharedWith, setSharedWith] = useState<string[]>(initial?.shared_with ?? []);
   const [agents, setAgents] = useState<AgentSpec[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -118,6 +120,7 @@ function TeamForm({ initial, onDone, onCancel }: TeamFormProps) {
             workers,
             global_max_turns: globalMaxTurns,
             global_timeout_seconds: globalTimeout,
+            shared_with: sharedWith,
           };
           await api.updateTeam(name, updates);
         } else {
@@ -129,6 +132,7 @@ function TeamForm({ initial, onDone, onCancel }: TeamFormProps) {
             workers,
             global_max_turns: globalMaxTurns,
             global_timeout_seconds: globalTimeout,
+            shared_with: sharedWith,
           };
           await api.createTeam(req);
         }
@@ -139,7 +143,7 @@ function TeamForm({ initial, onDone, onCancel }: TeamFormProps) {
         setSubmitting(false);
       }
     },
-    [name, description, planner, synthesizer, workers, globalMaxTurns, globalTimeout, isEdit, onDone],
+    [name, description, planner, synthesizer, workers, globalMaxTurns, globalTimeout, sharedWith, isEdit, onDone],
   );
 
   return (
@@ -200,6 +204,8 @@ function TeamForm({ initial, onDone, onCancel }: TeamFormProps) {
           />
         </div>
       </div>
+
+      <SharedWithInput value={sharedWith} onChange={setSharedWith} ownerId={isEdit ? initial?.owner_id : undefined} />
 
       <div className="flex gap-2">
         <button
@@ -313,6 +319,26 @@ export default function TeamList() {
                             {w}
                           </span>
                         ))}
+                        {team.shared_with?.length > 0 ? (
+                          team.shared_with.includes("*") ? (
+                            <span className="rounded bg-green-100 dark:bg-green-900/30 px-1.5 py-0.5 text-[10px] font-mono text-green-600 dark:text-green-400">
+                              public
+                            </span>
+                          ) : (
+                            team.shared_with.map((g) => (
+                              <span
+                                key={g}
+                                className="rounded bg-indigo-100 dark:bg-indigo-900/30 px-1.5 py-0.5 text-[10px] font-mono text-indigo-600 dark:text-indigo-400"
+                              >
+                                {g}
+                              </span>
+                            ))
+                          )
+                        ) : (
+                          <span className="rounded bg-yellow-100 dark:bg-yellow-900/30 px-1.5 py-0.5 text-[10px] font-mono text-yellow-600 dark:text-yellow-400">
+                            private
+                          </span>
+                        )}
                       </div>
                     </div>
                     <div className="flex items-center gap-1.5 shrink-0">

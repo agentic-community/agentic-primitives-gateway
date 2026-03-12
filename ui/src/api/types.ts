@@ -20,6 +20,8 @@ export interface AgentSpec {
   max_turns: number;
   temperature: number;
   max_tokens: number | null;
+  owner_id: string;
+  shared_with: string[];
 }
 
 export interface AgentListResponse {
@@ -37,6 +39,7 @@ export interface CreateAgentRequest {
   max_turns?: number;
   temperature?: number;
   max_tokens?: number | null;
+  shared_with?: string[];
 }
 
 export interface UpdateAgentRequest {
@@ -49,6 +52,7 @@ export interface UpdateAgentRequest {
   max_turns?: number;
   temperature?: number;
   max_tokens?: number | null;
+  shared_with?: string[];
 }
 
 export interface ChatRequest {
@@ -165,6 +169,8 @@ export interface TeamSpec {
   global_max_turns: number;
   global_timeout_seconds: number;
   shared_memory_namespace: string | null;
+  owner_id: string;
+  shared_with: string[];
 }
 
 export interface TeamListResponse {
@@ -180,6 +186,7 @@ export interface CreateTeamRequest {
   max_concurrent?: number | null;
   global_max_turns?: number;
   global_timeout_seconds?: number;
+  shared_with?: string[];
 }
 
 export interface UpdateTeamRequest {
@@ -190,6 +197,7 @@ export interface UpdateTeamRequest {
   max_concurrent?: number | null;
   global_max_turns?: number;
   global_timeout_seconds?: number;
+  shared_with?: string[];
 }
 
 export interface TeamRunRequest {

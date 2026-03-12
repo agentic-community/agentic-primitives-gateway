@@ -4,6 +4,7 @@ import { api } from "../api/client";
 import type { AgentSpec, PrimitiveConfig, UpdateAgentRequest } from "../api/types";
 import LoadingSpinner from "../components/LoadingSpinner";
 import PrimitivesSelector from "../components/PrimitivesSelector";
+import SharedWithInput from "../components/SharedWithInput";
 import { useAgents } from "../hooks/useAgents";
 
 interface AgentFormProps {
@@ -24,6 +25,7 @@ function AgentForm({ initial, onDone, onCancel }: AgentFormProps) {
   const [primitives, setPrimitives] = useState<Record<string, PrimitiveConfig>>(
     initial?.primitives ?? {},
   );
+  const [sharedWith, setSharedWith] = useState<string[]>(initial?.shared_with ?? []);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -41,6 +43,7 @@ function AgentForm({ initial, onDone, onCancel }: AgentFormProps) {
             max_turns: maxTurns,
             temperature,
             primitives,
+            shared_with: sharedWith,
           };
           await api.updateAgent(name, updates);
         } else {
@@ -52,6 +55,7 @@ function AgentForm({ initial, onDone, onCancel }: AgentFormProps) {
             max_turns: maxTurns,
             temperature,
             primitives,
+            shared_with: sharedWith,
           });
         }
         onDone();
@@ -61,7 +65,7 @@ function AgentForm({ initial, onDone, onCancel }: AgentFormProps) {
         setSubmitting(false);
       }
     },
-    [name, model, description, systemPrompt, maxTurns, temperature, primitives, isEdit, onDone],
+    [name, model, description, systemPrompt, maxTurns, temperature, primitives, sharedWith, isEdit, onDone],
   );
 
   return (
@@ -131,6 +135,7 @@ function AgentForm({ initial, onDone, onCancel }: AgentFormProps) {
         </div>
       </div>
       <PrimitivesSelector value={primitives} onChange={setPrimitives} excludeAgent={isEdit ? name : undefined} />
+      <SharedWithInput value={sharedWith} onChange={setSharedWith} ownerId={isEdit ? initial?.owner_id : undefined} />
       <div className="flex gap-2">
         <button
           type="submit"
@@ -247,6 +252,26 @@ export default function AgentList() {
                         <span className="text-[10px] text-gray-400 dark:text-gray-500">
                           max_turns={agent.max_turns}
                         </span>
+                        {agent.shared_with?.length > 0 ? (
+                          agent.shared_with.includes("*") ? (
+                            <span className="rounded bg-green-100 dark:bg-green-900/30 px-1.5 py-0.5 text-[10px] font-mono text-green-600 dark:text-green-400">
+                              public
+                            </span>
+                          ) : (
+                            agent.shared_with.map((g) => (
+                              <span
+                                key={g}
+                                className="rounded bg-indigo-100 dark:bg-indigo-900/30 px-1.5 py-0.5 text-[10px] font-mono text-indigo-600 dark:text-indigo-400"
+                              >
+                                {g}
+                              </span>
+                            ))
+                          )
+                        ) : (
+                          <span className="rounded bg-yellow-100 dark:bg-yellow-900/30 px-1.5 py-0.5 text-[10px] font-mono text-yellow-600 dark:text-yellow-400">
+                            private
+                          </span>
+                        )}
                       </div>
                     </div>
                     <div className="flex items-center gap-1.5 shrink-0">
