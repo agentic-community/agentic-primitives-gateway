@@ -8,6 +8,7 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
+from agentic_primitives_gateway.context import get_authenticated_principal
 from agentic_primitives_gateway.enforcement.base import PolicyEnforcer
 
 logger = logging.getLogger(__name__)
@@ -102,12 +103,22 @@ def _get_action_rules(app: object) -> list[tuple[str, re.Pattern[str], str]]:
 
 
 def _resolve_principal(request: Request) -> str:
-    """Derive the Cedar principal from request headers."""
+    """Derive the Cedar principal from the authenticated principal in context.
+
+    If authentication middleware has set a principal, use it directly.
+    Otherwise fall back to header-based derivation for backwards
+    compatibility (e.g. when auth is noop).
+    """
+    principal = get_authenticated_principal()
+    if principal is not None and not principal.is_anonymous:
+        type_label = principal.type.capitalize()
+        return f'{type_label}::"{principal.id}"'
+
+    # Fall back to header-based derivation (noop auth / anonymous)
     agent_id = request.headers.get("x-agent-id")
     if agent_id:
         return f'Agent::"{agent_id}"'
 
-    # Fall back to service credential name
     for header_name in request.headers:
         if header_name.startswith("x-cred-"):
             parts = header_name.removeprefix("x-cred-").split("-", 1)

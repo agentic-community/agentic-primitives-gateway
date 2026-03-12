@@ -17,7 +17,10 @@ from __future__ import annotations
 
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from agentic_primitives_gateway.auth.models import AuthenticatedPrincipal
 
 
 @dataclass(frozen=True)
@@ -70,6 +73,21 @@ def get_service_credentials(service: str) -> dict[str, str] | None:
     """
     creds = _service_credentials.get()
     return creds.get(service) or None
+
+
+# ── Authenticated principal ─────────────────────────────────────────
+
+_authenticated_principal: ContextVar[AuthenticatedPrincipal | None] = ContextVar(
+    "_authenticated_principal", default=None
+)
+
+
+def set_authenticated_principal(principal: AuthenticatedPrincipal | None) -> None:
+    _authenticated_principal.set(principal)
+
+
+def get_authenticated_principal() -> AuthenticatedPrincipal | None:
+    return _authenticated_principal.get()
 
 
 # ── Provider routing ────────────────────────────────────────────────

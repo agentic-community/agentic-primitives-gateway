@@ -13,6 +13,7 @@ from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from starlette.responses import Response
 
 from agentic_primitives_gateway._build_info import BUILD_REF
+from agentic_primitives_gateway.auth.middleware import AuthenticationMiddleware
 from agentic_primitives_gateway.config import Settings, settings
 from agentic_primitives_gateway.context import get_request_id
 from agentic_primitives_gateway.enforcement.middleware import PolicyEnforcementMiddleware
@@ -123,6 +124,23 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if team_session_reg:
         get_team_runner().set_session_registry(team_session_reg)
 
+    # Initialize auth backend
+    from agentic_primitives_gateway.auth.base import AuthBackend
+    from agentic_primitives_gateway.config import AUTH_BACKEND_ALIASES
+
+    auth_cfg = settings.auth
+    auth_cls_path = AUTH_BACKEND_ALIASES.get(auth_cfg.backend, auth_cfg.backend)
+    auth_cls = _load_class(auth_cls_path)
+    # Pass backend-specific config as kwargs
+    auth_kwargs: dict = {}
+    if auth_cfg.backend == "api_key":
+        auth_kwargs["api_keys"] = auth_cfg.api_keys
+    elif auth_cfg.backend == "jwt":
+        auth_kwargs.update(auth_cfg.jwt)
+    auth_backend: AuthBackend = auth_cls(**auth_kwargs)
+    app.state.auth_backend = auth_backend
+    logger.info("Auth backend: %s", auth_cfg.backend)
+
     # Seed policies from config into the policy provider
     await _seed_policies()
 
@@ -148,6 +166,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if watcher is not None:
         await watcher.stop()
 
+    await auth_backend.close()
     await enforcer.close()
 
 
@@ -158,8 +177,12 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-app.add_middleware(RequestContextMiddleware)
+# Middleware execution order (outermost first):
+# CORS → RequestContext → Auth → PolicyEnforcement → handler
+# (Starlette runs last-added middleware outermost.)
 app.add_middleware(PolicyEnforcementMiddleware)
+app.add_middleware(AuthenticationMiddleware)
+app.add_middleware(RequestContextMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,

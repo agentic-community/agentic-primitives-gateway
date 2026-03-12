@@ -200,6 +200,26 @@ class SeedPolicyConfig(BaseModel):
     policy_body: str
 
 
+class AuthConfig(BaseModel):
+    """Configuration for the authentication layer.
+
+    ``backend`` is a short alias (``noop``, ``api_key``, ``jwt``) or a
+    fully-qualified dotted class path.
+    """
+
+    backend: str = "noop"
+    api_keys: list[dict[str, Any]] = Field(default_factory=list)
+    jwt: dict[str, Any] = Field(default_factory=dict)
+
+
+# Well-known auth backend aliases → dotted class paths
+AUTH_BACKEND_ALIASES: dict[str, str] = {
+    "noop": "agentic_primitives_gateway.auth.noop.NoopAuthBackend",
+    "api_key": "agentic_primitives_gateway.auth.api_key.ApiKeyAuthBackend",
+    "jwt": "agentic_primitives_gateway.auth.jwt.JwtAuthBackend",
+}
+
+
 class EnforcementConfig(BaseModel):
     """Configuration for the policy enforcement layer."""
 
@@ -260,6 +280,7 @@ class Settings(BaseSettings):
     allow_server_credentials: bool = False
     cors_origins: list[str] = ["*"]
     providers: ProvidersConfig = ProvidersConfig()
+    auth: AuthConfig = AuthConfig()
     enforcement: EnforcementConfig = EnforcementConfig()
     agents: AgentsConfig = AgentsConfig()
     teams: TeamsConfig = TeamsConfig()
