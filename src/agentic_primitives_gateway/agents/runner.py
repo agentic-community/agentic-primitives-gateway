@@ -221,8 +221,9 @@ class AgentRunner:
     async def _init_context(self, spec: AgentSpec, message: str, session_id: str, depth: int) -> _RunContext:
         """Set up everything needed before the tool-call loop."""
         prev_overrides = self._apply_overrides(spec)
-        knowledge_ns = resolve_knowledge_namespace(spec)
-        actor_id = resolve_actor_id(spec.name, get_authenticated_principal())
+        principal = get_authenticated_principal()
+        knowledge_ns = resolve_knowledge_namespace(spec, principal)
+        actor_id = resolve_actor_id(spec.name, principal)
 
         tools = build_tool_list(
             spec.primitives,

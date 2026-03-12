@@ -198,8 +198,8 @@ async def get_agent_memory(name: str, session_id: str | None = None) -> AgentMem
             stores=[],
         )
 
-    # Resolve knowledge namespace (agent-scoped, no session_id — same as runner)
-    namespace = resolve_knowledge_namespace_for_name(name, mem_config.namespace)
+    # Resolve knowledge namespace (user-scoped — same as runner)
+    namespace = resolve_knowledge_namespace_for_name(name, mem_config.namespace, _principal())
 
     # Get all known namespaces from the provider
     stores: list[MemoryStoreInfo] = []
