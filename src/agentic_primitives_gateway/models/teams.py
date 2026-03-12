@@ -18,6 +18,8 @@ class TeamSpec(BaseModel):
     global_max_turns: int = 100
     global_timeout_seconds: int = 300
     shared_memory_namespace: str | None = None
+    owner_id: str = "system"
+    shared_with: list[str] = Field(default_factory=lambda: ["*"])
 
 
 class CreateTeamRequest(BaseModel):
@@ -32,6 +34,7 @@ class CreateTeamRequest(BaseModel):
     global_max_turns: int = 100
     global_timeout_seconds: int = 300
     shared_memory_namespace: str | None = None
+    shared_with: list[str] = Field(default_factory=list)
 
 
 class UpdateTeamRequest(BaseModel):
@@ -45,6 +48,7 @@ class UpdateTeamRequest(BaseModel):
     global_max_turns: int | None = None
     global_timeout_seconds: int | None = None
     shared_memory_namespace: str | None = None
+    shared_with: list[str] | None = None
 
 
 class TeamListResponse(BaseModel):

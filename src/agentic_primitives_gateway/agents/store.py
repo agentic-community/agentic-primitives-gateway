@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import builtins
 import json
 import logging
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any
 
+from agentic_primitives_gateway.auth.access import check_access
+from agentic_primitives_gateway.auth.models import AuthenticatedPrincipal
 from agentic_primitives_gateway.models.agents import AgentSpec
 
 logger = logging.getLogger(__name__)
@@ -19,6 +22,15 @@ class AgentStore(ABC):
 
     @abstractmethod
     async def list(self) -> list[AgentSpec]: ...
+
+    async def list_for_user(self, principal: AuthenticatedPrincipal) -> builtins.list[AgentSpec]:
+        """List agents accessible to the given principal.
+
+        Default implementation loads all agents and filters by ownership/groups.
+        Backends may override for more efficient filtering.
+        """
+        all_specs = await self.list()
+        return [s for s in all_specs if check_access(principal, s.owner_id, s.shared_with)]
 
     @abstractmethod
     async def create(self, spec: AgentSpec) -> AgentSpec: ...

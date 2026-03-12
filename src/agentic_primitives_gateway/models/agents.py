@@ -33,6 +33,8 @@ class AgentSpec(BaseModel):
     max_turns: int = 20
     temperature: float = 1.0
     max_tokens: int | None = None
+    owner_id: str = "system"
+    shared_with: list[str] = Field(default_factory=lambda: ["*"])
 
 
 class CreateAgentRequest(BaseModel):
@@ -48,6 +50,7 @@ class CreateAgentRequest(BaseModel):
     max_turns: int = 20
     temperature: float = 1.0
     max_tokens: int | None = None
+    shared_with: list[str] = Field(default_factory=list)
 
 
 class UpdateAgentRequest(BaseModel):
@@ -62,6 +65,7 @@ class UpdateAgentRequest(BaseModel):
     max_turns: int | None = None
     temperature: float | None = None
     max_tokens: int | None = None
+    shared_with: list[str] | None = None
 
 
 class ChatRequest(BaseModel):

@@ -8,7 +8,13 @@ from agentic_primitives_gateway.agents.namespace import resolve_knowledge_namesp
 from agentic_primitives_gateway.agents.runner import AgentRunner
 from agentic_primitives_gateway.agents.store import AgentStore
 from agentic_primitives_gateway.agents.tools import _TOOL_CATALOG, build_tool_list
-from agentic_primitives_gateway.context import get_provider_override, set_provider_overrides
+from agentic_primitives_gateway.auth.access import require_access, require_owner_or_admin
+from agentic_primitives_gateway.auth.models import ANONYMOUS_PRINCIPAL, AuthenticatedPrincipal
+from agentic_primitives_gateway.context import (
+    get_authenticated_principal,
+    get_provider_override,
+    set_provider_overrides,
+)
 from agentic_primitives_gateway.models.agents import (
     AgentListResponse,
     AgentMemoryResponse,
@@ -54,10 +60,18 @@ def _get_store() -> AgentStore:
     return _store
 
 
+def _principal() -> AuthenticatedPrincipal:
+    """Return the authenticated principal, falling back to anonymous."""
+    return get_authenticated_principal() or ANONYMOUS_PRINCIPAL
+
+
 @router.post("", response_model=AgentSpec, status_code=201)
 async def create_agent(request: CreateAgentRequest) -> AgentSpec:
     store = _get_store()
-    spec = AgentSpec(**request.model_dump())
+    principal = _principal()
+    data = request.model_dump()
+    data["owner_id"] = principal.id
+    spec = AgentSpec(**data)
     existing = await store.get(spec.name)
     if existing is not None:
         raise HTTPException(status_code=409, detail=f"Agent '{spec.name}' already exists")
@@ -67,7 +81,8 @@ async def create_agent(request: CreateAgentRequest) -> AgentSpec:
 @router.get("", response_model=AgentListResponse)
 async def list_agents() -> AgentListResponse:
     store = _get_store()
-    agents = await store.list()
+    principal = _principal()
+    agents = await store.list_for_user(principal)
     return AgentListResponse(agents=agents)
 
 
@@ -88,6 +103,7 @@ async def get_agent(name: str) -> AgentSpec:
     spec = await store.get(name)
     if spec is None:
         raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
+    require_access(_principal(), spec.owner_id, spec.shared_with)
     return spec
 
 
@@ -97,6 +113,7 @@ async def update_agent(name: str, request: UpdateAgentRequest) -> AgentSpec:
     existing = await store.get(name)
     if existing is None:
         raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
+    require_owner_or_admin(_principal(), existing.owner_id)
     updates = {k: v for k, v in request.model_dump().items() if v is not None}
     return await store.update(name, updates)
 
@@ -104,9 +121,11 @@ async def update_agent(name: str, request: UpdateAgentRequest) -> AgentSpec:
 @router.delete("/{name}")
 async def delete_agent(name: str) -> dict[str, str]:
     store = _get_store()
-    deleted = await store.delete(name)
-    if not deleted:
+    spec = await store.get(name)
+    if spec is None:
         raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
+    require_owner_or_admin(_principal(), spec.owner_id)
+    await store.delete(name)
     return {"status": "deleted"}
 
 
@@ -117,6 +136,7 @@ async def get_agent_tools(name: str) -> AgentToolsResponse:
     spec = await store.get(name)
     if spec is None:
         raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
+    require_access(_principal(), spec.owner_id, spec.shared_with)
 
     # Apply agent-level provider overrides so we resolve the correct providers
     if spec.provider_overrides:
@@ -163,6 +183,7 @@ async def get_agent_memory(name: str, session_id: str | None = None) -> AgentMem
     spec = await store.get(name)
     if spec is None:
         raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
+    require_access(_principal(), spec.owner_id, spec.shared_with)
 
     # Apply agent-level provider overrides so we read from the same provider the agent writes to
     if spec.provider_overrides:
@@ -246,6 +267,7 @@ async def chat_with_agent(name: str, request: ChatRequest) -> ChatResponse:
     spec = await store.get(name)
     if spec is None:
         raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
+    require_access(_principal(), spec.owner_id, spec.shared_with)
 
     # Apply agent-level provider overrides to the current request context
     if spec.provider_overrides:
@@ -270,6 +292,7 @@ async def chat_with_agent_stream(name: str, request: ChatRequest) -> StreamingRe
     spec = await store.get(name)
     if spec is None:
         raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
+    require_access(_principal(), spec.owner_id, spec.shared_with)
 
     if spec.provider_overrides:
         set_provider_overrides(spec.provider_overrides)
@@ -289,6 +312,7 @@ async def list_sessions(name: str) -> dict:
     spec = await store.get(name)
     if spec is None:
         raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
+    require_access(_principal(), spec.owner_id, spec.shared_with)
 
     if spec.provider_overrides:
         set_provider_overrides(spec.provider_overrides)
@@ -309,6 +333,7 @@ async def delete_session(name: str, session_id: str) -> dict:
     spec = await store.get(name)
     if spec is None:
         raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
+    require_access(_principal(), spec.owner_id, spec.shared_with)
 
     if spec.provider_overrides:
         set_provider_overrides(spec.provider_overrides)
@@ -335,6 +360,7 @@ async def get_session_history(name: str, session_id: str) -> SessionHistoryRespo
     spec = await store.get(name)
     if spec is None:
         raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
+    require_access(_principal(), spec.owner_id, spec.shared_with)
 
     if spec.provider_overrides:
         set_provider_overrides(spec.provider_overrides)

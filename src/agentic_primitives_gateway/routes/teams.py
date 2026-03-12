@@ -6,6 +6,9 @@ from starlette.responses import StreamingResponse
 
 from agentic_primitives_gateway.agents.team_runner import TeamRunner
 from agentic_primitives_gateway.agents.team_store import TeamStore
+from agentic_primitives_gateway.auth.access import require_access, require_owner_or_admin
+from agentic_primitives_gateway.auth.models import ANONYMOUS_PRINCIPAL, AuthenticatedPrincipal
+from agentic_primitives_gateway.context import get_authenticated_principal
 from agentic_primitives_gateway.models.teams import (
     CreateTeamRequest,
     TeamListResponse,
@@ -49,10 +52,18 @@ def _get_store() -> TeamStore:
     return _store
 
 
+def _principal() -> AuthenticatedPrincipal:
+    """Return the authenticated principal, falling back to anonymous."""
+    return get_authenticated_principal() or ANONYMOUS_PRINCIPAL
+
+
 @router.post("", response_model=TeamSpec, status_code=201)
 async def create_team(request: CreateTeamRequest) -> TeamSpec:
     store = _get_store()
-    spec = TeamSpec(**request.model_dump())
+    principal = _principal()
+    data = request.model_dump()
+    data["owner_id"] = principal.id
+    spec = TeamSpec(**data)
     existing = await store.get(spec.name)
     if existing is not None:
         raise HTTPException(status_code=409, detail=f"Team '{spec.name}' already exists")
@@ -62,7 +73,8 @@ async def create_team(request: CreateTeamRequest) -> TeamSpec:
 @router.get("", response_model=TeamListResponse)
 async def list_teams() -> TeamListResponse:
     store = _get_store()
-    teams = await store.list()
+    principal = _principal()
+    teams = await store.list_for_user(principal)
     return TeamListResponse(teams=teams)
 
 
@@ -72,6 +84,7 @@ async def get_team(name: str) -> TeamSpec:
     spec = await store.get(name)
     if spec is None:
         raise HTTPException(status_code=404, detail=f"Team '{name}' not found")
+    require_access(_principal(), spec.owner_id, spec.shared_with)
     return spec
 
 
@@ -81,6 +94,7 @@ async def update_team(name: str, request: UpdateTeamRequest) -> TeamSpec:
     existing = await store.get(name)
     if existing is None:
         raise HTTPException(status_code=404, detail=f"Team '{name}' not found")
+    require_owner_or_admin(_principal(), existing.owner_id)
     updates = {k: v for k, v in request.model_dump().items() if v is not None}
     return await store.update(name, updates)
 
@@ -88,9 +102,11 @@ async def update_team(name: str, request: UpdateTeamRequest) -> TeamSpec:
 @router.delete("/{name}")
 async def delete_team(name: str) -> dict[str, str]:
     store = _get_store()
-    deleted = await store.delete(name)
-    if not deleted:
+    spec = await store.get(name)
+    if spec is None:
         raise HTTPException(status_code=404, detail=f"Team '{name}' not found")
+    require_owner_or_admin(_principal(), spec.owner_id)
+    await store.delete(name)
     return {"status": "deleted"}
 
 
@@ -100,6 +116,7 @@ async def run_team(name: str, request: TeamRunRequest) -> TeamRunResponse:
     spec = await store.get(name)
     if spec is None:
         raise HTTPException(status_code=404, detail=f"Team '{name}' not found")
+    require_access(_principal(), spec.owner_id, spec.shared_with)
 
     return await _runner.run(team_spec=spec, message=request.message)
 
@@ -115,6 +132,7 @@ async def run_team_stream(name: str, request: TeamRunRequest) -> StreamingRespon
     spec = await store.get(name)
     if spec is None:
         raise HTTPException(status_code=404, detail=f"Team '{name}' not found")
+    require_access(_principal(), spec.owner_id, spec.shared_with)
 
     # Use a placeholder key since team_run_id is generated inside the runner.
     # The background task re-keys automatically when it sees team_run_id.
@@ -139,6 +157,7 @@ async def list_team_runs(name: str) -> dict:
     spec = await store.get(name)
     if spec is None:
         raise HTTPException(status_code=404, detail=f"Team '{name}' not found")
+    require_access(_principal(), spec.owner_id, spec.shared_with)
 
     runs: list[dict[str, Any]] = []
 

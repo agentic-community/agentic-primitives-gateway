@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import builtins
 import json
 import logging
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any
 
+from agentic_primitives_gateway.auth.access import check_access
+from agentic_primitives_gateway.auth.models import AuthenticatedPrincipal
 from agentic_primitives_gateway.models.teams import TeamSpec
 
 logger = logging.getLogger(__name__)
@@ -19,6 +22,15 @@ class TeamStore(ABC):
 
     @abstractmethod
     async def list(self) -> list[TeamSpec]: ...
+
+    async def list_for_user(self, principal: AuthenticatedPrincipal) -> builtins.list[TeamSpec]:
+        """List teams accessible to the given principal.
+
+        Default implementation loads all teams and filters by ownership/groups.
+        Backends may override for more efficient filtering.
+        """
+        all_specs = await self.list()
+        return [s for s in all_specs if check_access(principal, s.owner_id, s.shared_with)]
 
     @abstractmethod
     async def create(self, spec: TeamSpec) -> TeamSpec: ...
