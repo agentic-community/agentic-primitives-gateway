@@ -3,6 +3,7 @@ import { useAutoScroll } from "../hooks/useAutoScroll";
 import { Link, useParams } from "react-router-dom";
 import { api } from "../api/client";
 import type { StreamArtifact, StreamEvent } from "../api/types";
+import { useAuth } from "../auth/AuthProvider";
 import ArtifactBlock from "../components/ArtifactBlock";
 import ChatInput from "../components/ChatInput";
 import ChatMessage from "../components/ChatMessage";
@@ -28,38 +29,40 @@ interface Turn {
 
 const MEMORY_TOOLS = new Set(["remember", "forget", "recall", "search_memory", "list_memories"]);
 
-const SESSIONS_KEY_PREFIX = "agent-sessions:";
+function sessionsKey(userId: string, agentName: string) {
+  return `agent-sessions:${userId}:${agentName}`;
+}
 
-function getSessions(agentName: string): string[] {
+function getSessions(userId: string, agentName: string): string[] {
   try {
-    return JSON.parse(localStorage.getItem(SESSIONS_KEY_PREFIX + agentName) || "[]");
+    return JSON.parse(localStorage.getItem(sessionsKey(userId, agentName)) || "[]");
   } catch {
     return [];
   }
 }
 
-function saveSessions(agentName: string, sessions: string[]) {
-  localStorage.setItem(SESSIONS_KEY_PREFIX + agentName, JSON.stringify(sessions));
+function saveSessions(userId: string, agentName: string, sessions: string[]) {
+  localStorage.setItem(sessionsKey(userId, agentName), JSON.stringify(sessions));
 }
 
-function getOrCreateSessionId(agentName: string): [string, boolean] {
-  const sessions = getSessions(agentName);
+function getOrCreateSessionId(userId: string, agentName: string): [string, boolean] {
+  const sessions = getSessions(userId, agentName);
   if (sessions.length > 0) return [sessions[0], true];
   const id = crypto.randomUUID();
-  saveSessions(agentName, [id]);
+  saveSessions(userId, agentName, [id]);
   return [id, false];
 }
 
-function addSession(agentName: string, sessionId: string) {
-  const sessions = getSessions(agentName);
+function addSession(userId: string, agentName: string, sessionId: string) {
+  const sessions = getSessions(userId, agentName);
   if (!sessions.includes(sessionId)) {
-    saveSessions(agentName, [sessionId, ...sessions]);
+    saveSessions(userId, agentName, [sessionId, ...sessions]);
   }
 }
 
-function removeSession(agentName: string, sessionId: string) {
-  const sessions = getSessions(agentName).filter((s) => s !== sessionId);
-  saveSessions(agentName, sessions);
+function removeSession(userId: string, agentName: string, sessionId: string) {
+  const sessions = getSessions(userId, agentName).filter((s) => s !== sessionId);
+  saveSessions(userId, agentName, sessions);
 }
 
 /** Update a specific turn in the turns array by index. */
@@ -76,6 +79,8 @@ function updateTurn(
 export default function AgentChat() {
   const { name } = useParams<{ name: string }>();
   const { agent, loading, error } = useAgent(name!);
+  const { user } = useAuth();
+  const userId = user?.profile?.sub || "anonymous";
 
   // Session ID: from URL param > localStorage > generate new.
   // isReturningSession tracks whether this is a returning visit (existing session).
@@ -83,7 +88,8 @@ export default function AgentChat() {
     const params = new URLSearchParams(window.location.search);
     const fromUrl = params.get("session_id");
     if (fromUrl) return { id: fromUrl, returning: true };
-    const [id, returning] = getOrCreateSessionId(name!);
+    const uid = user?.profile?.sub || "anonymous";
+    const [id, returning] = getOrCreateSessionId(uid, name!);
     return { id, returning };
   });
   const sessionId = sessionState.id;
@@ -100,7 +106,7 @@ export default function AgentChat() {
   // Sync session_id into URL and localStorage (once on mount)
   useEffect(() => {
     if (!name) return;
-    addSession(name, sessionId);
+    addSession(userId, name, sessionId);
     const url = new URL(window.location.href);
     if (url.searchParams.get("session_id") !== sessionId) {
       url.searchParams.set("session_id", sessionId);
@@ -241,9 +247,9 @@ export default function AgentChat() {
   const handleNewSession = useCallback(() => {
     if (!name) return;
     const newId = crypto.randomUUID();
-    addSession(name, newId);
+    addSession(userId, name, newId);
     window.location.href = `/ui/agents/${name}/chat?session_id=${newId}`;
-  }, [name]);
+  }, [name, userId]);
 
   const handleSwitchSession = useCallback((sid: string) => {
     if (!name) return;
@@ -252,20 +258,20 @@ export default function AgentChat() {
 
   const handleDeleteSession = useCallback(async (sid: string) => {
     if (!name) return;
-    removeSession(name, sid);
+    removeSession(userId, name, sid);
     try { await api.deleteSession(name, sid); } catch { /* ignore */ }
     // If deleting current session, switch to another or create new
     if (sid === sessionId) {
-      const remaining = getSessions(name);
+      const remaining = getSessions(userId, name);
       if (remaining.length > 0) {
         window.location.href = `/ui/agents/${name}/chat?session_id=${remaining[0]}`;
       } else {
         const newId = crypto.randomUUID();
-        addSession(name, newId);
+        addSession(userId, name, newId);
         window.location.href = `/ui/agents/${name}/chat?session_id=${newId}`;
       }
     }
-  }, [name, sessionId]);
+  }, [name, sessionId, userId]);
 
   function handleStreamEvent(event: StreamEvent, turnIndex: number) {
     switch (event.type) {
@@ -397,10 +403,10 @@ export default function AgentChat() {
             >
               + new
             </button>
-            {getSessions(name!).length > 1 && (
+            {getSessions(userId, name!).length > 1 && (
               <>
                 <span>|</span>
-                {getSessions(name!).filter((s) => s !== sessionId).map((s) => (
+                {getSessions(userId, name!).filter((s) => s !== sessionId).map((s) => (
                   <span key={s} className="inline-flex items-center gap-0.5">
                     <button
                       className="font-mono hover:text-indigo-500"

@@ -5,6 +5,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { api } from "../api/client";
 import type { TeamSpec, TeamStreamEvent } from "../api/types";
+import { useAuth } from "../auth/AuthProvider";
 import ChatInput from "../components/ChatInput";
 import LoadingSpinner from "../components/LoadingSpinner";
 import { parseSSE } from "../lib/sse";
@@ -98,33 +99,37 @@ function TaskCard({ task }: { task: TaskInfo }) {
   );
 }
 
-const RUNS_KEY_PREFIX = "team-runs:";
+function runsKey(userId: string, teamName: string) {
+  return `team-runs:${userId}:${teamName}`;
+}
 
-function getRuns(teamName: string): string[] {
+function getRuns(userId: string, teamName: string): string[] {
   try {
-    return JSON.parse(localStorage.getItem(RUNS_KEY_PREFIX + teamName) || "[]");
+    return JSON.parse(localStorage.getItem(runsKey(userId, teamName)) || "[]");
   } catch {
     return [];
   }
 }
 
-function saveRuns(teamName: string, runs: string[]) {
-  localStorage.setItem(RUNS_KEY_PREFIX + teamName, JSON.stringify(runs));
+function saveRuns(userId: string, teamName: string, runs: string[]) {
+  localStorage.setItem(runsKey(userId, teamName), JSON.stringify(runs));
 }
 
-function addRun(teamName: string, runId: string) {
-  const runs = getRuns(teamName);
+function addRun(userId: string, teamName: string, runId: string) {
+  const runs = getRuns(userId, teamName);
   if (!runs.includes(runId)) {
-    saveRuns(teamName, [runId, ...runs]);
+    saveRuns(userId, teamName, [runId, ...runs]);
   }
 }
 
-function removeRun(teamName: string, runId: string) {
-  saveRuns(teamName, getRuns(teamName).filter((r) => r !== runId));
+function removeRun(userId: string, teamName: string, runId: string) {
+  saveRuns(userId, teamName, getRuns(userId, teamName).filter((r) => r !== runId));
 }
 
 export default function TeamRun() {
   const { name } = useParams<{ name: string }>();
+  const { user } = useAuth();
+  const userId = user?.profile?.sub || "anonymous";
   const [team, setTeam] = useState<TeamSpec | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -304,10 +309,10 @@ export default function TeamRun() {
 
   const handleDeleteRun = useCallback(async (runId: string) => {
     if (!name) return;
-    removeRun(name, runId);
+    removeRun(userId, name, runId);
     try { await api.deleteTeamRun(name, runId); } catch { /* ignore */ }
     if (runId === teamRunId) {
-      const remaining = getRuns(name);
+      const remaining = getRuns(userId, name);
       if (remaining.length > 0) {
         window.location.href = `/ui/teams/${name}/run?run_id=${remaining[0]}`;
       } else {
@@ -352,7 +357,7 @@ export default function TeamRun() {
             switch (event.type) {
               case "team_start":
                 setTeamRunId(event.team_run_id);
-                addRun(name, event.team_run_id);
+                addRun(userId, name, event.team_run_id);
                 {
                   const url = new URL(window.location.href);
                   url.searchParams.set("run_id", event.team_run_id);
@@ -487,10 +492,10 @@ export default function TeamRun() {
             >
               + new run
             </button>
-            {getRuns(name!).length > 1 && (
+            {getRuns(userId, name!).length > 1 && (
               <>
                 <span>|</span>
-                {getRuns(name!).filter((r) => r !== teamRunId).map((r) => (
+                {getRuns(userId, name!).filter((r) => r !== teamRunId).map((r) => (
                   <span key={r} className="inline-flex items-center gap-0.5">
                     <button
                       className="font-mono hover:text-indigo-500"
