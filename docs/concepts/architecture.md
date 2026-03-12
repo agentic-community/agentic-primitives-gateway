@@ -30,7 +30,7 @@ Client sends: POST /api/v1/memory/my-ns
 
 3. PolicyEnforcementMiddleware (enforcement/middleware.py)
    - Maps path + method → Cedar action (e.g., "memory:store_memory")
-   - Evaluates: permit(Agent::"anonymous", Action::"memory:store_memory", resource)?
+   - Evaluates: permit(User::"alice", Action::"memory:store_memory", resource)?
    - 403 if denied
 
 4. Route handler (routes/memory.py)

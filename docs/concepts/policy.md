@@ -70,10 +70,10 @@ The middleware resolves the principal from the `AuthenticatedPrincipal` contextv
 
 **Resolution order:**
 
-1. **JWT auth** (if active): `AuthenticatedPrincipal` contextvar → `User::"alice"` (from JWT `sub` claim)
-2. `X-Agent-Id: my-agent` → `Agent::"my-agent"`
-3. `X-Cred-{service}-*` → `Service::"{service}"`
-4. `X-AWS-Access-Key-Id: AKIA...` → `AWSPrincipal::"AKIA..."`
-5. (none) → `Agent::"anonymous"`
+1. **Authenticated principal** (always set for non-exempt paths): `AuthenticatedPrincipal` contextvar → `User::"alice"` (from JWT `sub` claim or API key mapping)
+2. Header fallback (exempt paths only): `X-Agent-Id: my-agent` → `Agent::"my-agent"`
+3. Header fallback: `X-Cred-{service}-*` → `Service::"{service}"`
+4. Header fallback: `X-AWS-Access-Key-Id: AKIA...` → `AWSPrincipal::"AKIA..."`
+5. Last resort (exempt paths only): `Agent::"anonymous"`
 
-Exempt paths (health checks, `/ui/*`, `/auth/*`, etc.) skip enforcement entirely and do not resolve a principal.
+Non-exempt paths always have an authenticated principal (the auth middleware returns 401 if credentials are missing). The header-based fallback and `Agent::"anonymous"` are only reachable on exempt paths, which are skipped by enforcement anyway.

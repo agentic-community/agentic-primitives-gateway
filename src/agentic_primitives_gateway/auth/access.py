@@ -19,7 +19,6 @@ def check_access(
     - The principal owns the resource.
     - The resource is shared with ``"*"`` (all authenticated users).
     - The principal belongs to a group in ``resource_shared_with``.
-    - The principal is anonymous and the resource is shared with ``"*"``.
     """
     if principal.is_admin:
         return True

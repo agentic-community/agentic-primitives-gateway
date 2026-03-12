@@ -2,7 +2,7 @@
 
 Verifies that:
 - resolve_actor_id produces user-scoped IDs for authenticated users
-- resolve_actor_id preserves backward compat for anonymous users
+- resolve_actor_id requires a principal (no anonymous fallback)
 - The runner uses user-scoped actor_id for history load/store
 - Session endpoints use user-scoped actor_id
 - Two authenticated users have isolated conversations on the same agent

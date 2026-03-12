@@ -618,14 +618,16 @@ pip install agentic-primitives-gateway[cedar]
 
 ### Principal Resolution
 
-The middleware derives the Cedar principal from request headers in this order:
+The middleware derives the Cedar principal from the authenticated principal set by the auth middleware:
 
-| Priority | Header | Cedar Principal |
+| Priority | Source | Cedar Principal |
 |----------|--------|-----------------|
-| 1 | `X-Agent-Id: my-agent` | `Agent::"my-agent"` |
-| 2 | `X-Cred-{Service}-*` | `Service::"{service}"` |
-| 3 | `X-AWS-Access-Key-Id: AKIA...` | `AWSPrincipal::"AKIA..."` |
-| 4 | (none) | `Agent::"anonymous"` |
+| 1 | Authenticated principal (JWT/API key) | `User::"alice"` |
+| 2 | Header fallback: `X-Agent-Id: my-agent` | `Agent::"my-agent"` |
+| 3 | Header fallback: `X-Cred-{Service}-*` | `Service::"{service}"` |
+| 4 | Header fallback: `X-AWS-Access-Key-Id: AKIA...` | `AWSPrincipal::"AKIA..."` |
+
+Non-exempt paths always have an authenticated principal (auth middleware returns 401 otherwise). The header-based fallback is only used on exempt paths.
 
 ### Action Mapping
 

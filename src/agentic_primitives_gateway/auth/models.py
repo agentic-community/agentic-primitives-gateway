@@ -33,7 +33,7 @@ ANONYMOUS_PRINCIPAL = AuthenticatedPrincipal(
     type="anonymous",
 )
 
-# Used by NoopAuthBackend — dev mode gets full access, not "anonymous".
+# Used by NoopAuthBackend — dev mode gets full access
 NOOP_PRINCIPAL = AuthenticatedPrincipal(
     id="noop",
     type="user",

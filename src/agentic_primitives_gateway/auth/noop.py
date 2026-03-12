@@ -1,4 +1,4 @@
-"""No-op auth backend — all requests pass as anonymous."""
+"""No-op auth backend — all requests pass as admin."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from agentic_primitives_gateway.auth.models import NOOP_PRINCIPAL, Authenticated
 class NoopAuthBackend(AuthBackend):
     """Default backend: no authentication, full access.
 
-    Returns a non-anonymous principal with admin scope so that all
+    Returns a principal with admin scope so that all
     ownership and access checks pass. This is for dev/testing only —
     production deployments should use ``api_key`` or ``jwt``.
     """

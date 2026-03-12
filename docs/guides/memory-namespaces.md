@@ -25,8 +25,8 @@ primitives:
 The `{session_id}` placeholder is **stripped** for the knowledge store, and `{user_id}` is injected when auth is active:
 
 - Template: `agent:{agent_name}:{session_id}`
-- Knowledge namespace (authenticated): `agent:research-assistant:u:alice` (user-scoped, no session)
-- Knowledge namespace (anonymous): `agent:research-assistant` (no user, no session)
+- Knowledge namespace: `agent:research-assistant:u:alice` (always user-scoped, no session)
+- Noop auth: `agent:research-assistant:u:noop` (all dev users share)
 - This is where `remember`, `recall`, `search_memory` tools read/write
 
 This means when a user says "my name is Alice" and the agent stores it, it persists across all of **that user's** sessions -- but is invisible to other users.
