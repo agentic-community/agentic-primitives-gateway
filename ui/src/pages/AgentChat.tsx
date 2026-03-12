@@ -99,6 +99,7 @@ export default function AgentChat() {
   const [sending, setSending] = useState(false);
   const [memoryRefreshKey, setMemoryRefreshKey] = useState(0);
   const historyLoadedRef = useRef(false);
+  const streamDoneRef = useRef(false);
   const [polling, setPolling] = useState(false);
   const scrollRef = useAutoScroll([turns, sending]);
   const abortRef = useRef<AbortController | null>(null);
@@ -127,7 +128,7 @@ export default function AgentChat() {
     historyLoadedRef.current = true;
 
     const POLL_INTERVAL = 3000;
-    const MAX_POLLS = 15;
+    const MAX_POLLS = 60;
     let timer: ReturnType<typeof setTimeout> | null = null;
     let stopped = false;
 
@@ -167,8 +168,14 @@ export default function AgentChat() {
           if (!stopped) timer = setTimeout(() => poll(attempt + 1), POLL_INTERVAL);
           return;
         }
-      } catch { /* ignore */ }
-      setPolling(false);
+        // Status is idle — run completed
+        setPolling(false);
+        return;
+      } catch {
+        // Server might be down (restarting). Keep polling until MAX_POLLS.
+        setPolling(true);
+        if (!stopped) timer = setTimeout(() => poll(attempt + 1), POLL_INTERVAL);
+      }
     }
 
     // First load: get history, and if returning, check for active run
@@ -203,10 +210,21 @@ export default function AgentChat() {
         turnsUsed: 0, done: false, subAgents: [], artifacts: [],
       };
       setTurns((prev) => [...prev, emptyTurn]);
+      streamDoneRef.current = false;
       setSending(true);
 
       const controller = new AbortController();
       abortRef.current = controller;
+
+      // Watchdog: abort if no data for 30s (server crash detection)
+      let lastDataTime = Date.now();
+      const watchdog = setInterval(() => {
+        if (Date.now() - lastDataTime > 30_000) {
+          console.log("[AgentChat] Watchdog: no data for 30s — aborting stream");
+          controller.abort();
+          clearInterval(watchdog);
+        }
+      }, 5_000);
 
       try {
         const stream = api.chatStream(name, { message, session_id: sessionId }, controller.signal);
@@ -216,6 +234,7 @@ export default function AgentChat() {
 
         while (true) {
           const { done, value } = await reader.read();
+          lastDataTime = Date.now();
           if (done) break;
 
           buffer += typeof value === "string" ? value : decoder.decode(value as Uint8Array, { stream: true });
@@ -228,17 +247,64 @@ export default function AgentChat() {
           }
         }
       } catch (err) {
-        if (err instanceof DOMException && err.name === "AbortError") return;
-        setTurns((prev) =>
-          updateTurn(prev, turnIndex, (t) => ({
-            ...t,
-            error: err instanceof Error ? err.message : "Request failed",
-            done: true,
-          })),
-        );
+        if (err instanceof DOMException && err.name === "AbortError") {
+          console.log("[AgentChat] Stream aborted (user or watchdog)");
+        } else {
+          setTurns((prev) =>
+            updateTurn(prev, turnIndex, (t) => ({
+              ...t,
+              error: err instanceof Error ? err.message : "Request failed",
+              done: true,
+            })),
+          );
+        }
       } finally {
+        clearInterval(watchdog);
         abortRef.current = null;
         setSending(false);
+
+        // If the stream ended without a "done" event (e.g. server crash/restart),
+        // start polling for the run status to detect when it resumes.
+        if (!streamDoneRef.current && name && sessionId) {
+          const POLL_MS = 3000;
+          const MAX = 60;
+          let attempt = 0;
+          const pollForResume = async () => {
+            if (attempt >= MAX) { setPolling(false); return; }
+            attempt++;
+            try {
+              const { status } = await api.getSessionStatus(name, sessionId);
+              if (status === "running") {
+                setPolling(true);
+                setTimeout(pollForResume, POLL_MS);
+                return;
+              }
+              if (status === "idle") {
+                // Run finished — reload history
+                const history = await api.getSessionHistory(name, sessionId);
+                if (history.messages?.length) {
+                  const restored: Turn[] = [];
+                  for (let i = 0; i < history.messages.length; i += 2) {
+                    const u = history.messages[i];
+                    const a = history.messages[i + 1];
+                    if (u?.role === "user" && a?.role === "assistant") {
+                      restored.push({ userMessage: u.content, assistantContent: a.content, toolsCalled: [], turnsUsed: 1, done: true, subAgents: [], artifacts: [] });
+                    }
+                  }
+                  if (restored.length) setTurns(restored.reverse());
+                }
+                setPolling(false);
+                return;
+              }
+            } catch {
+              // Server down — keep polling until it's back
+            }
+            setPolling(true);
+            setTimeout(pollForResume, POLL_MS);
+          };
+          setPolling(true);
+          setTimeout(pollForResume, POLL_MS);
+        }
       }
     },
     [name, sessionId, turns.length],
@@ -355,6 +421,7 @@ export default function AgentChat() {
         break;
 
       case "done":
+        streamDoneRef.current = true;
         setTurns((prev) =>
           updateTurn(prev, turnIndex, (t) => ({
             ...t,

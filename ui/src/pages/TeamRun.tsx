@@ -152,6 +152,7 @@ export default function TeamRun() {
   const abortRef = useRef<AbortController | null>(null);
   const bgCheckRef = useRef(false);
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const streamDoneRef = useRef(false);
 
   useEffect(() => {
     if (!name) return;
@@ -177,6 +178,9 @@ export default function TeamRun() {
         switch (event.type) {
           case "team_start":
             logs.push(`Team run started: ${event.team_run_id}`);
+            break;
+          case "run_resumed":
+            logs.push(`Run resumed from phase: ${event.phase ?? "unknown"}`);
             break;
           case "phase_change":
             setPhase(event.phase);
@@ -242,7 +246,12 @@ export default function TeamRun() {
 
   // Restore state from a previous run (background or completed)
   useEffect(() => {
-    if (!name || !teamRunId || bgCheckRef.current || running) return;
+    console.log("[TeamRun] Polling effect — name:", name, "teamRunId:", teamRunId, "bgCheckRef:", bgCheckRef.current, "running:", running);
+    if (!name || !teamRunId || bgCheckRef.current || running) {
+      console.log("[TeamRun] Polling effect skipped — guard condition hit");
+      return;
+    }
+    console.log("[TeamRun] Polling effect ENTERED — will fetch events");
     bgCheckRef.current = true;
 
     // Sync run_id to URL
@@ -253,36 +262,83 @@ export default function TeamRun() {
     }
 
     const POLL_INTERVAL = 3000;
-    const MAX_POLLS = 30;
+    const MAX_POLLS = 60;
+    // Track event count to detect when new events appear (resume started)
+    let lastEventCount = 0;
+    let idleStreak = 0;
+    const MAX_IDLE_STREAK = 30; // Stop after 60s of idle with no new events
 
     async function pollEvents(attempt: number) {
+      console.log("[TeamRun] pollEvents attempt:", attempt, "idleStreak:", idleStreak);
       if (attempt >= MAX_POLLS) {
+        console.log("[TeamRun] MAX_POLLS reached, stopping");
         setPolling(false);
         return;
       }
       try {
         const data = await api.getTeamRunEvents(name!, teamRunId);
-        if (data.events && data.events.length > 0) {
+        const eventCount = data.events?.length ?? 0;
+        console.log("[TeamRun] pollEvents — status:", data.status, "events:", eventCount, "prev:", lastEventCount);
+
+        if (data.events && eventCount > 0) {
           replayEvents(data.events);
         }
+
         if (data.status === "running") {
+          idleStreak = 0;
+          lastEventCount = eventCount;
           setPolling(true);
           pollTimerRef.current = setTimeout(() => pollEvents(attempt + 1), POLL_INTERVAL);
           return;
         }
-      } catch { /* ignore */ }
-      setPolling(false);
+
+        // Status is not "running". Check if new events appeared (resume in progress
+        // but status not yet updated, or status TTL expired).
+        if (eventCount > lastEventCount) {
+          console.log("[TeamRun] New events detected despite idle status — keep polling");
+          idleStreak = 0;
+          lastEventCount = eventCount;
+          setPolling(true);
+          pollTimerRef.current = setTimeout(() => pollEvents(attempt + 1), POLL_INTERVAL);
+          return;
+        }
+
+        // No new events and not running. Wait a grace period for resume to start.
+        idleStreak++;
+        if (idleStreak < MAX_IDLE_STREAK) {
+          console.log("[TeamRun] Idle but waiting for resume (streak:", idleStreak, "/", MAX_IDLE_STREAK, ")");
+          setPolling(true);
+          pollTimerRef.current = setTimeout(() => pollEvents(attempt + 1), POLL_INTERVAL);
+          return;
+        }
+
+        console.log("[TeamRun] Idle for too long, stopping poll");
+        setPolling(false);
+      } catch (err) {
+        console.log("[TeamRun] pollEvents error (will retry):", err);
+        idleStreak = 0; // Reset on error (server might be restarting)
+        setPolling(true);
+        pollTimerRef.current = setTimeout(() => pollEvents(attempt + 1), POLL_INTERVAL);
+      }
     }
 
+    console.log("[TeamRun] Initial fetch of events for:", teamRunId);
     api.getTeamRunEvents(name, teamRunId).then((data) => {
-      if (data.events && data.events.length > 0) {
+      const eventCount = data.events?.length ?? 0;
+      console.log("[TeamRun] Initial fetch — status:", data.status, "events:", eventCount);
+      lastEventCount = eventCount;
+      if (data.events && eventCount > 0) {
         replayEvents(data.events);
       }
-      if (data.status === "running") {
-        setPolling(true);
-        pollTimerRef.current = setTimeout(() => pollEvents(0), POLL_INTERVAL);
-      }
-    }).catch(() => {});
+      // Always start polling after a stream drop — wait for resume to kick in
+      console.log("[TeamRun] Starting poll loop (status:", data.status, ")");
+      setPolling(true);
+      pollTimerRef.current = setTimeout(() => pollEvents(0), POLL_INTERVAL);
+    }).catch((err) => {
+      console.log("[TeamRun] Initial fetch failed (will poll):", err);
+      setPolling(true);
+      pollTimerRef.current = setTimeout(() => pollEvents(0), POLL_INTERVAL);
+    });
 
     return () => {
       if (pollTimerRef.current) {
@@ -339,6 +395,7 @@ export default function TeamRun() {
     async (message: string) => {
       if (!name) return;
       setRunning(true);
+      streamDoneRef.current = false;
       setPrompt(message);
       setPhase("");
       setTasks([]);
@@ -351,6 +408,18 @@ export default function TeamRun() {
       const controller = new AbortController();
       abortRef.current = controller;
 
+      // Watchdog: if no data received for 30s, abort the stream.
+      // This handles the case where the server crashes and the TCP
+      // connection hangs without closing cleanly.
+      let lastDataTime = Date.now();
+      const watchdog = setInterval(() => {
+        if (Date.now() - lastDataTime > 30_000) {
+          console.log("[TeamRun] Watchdog: no data for 30s — aborting stream");
+          controller.abort();
+          clearInterval(watchdog);
+        }
+      }, 5_000);
+
       try {
         const stream = api.runTeamStream(name, { message }, controller.signal);
         const reader = stream.getReader();
@@ -360,6 +429,7 @@ export default function TeamRun() {
 
         while (true) {
           const { done: streamDone, value } = await reader.read();
+          lastDataTime = Date.now();
           if (streamDone) break;
 
           buffer += typeof value === "string" ? value : decoder.decode(value as Uint8Array, { stream: true });
@@ -431,6 +501,7 @@ export default function TeamRun() {
                 }
                 break;
               case "done":
+                streamDoneRef.current = true;
                 if (event.response) setResponse(event.response);
                 setPhase("done");
                 setStats({
@@ -444,10 +515,24 @@ export default function TeamRun() {
           }
         }
       } catch (err) {
-        if (err instanceof DOMException && err.name === "AbortError") return;
-        addLog(`Error: ${err instanceof Error ? err.message : "Request failed"}`);
+        if (err instanceof DOMException && err.name === "AbortError") {
+          console.log("[TeamRun] Stream aborted (user or watchdog)");
+        } else {
+          console.log("[TeamRun] Stream error:", err);
+          addLog(`Error: ${err instanceof Error ? err.message : "Request failed"}`);
+        }
       } finally {
+        clearInterval(watchdog);
+        console.log("[TeamRun] Stream finally — streamDone:", streamDoneRef.current, "teamRunId:", teamRunId, "bgCheckRef:", bgCheckRef.current);
         abortRef.current = null;
+
+        // If the stream ended without a "done" event (e.g. server crash/restart),
+        // reset bgCheckRef so the polling useEffect re-runs when running→false.
+        if (!streamDoneRef.current) {
+          console.log("[TeamRun] Stream dropped without done — resetting bgCheckRef for polling");
+          bgCheckRef.current = false;
+        }
+
         setRunning(false);
       }
     },
