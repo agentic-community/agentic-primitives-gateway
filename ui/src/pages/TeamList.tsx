@@ -98,6 +98,7 @@ function TeamForm({ initial, onDone, onCancel }: TeamFormProps) {
   const [globalMaxTurns, setGlobalMaxTurns] = useState(initial?.global_max_turns ?? 100);
   const [globalTimeout, setGlobalTimeout] = useState(initial?.global_timeout_seconds ?? 300);
   const [sharedWith, setSharedWith] = useState<string[]>(initial?.shared_with ?? []);
+  const [checkpointingEnabled, setCheckpointingEnabled] = useState(initial?.checkpointing_enabled ?? false);
   const [agents, setAgents] = useState<AgentSpec[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -121,6 +122,7 @@ function TeamForm({ initial, onDone, onCancel }: TeamFormProps) {
             global_max_turns: globalMaxTurns,
             global_timeout_seconds: globalTimeout,
             shared_with: sharedWith,
+            checkpointing_enabled: checkpointingEnabled,
           };
           await api.updateTeam(name, updates);
         } else {
@@ -133,6 +135,7 @@ function TeamForm({ initial, onDone, onCancel }: TeamFormProps) {
             global_max_turns: globalMaxTurns,
             global_timeout_seconds: globalTimeout,
             shared_with: sharedWith,
+            checkpointing_enabled: checkpointingEnabled,
           };
           await api.createTeam(req);
         }
@@ -143,7 +146,7 @@ function TeamForm({ initial, onDone, onCancel }: TeamFormProps) {
         setSubmitting(false);
       }
     },
-    [name, description, planner, synthesizer, workers, globalMaxTurns, globalTimeout, sharedWith, isEdit, onDone],
+    [name, description, planner, synthesizer, workers, globalMaxTurns, globalTimeout, sharedWith, checkpointingEnabled, isEdit, onDone],
   );
 
   return (
@@ -206,6 +209,18 @@ function TeamForm({ initial, onDone, onCancel }: TeamFormProps) {
       </div>
 
       <SharedWithInput value={sharedWith} onChange={setSharedWith} ownerId={isEdit ? initial?.owner_id : undefined} />
+      <label className="flex items-center gap-2 cursor-pointer">
+        <input
+          type="checkbox"
+          checked={checkpointingEnabled}
+          onChange={(e) => setCheckpointingEnabled(e.target.checked)}
+          className="rounded border-gray-300 dark:border-gray-600 text-indigo-600 h-3.5 w-3.5"
+        />
+        <span className="text-xs text-gray-500 dark:text-gray-400">
+          Enable checkpointing
+          <span className="text-[10px] text-gray-400 dark:text-gray-500 ml-1">(durable runs survive server restarts)</span>
+        </span>
+      </label>
 
       <div className="flex gap-2">
         <button

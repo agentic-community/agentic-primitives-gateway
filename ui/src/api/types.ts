@@ -41,6 +41,7 @@ export interface CreateAgentRequest {
   temperature?: number;
   max_tokens?: number | null;
   shared_with?: string[];
+  checkpointing_enabled?: boolean;
 }
 
 export interface UpdateAgentRequest {
@@ -54,6 +55,7 @@ export interface UpdateAgentRequest {
   temperature?: number;
   max_tokens?: number | null;
   shared_with?: string[];
+  checkpointing_enabled?: boolean;
 }
 
 export interface ChatRequest {
@@ -189,6 +191,7 @@ export interface CreateTeamRequest {
   global_max_turns?: number;
   global_timeout_seconds?: number;
   shared_with?: string[];
+  checkpointing_enabled?: boolean;
 }
 
 export interface UpdateTeamRequest {
@@ -200,6 +203,7 @@ export interface UpdateTeamRequest {
   global_max_turns?: number;
   global_timeout_seconds?: number;
   shared_with?: string[];
+  checkpointing_enabled?: boolean;
 }
 
 export interface TeamRunRequest {

@@ -26,6 +26,7 @@ function AgentForm({ initial, onDone, onCancel }: AgentFormProps) {
     initial?.primitives ?? {},
   );
   const [sharedWith, setSharedWith] = useState<string[]>(initial?.shared_with ?? []);
+  const [checkpointingEnabled, setCheckpointingEnabled] = useState(initial?.checkpointing_enabled ?? false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -44,6 +45,7 @@ function AgentForm({ initial, onDone, onCancel }: AgentFormProps) {
             temperature,
             primitives,
             shared_with: sharedWith,
+            checkpointing_enabled: checkpointingEnabled,
           };
           await api.updateAgent(name, updates);
         } else {
@@ -56,6 +58,7 @@ function AgentForm({ initial, onDone, onCancel }: AgentFormProps) {
             temperature,
             primitives,
             shared_with: sharedWith,
+            checkpointing_enabled: checkpointingEnabled,
           });
         }
         onDone();
@@ -65,7 +68,7 @@ function AgentForm({ initial, onDone, onCancel }: AgentFormProps) {
         setSubmitting(false);
       }
     },
-    [name, model, description, systemPrompt, maxTurns, temperature, primitives, sharedWith, isEdit, onDone],
+    [name, model, description, systemPrompt, maxTurns, temperature, primitives, sharedWith, checkpointingEnabled, isEdit, onDone],
   );
 
   return (
@@ -136,6 +139,18 @@ function AgentForm({ initial, onDone, onCancel }: AgentFormProps) {
       </div>
       <PrimitivesSelector value={primitives} onChange={setPrimitives} excludeAgent={isEdit ? name : undefined} />
       <SharedWithInput value={sharedWith} onChange={setSharedWith} ownerId={isEdit ? initial?.owner_id : undefined} />
+      <label className="flex items-center gap-2 cursor-pointer">
+        <input
+          type="checkbox"
+          checked={checkpointingEnabled}
+          onChange={(e) => setCheckpointingEnabled(e.target.checked)}
+          className="rounded border-gray-300 dark:border-gray-600 text-indigo-600 h-3.5 w-3.5"
+        />
+        <span className="text-xs text-gray-500 dark:text-gray-400">
+          Enable checkpointing
+          <span className="text-[10px] text-gray-400 dark:text-gray-500 ml-1">(durable runs survive server restarts)</span>
+        </span>
+      </label>
       <div className="flex gap-2">
         <button
           type="submit"

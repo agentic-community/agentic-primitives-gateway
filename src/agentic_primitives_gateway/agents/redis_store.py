@@ -67,6 +67,7 @@ class RedisAgentStore(AgentStore):
             count = 0
             for name, spec_dict in specs.items():
                 spec_dict.setdefault("shared_with", ["*"])
+                spec_dict.setdefault("checkpointing_enabled", True)
                 new_spec = AgentSpec(name=name, **spec_dict)
                 existing_raw = await self._redis.hget(_AGENT_KEY, name)
                 if existing_raw is None or AgentSpec(**json.loads(existing_raw)) != new_spec:
@@ -137,6 +138,7 @@ class RedisTeamStore(TeamStore):
             count = 0
             for name, spec_dict in specs.items():
                 spec_dict.setdefault("shared_with", ["*"])
+                spec_dict.setdefault("checkpointing_enabled", True)
                 new_spec = TeamSpec(name=name, **spec_dict)
                 existing_raw = await self._redis.hget(_TEAM_KEY, name)
                 if existing_raw is None or TeamSpec(**json.loads(existing_raw)) != new_spec:

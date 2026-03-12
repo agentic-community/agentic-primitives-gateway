@@ -102,6 +102,7 @@ class FileAgentStore(AgentStore):
         count = 0
         for name, spec_dict in specs.items():
             spec_dict.setdefault("shared_with", ["*"])
+            spec_dict.setdefault("checkpointing_enabled", True)
             new_spec = AgentSpec(name=name, **spec_dict)
             existing = self._agents.get(name)
             if existing is None or existing != new_spec:

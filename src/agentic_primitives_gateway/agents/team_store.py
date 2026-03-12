@@ -78,6 +78,7 @@ class FileTeamStore(TeamStore):
         for name, raw in specs.items():
             raw["name"] = name
             raw.setdefault("shared_with", ["*"])
+            raw.setdefault("checkpointing_enabled", True)
             new_spec = TeamSpec(**raw)
             existing = self._teams.get(name)
             if existing is None or existing != new_spec:
