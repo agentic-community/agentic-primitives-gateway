@@ -331,6 +331,40 @@ async def list_sessions(name: str) -> dict:
     return {"agent_name": name, "sessions": sessions}
 
 
+@router.post("/{name}/sessions/cleanup")
+async def cleanup_sessions(name: str, keep: int = 5) -> dict:
+    """Delete old sessions, keeping the most recent ``keep`` sessions.
+
+    Sessions are sorted by last activity (most recent first).
+    The ``keep`` most recent sessions are preserved.
+    """
+    store = _get_store()
+    spec = await store.get(name)
+    if spec is None:
+        raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
+    require_access(_principal(), spec.owner_id, spec.shared_with)
+
+    if spec.provider_overrides:
+        set_provider_overrides(spec.provider_overrides)
+
+    actor_id = resolve_actor_id(name, _principal())
+    deleted_count = 0
+    try:
+        sessions = await registry.memory.list_sessions(actor_id)
+        # Sessions should already be sorted by last_activity (newest first)
+        # from the provider. Delete everything beyond the keep threshold.
+        to_delete = sessions[keep:]
+        for sess in to_delete:
+            sid = sess.get("session_id", "")
+            if sid:
+                await registry.memory.delete_session(actor_id=actor_id, session_id=sid)
+                deleted_count += 1
+    except (NotImplementedError, Exception):
+        logger.debug("Failed to cleanup sessions for %s", name)
+
+    return {"deleted": deleted_count, "kept": keep}
+
+
 @router.delete("/{name}/sessions/{session_id}")
 async def delete_session(name: str, session_id: str) -> dict:
     """Delete a session's conversation history."""

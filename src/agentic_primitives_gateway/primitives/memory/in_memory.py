@@ -178,4 +178,17 @@ class InMemoryProvider(MemoryProvider):
 
     async def list_sessions(self, actor_id: str) -> list[dict[str, Any]]:
         sessions = self._events.get(actor_id, {})
-        return [{"session_id": sid, "actor_id": actor_id, "metadata": {}} for sid in sessions]
+        result = []
+        for sid, events in sessions.items():
+            message_count = sum(len(e.get("messages", [])) for e in events)
+            last_activity = events[-1].get("timestamp", "") if events else ""
+            result.append(
+                {
+                    "session_id": sid,
+                    "actor_id": actor_id,
+                    "message_count": message_count,
+                    "last_activity": last_activity,
+                    "metadata": {},
+                }
+            )
+        return sorted(result, key=lambda s: s.get("last_activity", ""), reverse=True)

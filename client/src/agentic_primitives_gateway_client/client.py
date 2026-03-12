@@ -1448,6 +1448,12 @@ class AgenticPlatformClient:
         resp = await self._delete(f"/api/v1/agents/{name}/sessions/{session_id}")
         self._raise_for_status(resp)
 
+    async def cleanup_sessions(self, name: str, keep: int = 5) -> dict[str, Any]:
+        """Delete old sessions, keeping the most recent ``keep``."""
+        resp = await self._post(f"/api/v1/agents/{name}/sessions/cleanup", params={"keep": keep})
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
     async def cancel_session_run(self, name: str, session_id: str) -> dict[str, Any]:
         """Cancel an active agent run for a session."""
         resp = await self._delete(f"/api/v1/agents/{name}/sessions/{session_id}/run")

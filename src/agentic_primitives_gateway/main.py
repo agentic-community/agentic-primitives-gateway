@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -175,19 +176,23 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         watcher = ConfigWatcher(config_path, registry)
         await watcher.start()
 
-    # Recover orphaned runs from crashed replicas + start periodic scan
+    # Recover orphaned runs in the background (don't block server startup)
     if checkpoint_store and heartbeat:
         team_runner_ref = get_team_runner()
         heartbeat.set_runner(agent_runner, team_runner=team_runner_ref)
-        try:
-            await recover_orphaned_runs(
-                checkpoint_store,
-                agent_runner,
-                heartbeat.replica_id,
-                team_runner=team_runner_ref,
-            )
-        except Exception:
-            logger.exception("Orphan recovery failed")
+
+        async def _initial_recovery() -> None:
+            try:
+                await recover_orphaned_runs(
+                    checkpoint_store,
+                    agent_runner,
+                    heartbeat.replica_id,
+                    team_runner=team_runner_ref,
+                )
+            except Exception:
+                logger.exception("Orphan recovery failed")
+
+        app.state._recovery_task = asyncio.create_task(_initial_recovery())
         heartbeat.start_orphan_scanner()
 
     yield
