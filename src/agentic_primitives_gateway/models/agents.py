@@ -35,6 +35,7 @@ class AgentSpec(BaseModel):
     max_tokens: int | None = None
     owner_id: str = "system"
     shared_with: list[str] = Field(default_factory=list)
+    checkpointing_enabled: bool = False
 
 
 class CreateAgentRequest(BaseModel):
@@ -66,6 +67,7 @@ class UpdateAgentRequest(BaseModel):
     temperature: float | None = None
     max_tokens: int | None = None
     shared_with: list[str] | None = None
+    checkpointing_enabled: bool | None = None
 
 
 class ChatRequest(BaseModel):

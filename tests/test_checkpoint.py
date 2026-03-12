@@ -55,7 +55,7 @@ _ALICE = AuthenticatedPrincipal(id="alice", type="user", groups=frozenset({"engi
 
 
 def _make_spec(name: str = "test-agent") -> AgentSpec:
-    return AgentSpec(name=name, model="test-model")
+    return AgentSpec(name=name, model="test-model", checkpointing_enabled=True)
 
 
 class TestCheckpointSaveLoad:
@@ -455,7 +455,9 @@ class TestTeamResume:
 
         store = InMemoryCheckpointStore()
 
-        team_spec = TeamSpec(name="test-team", planner="planner", synthesizer="synth", workers=["w1"])
+        team_spec = TeamSpec(
+            name="test-team", planner="planner", synthesizer="synth", workers=["w1"], checkpointing_enabled=True
+        )
 
         team_runner = TeamRunner()
         team_runner._checkpoint_store = store
@@ -496,7 +498,7 @@ class TestTeamResume:
         from agentic_primitives_gateway.models.teams import TeamSpec
 
         store = InMemoryCheckpointStore()
-        team_spec = TeamSpec(name="test-team", planner="p", synthesizer="s", workers=["w"])
+        team_spec = TeamSpec(name="test-team", planner="p", synthesizer="s", workers=["w"], checkpointing_enabled=True)
 
         team_runner = TeamRunner()
         team_runner._checkpoint_store = store

@@ -1,5 +1,6 @@
 import { NavLink, useLocation } from "react-router-dom";
 import { useAuth } from "../auth/AuthProvider";
+import { useConnectionStatus } from "../hooks/useConnectionStatus";
 import { cn } from "../lib/cn";
 import ThemeToggle from "./ThemeToggle";
 
@@ -18,6 +19,7 @@ export default function Sidebar() {
   const location = useLocation();
   const activeAgent = decodeURIComponent(location.pathname.match(/\/agents\/([^/]+)\/chat/)?.[1] ?? "");
   const activeTeam = decodeURIComponent(location.pathname.match(/\/teams\/([^/]+)\/run/)?.[1] ?? "");
+  const connectionStatus = useConnectionStatus();
 
   return (
     <aside className="flex w-56 flex-col border-r border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900">
@@ -28,6 +30,28 @@ export default function Sidebar() {
         <p className="text-[10px] text-gray-500 dark:text-gray-400 font-mono">
           Agentic Primitives Gateway
         </p>
+        <div className="flex items-center gap-1.5 mt-1.5">
+          <span
+            className={cn(
+              "inline-block w-1.5 h-1.5 rounded-full",
+              connectionStatus === "connected" && "bg-green-500",
+              connectionStatus === "disconnected" && "bg-red-500 animate-pulse",
+              connectionStatus === "connecting" && "bg-yellow-500 animate-pulse",
+            )}
+          />
+          <span
+            className={cn(
+              "text-[10px] font-mono",
+              connectionStatus === "connected" && "text-green-600 dark:text-green-400",
+              connectionStatus === "disconnected" && "text-red-500 dark:text-red-400",
+              connectionStatus === "connecting" && "text-yellow-600 dark:text-yellow-400",
+            )}
+          >
+            {connectionStatus === "connected" && "Connected"}
+            {connectionStatus === "disconnected" && "Server offline"}
+            {connectionStatus === "connecting" && "Connecting..."}
+          </span>
+        </div>
       </div>
 
       <nav className="flex-1 px-2 py-3 space-y-0.5">

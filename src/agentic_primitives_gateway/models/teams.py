@@ -20,6 +20,7 @@ class TeamSpec(BaseModel):
     shared_memory_namespace: str | None = None
     owner_id: str = "system"
     shared_with: list[str] = Field(default_factory=list)
+    checkpointing_enabled: bool = False
 
 
 class CreateTeamRequest(BaseModel):
@@ -49,6 +50,7 @@ class UpdateTeamRequest(BaseModel):
     global_timeout_seconds: int | None = None
     shared_memory_namespace: str | None = None
     shared_with: list[str] | None = None
+    checkpointing_enabled: bool | None = None
 
 
 class TeamListResponse(BaseModel):

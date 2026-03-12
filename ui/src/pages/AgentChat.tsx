@@ -101,6 +101,8 @@ export default function AgentChat() {
   const historyLoadedRef = useRef(false);
   const streamDoneRef = useRef(false);
   const [polling, setPolling] = useState(false);
+  const [reconnecting, setReconnecting] = useState(false);
+  const [sessionList, setSessionList] = useState<string[]>(() => getSessions(userId, name!));
   const scrollRef = useAutoScroll([turns, sending]);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -108,6 +110,7 @@ export default function AgentChat() {
   useEffect(() => {
     if (!name) return;
     addSession(userId, name, sessionId);
+    setSessionList(getSessions(userId, name));
     const url = new URL(window.location.href);
     if (url.searchParams.get("session_id") !== sessionId) {
       url.searchParams.set("session_id", sessionId);
@@ -267,6 +270,7 @@ export default function AgentChat() {
         // reconnect via SSE to get events from the event store.
         if (!streamDoneRef.current && name && sessionId) {
           setPolling(true);
+          setReconnecting(true);
           const reconnectCtrl = new AbortController();
 
           (async () => {
@@ -278,6 +282,7 @@ export default function AgentChat() {
                 const reader = stream.getReader();
                 const decoder = new TextDecoder();
                 let buf = "";
+                setReconnecting(false);
 
                 while (true) {
                   const { done: d, value: v } = await reader.read();
@@ -299,6 +304,7 @@ export default function AgentChat() {
               }
             }
             setPolling(false);
+            setReconnecting(false);
 
             // Reload full history after reconnect completes
             try {
@@ -348,6 +354,9 @@ export default function AgentChat() {
         addSession(userId, name, newId);
         window.location.href = `/ui/agents/${name}/chat?session_id=${newId}`;
       }
+    } else {
+      // Non-current session deleted — update displayed list
+      setSessionList(getSessions(userId, name));
     }
   }, [name, sessionId, userId]);
 
@@ -358,8 +367,7 @@ export default function AgentChat() {
       removeSession(userId, name, sid);
       try { await api.deleteSession(name, sid); } catch { /* ignore */ }
     }
-    // Force re-render by navigating to current session
-    window.location.href = `/ui/agents/${name}/chat?session_id=${sessionId}`;
+    setSessionList(getSessions(userId, name));
   }, [name, sessionId, userId]);
 
   function handleStreamEvent(event: StreamEvent, turnIndex: number) {
@@ -493,10 +501,10 @@ export default function AgentChat() {
             >
               + new
             </button>
-            {getSessions(userId, name!).length > 1 && (
+            {sessionList.length > 1 && (
               <>
                 <span>|</span>
-                {getSessions(userId, name!).filter((s) => s !== sessionId).map((s) => (
+                {sessionList.filter((s) => s !== sessionId).map((s) => (
                   <span key={s} className="inline-flex items-center gap-0.5">
                     <button
                       className="font-mono hover:text-indigo-500"
@@ -585,8 +593,8 @@ export default function AgentChat() {
         {polling && (
           <div className="mr-12 rounded-lg bg-gray-50 dark:bg-gray-900 px-4 py-3">
             <div className="flex items-center gap-2 text-xs text-gray-400 dark:text-gray-500">
-              <span className="inline-block w-1.5 h-1.5 rounded-full bg-indigo-500 animate-pulse" />
-              Agent is working in the background...
+              <span className={`inline-block w-1.5 h-1.5 rounded-full ${reconnecting ? "bg-yellow-500" : "bg-indigo-500"} animate-pulse`} />
+              {reconnecting ? "Connection lost \u2014 reconnecting..." : "Agent is working in the background..."}
             </div>
           </div>
         )}

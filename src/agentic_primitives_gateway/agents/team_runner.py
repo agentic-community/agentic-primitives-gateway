@@ -33,10 +33,15 @@ from agentic_primitives_gateway.agents.team_store import TeamStore
 from agentic_primitives_gateway.agents.tools import ToolDefinition, build_tool_list
 from agentic_primitives_gateway.auth.models import AuthenticatedPrincipal
 from agentic_primitives_gateway.context import (
+    AWSCredentials,
+    _service_credentials,
     get_authenticated_principal,
+    get_aws_credentials,
     get_provider_override,
     set_authenticated_principal,
+    set_aws_credentials,
     set_provider_overrides,
+    set_service_credentials,
 )
 from agentic_primitives_gateway.models.agents import AgentSpec, PrimitiveConfig
 from agentic_primitives_gateway.models.enums import Primitive
@@ -100,12 +105,14 @@ class TeamRunner:
 
     async def _team_checkpoint(self, team_spec: TeamSpec, team_run_id: str, message: str, phase: str) -> None:
         """Persist team run state for crash recovery. Task board is already durable."""
+        if not team_spec.checkpointing_enabled:
+            return
         if not self._checkpoint_store:
             return
         principal = get_authenticated_principal()
         if principal is None:
             raise RuntimeError("Cannot checkpoint without an authenticated principal")
-        data = {
+        data: dict[str, Any] = {
             "type": "team",
             "spec_name": team_spec.name,
             "team_run_id": team_run_id,
@@ -119,13 +126,26 @@ class TeamRunner:
                 "scopes": list(principal.scopes),
             },
         }
+        aws_creds = get_aws_credentials()
+        if aws_creds:
+            data["aws_credentials"] = {
+                "access_key_id": aws_creds.access_key_id,
+                "secret_access_key": aws_creds.secret_access_key,
+                "session_token": aws_creds.session_token,
+                "region": aws_creds.region,
+            }
+        svc_creds = _service_credentials.get()
+        if svc_creds:
+            data["service_credentials"] = svc_creds
         try:
             key = f"{principal.id}:{team_run_id}"
             await self._checkpoint_store.save(key, data, ttl=86400)
         except Exception:
             logger.debug("Failed to save team checkpoint for %s", team_run_id, exc_info=True)
 
-    async def _delete_team_checkpoint(self, team_run_id: str) -> None:
+    async def _delete_team_checkpoint(self, team_run_id: str, team_spec: TeamSpec | None = None) -> None:
+        if team_spec is not None and not team_spec.checkpointing_enabled:
+            return
         if not self._checkpoint_store:
             return
         principal = get_authenticated_principal()
@@ -179,6 +199,21 @@ class TeamRunner:
             scopes=frozenset(p.get("scopes", [])),
         )
         set_authenticated_principal(principal)
+
+        # Restore credentials from checkpoint
+        aws_data = data.get("aws_credentials")
+        if aws_data:
+            set_aws_credentials(
+                AWSCredentials(
+                    access_key_id=aws_data["access_key_id"],
+                    secret_access_key=aws_data["secret_access_key"],
+                    session_token=aws_data.get("session_token"),
+                    region=aws_data.get("region"),
+                )
+            )
+        svc_data = data.get("service_credentials")
+        if svc_data:
+            set_service_credentials(svc_data)
 
         spec_name = data["spec_name"]
         team_spec = await self._team_store.get(spec_name)  # type: ignore[union-attr]
@@ -292,7 +327,7 @@ class TeamRunner:
         if event_store:
             await event_store.set_status(team_run_id, "idle")
 
-        await self._delete_team_checkpoint(team_run_id)
+        await self._delete_team_checkpoint(team_run_id, team_spec=team_spec)
         logger.info("Team[%s] run=%s resumed and completed", spec_name, team_run_id)
 
     # ── Public entry points ──────────────────────────────────────────
@@ -319,7 +354,7 @@ class TeamRunner:
         logger.info("Team[%s] run=%s phase=synthesis", team_spec.name, team_run_id)
         response = await self._run_synthesizer(team_spec, team_run_id, message)
 
-        await self._delete_team_checkpoint(team_run_id)
+        await self._delete_team_checkpoint(team_run_id, team_spec=team_spec)
         all_tasks = await registry.tasks.list_tasks(team_run_id)
         done_count = sum(1 for t in all_tasks if t.status == TaskStatus.DONE)
 
@@ -379,7 +414,7 @@ class TeamRunner:
                 response += event.get("content", "")
             yield event
 
-        await self._delete_team_checkpoint(team_run_id)
+        await self._delete_team_checkpoint(team_run_id, team_spec=team_spec)
         all_tasks = await registry.tasks.list_tasks(team_run_id)
         done_count = sum(1 for t in all_tasks if t.status == TaskStatus.DONE)
 

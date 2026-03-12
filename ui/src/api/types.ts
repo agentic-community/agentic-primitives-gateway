@@ -22,6 +22,7 @@ export interface AgentSpec {
   max_tokens: number | null;
   owner_id: string;
   shared_with: string[];
+  checkpointing_enabled: boolean;
 }
 
 export interface AgentListResponse {
@@ -171,6 +172,7 @@ export interface TeamSpec {
   shared_memory_namespace: string | null;
   owner_id: string;
   shared_with: string[];
+  checkpointing_enabled: boolean;
 }
 
 export interface TeamListResponse {

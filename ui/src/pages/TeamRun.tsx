@@ -135,6 +135,7 @@ export default function TeamRun() {
   const [error, setError] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const [polling, setPolling] = useState(false);
+  const [reconnecting, setReconnecting] = useState(false);
   const [prompt, setPrompt] = useState<string>("");
   const [teamRunId, setTeamRunId] = useState<string>(() => {
     if (!name) return "";
@@ -148,6 +149,7 @@ export default function TeamRun() {
   const [response, setResponse] = useState<string>("");
   const [stats, setStats] = useState<{ created: number; completed: number; workers: string[] } | null>(null);
   const [showModal, setShowModal] = useState(false);
+  const [runList, setRunList] = useState<string[]>(() => name ? getRuns(userId, name) : []);
   const logRef = useAutoScroll([activityLog]);
   const abortRef = useRef<AbortController | null>(null);
   const bgCheckRef = useRef(false);
@@ -265,6 +267,7 @@ export default function TeamRun() {
     const reconnectController = new AbortController();
     const { signal } = reconnectController;
     setPolling(true);
+    setReconnecting(true);
 
     (async () => {
       const MAX_RETRIES = 120; // 120 × 3s = 6 minutes of retrying
@@ -279,6 +282,7 @@ export default function TeamRun() {
           const reader = stream.getReader();
           const decoder = new TextDecoder();
           let buffer = "";
+          setReconnecting(false);
 
           // Connected! Process events from the server.
           while (true) {
@@ -340,6 +344,7 @@ export default function TeamRun() {
       }
 
       setPolling(false);
+      setReconnecting(false);
     })();
 
     return () => {
@@ -373,8 +378,11 @@ export default function TeamRun() {
       } else {
         window.location.href = `/ui/teams/${name}/run`;
       }
+    } else {
+      // Non-current run deleted — update displayed list
+      setRunList(getRuns(userId, name));
     }
-  }, [name, teamRunId]);
+  }, [name, teamRunId, userId]);
 
   const handleClearOldRuns = useCallback(async () => {
     if (!name) return;
@@ -383,11 +391,7 @@ export default function TeamRun() {
       removeRun(userId, name, rid);
       try { await api.deleteTeamRun(name, rid); } catch { /* ignore */ }
     }
-    if (teamRunId) {
-      window.location.href = `/ui/teams/${name}/run?run_id=${teamRunId}`;
-    } else {
-      window.location.href = `/ui/teams/${name}/run`;
-    }
+    setRunList(getRuns(userId, name));
   }, [name, teamRunId, userId]);
 
   const handleSend = useCallback(
@@ -441,6 +445,7 @@ export default function TeamRun() {
               case "team_start":
                 setTeamRunId(event.team_run_id);
                 addRun(userId, name, event.team_run_id);
+                setRunList(getRuns(userId, name));
                 {
                   const url = new URL(window.location.href);
                   url.searchParams.set("run_id", event.team_run_id);
@@ -590,10 +595,10 @@ export default function TeamRun() {
             >
               + new run
             </button>
-            {getRuns(userId, name!).length > 1 && (
+            {runList.length > 1 && (
               <>
                 <span>|</span>
-                {getRuns(userId, name!).filter((r) => r !== teamRunId).map((r) => (
+                {runList.filter((r) => r !== teamRunId).map((r) => (
                   <span key={r} className="inline-flex items-center gap-0.5">
                     <button
                       className="font-mono hover:text-indigo-500"
@@ -650,8 +655,8 @@ export default function TeamRun() {
           )}
           {polling && (
             <div className="flex items-center gap-2 text-xs text-gray-400 py-4">
-              <span className="inline-block w-1.5 h-1.5 rounded-full bg-indigo-500 animate-pulse" />
-              Team is working in the background...
+              <span className={`inline-block w-1.5 h-1.5 rounded-full ${reconnecting ? "bg-yellow-500" : "bg-indigo-500"} animate-pulse`} />
+              {reconnecting ? "Connection lost \u2014 reconnecting..." : "Team is working in the background..."}
             </div>
           )}
           {tasks.map((task) => (

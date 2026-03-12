@@ -20,10 +20,15 @@ from agentic_primitives_gateway.agents.tools import (
 )
 from agentic_primitives_gateway.auth.models import AuthenticatedPrincipal
 from agentic_primitives_gateway.context import (
+    AWSCredentials,
+    _service_credentials,
     get_authenticated_principal,
+    get_aws_credentials,
     get_provider_override,
     set_authenticated_principal,
+    set_aws_credentials,
     set_provider_overrides,
+    set_service_credentials,
 )
 from agentic_primitives_gateway.models.agents import AgentSpec, ChatResponse, ToolArtifact
 from agentic_primitives_gateway.models.enums import Primitive
@@ -565,6 +570,8 @@ class AgentRunner:
 
     async def _checkpoint(self, ctx: _RunContext, original_message: str) -> None:
         """Persist run state to Redis for crash recovery."""
+        if not ctx.spec.checkpointing_enabled:
+            return
         if not self._checkpoint_store:
             return
         principal = get_authenticated_principal()
@@ -592,6 +599,17 @@ class AgentRunner:
                 "scopes": list(principal.scopes),
             },
         }
+        aws_creds = get_aws_credentials()
+        if aws_creds:
+            data["aws_credentials"] = {
+                "access_key_id": aws_creds.access_key_id,
+                "secret_access_key": aws_creds.secret_access_key,
+                "session_token": aws_creds.session_token,
+                "region": aws_creds.region,
+            }
+        svc_creds = _service_credentials.get()
+        if svc_creds:
+            data["service_credentials"] = svc_creds
         try:
             await self._checkpoint_store.save(self._checkpoint_key(ctx), data, ttl=86400)
         except Exception:
@@ -599,6 +617,8 @@ class AgentRunner:
 
     async def _delete_checkpoint(self, ctx: _RunContext) -> None:
         """Remove checkpoint after successful finalization."""
+        if not ctx.spec.checkpointing_enabled:
+            return
         if not self._checkpoint_store:
             return
         try:
@@ -649,6 +669,21 @@ class AgentRunner:
             scopes=frozenset(p.get("scopes", [])),
         )
         set_authenticated_principal(principal)
+
+        # Restore credentials from checkpoint
+        aws_data = data.get("aws_credentials")
+        if aws_data:
+            set_aws_credentials(
+                AWSCredentials(
+                    access_key_id=aws_data["access_key_id"],
+                    secret_access_key=aws_data["secret_access_key"],
+                    session_token=aws_data.get("session_token"),
+                    region=aws_data.get("region"),
+                )
+            )
+        svc_data = data.get("service_credentials")
+        if svc_data:
+            set_service_credentials(svc_data)
 
         # Load spec (current version from store)
         spec_name = data["spec_name"]
