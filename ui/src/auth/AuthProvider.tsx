@@ -7,6 +7,7 @@ import {
   useState,
 } from "react";
 import { UserManager, type User } from "oidc-client-ts";
+import { setApiAuthToken } from "../api/client";
 
 interface AuthConfig {
   backend: string;
@@ -53,11 +54,17 @@ export default function AuthProvider({
 }: {
   children: React.ReactNode;
 }) {
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUserState] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [backend, setBackend] = useState("noop");
   const managerRef = useRef<UserManager | null>(null);
   const initRef = useRef(false);
+
+  // Sync the API token immediately when the user changes, before children re-render.
+  const setUser = useCallback((u: User | null) => {
+    setApiAuthToken(u?.access_token || "");
+    setUserState(u);
+  }, []);
 
   useEffect(() => {
     if (initRef.current) return;

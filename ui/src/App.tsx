@@ -1,6 +1,4 @@
-import { useEffect } from "react";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
-import { setApiAuthToken } from "./api/client";
 import AuthProvider, { useAuth } from "./auth/AuthProvider";
 import Layout from "./components/Layout";
 import AgentChat from "./pages/AgentChat";
@@ -11,24 +9,13 @@ import PrimitiveExplorer from "./pages/PrimitiveExplorer";
 import TeamList from "./pages/TeamList";
 import TeamRun from "./pages/TeamRun";
 
-/** Syncs the auth token into the API client whenever it changes. */
-function TokenSync({ children }: { children: React.ReactNode }) {
-  const { token } = useAuth();
-  useEffect(() => {
-    setApiAuthToken(token);
-  }, [token]);
-  return <>{children}</>;
-}
-
-/** Shows a loading screen while auth is initializing. */
+/** Blocks rendering until auth is resolved (token set or noop confirmed). */
 function AuthGate({ children }: { children: React.ReactNode }) {
-  const { loading, backend } = useAuth();
+  const { loading } = useAuth();
 
-  // Noop auth never shows a loading screen
-  if (backend === "noop" || backend === "api_key") {
-    return <>{children}</>;
-  }
-
+  // Always wait for auth initialization to complete.
+  // This prevents API calls firing before the token is available.
+  // For noop/api_key, loading resolves almost instantly.
   if (loading) {
     return (
       <div className="flex h-screen items-center justify-center bg-zinc-950 text-zinc-400">
@@ -47,8 +34,7 @@ export default function App() {
   return (
     <BrowserRouter basename="/ui">
       <AuthProvider>
-        <TokenSync>
-          <AuthGate>
+        <AuthGate>
             <Routes>
               <Route element={<Layout />}>
                 <Route index element={<Dashboard />} />
@@ -63,7 +49,6 @@ export default function App() {
               <Route path="callback" element={<CallbackPage />} />
             </Routes>
           </AuthGate>
-        </TokenSync>
       </AuthProvider>
     </BrowserRouter>
   );
