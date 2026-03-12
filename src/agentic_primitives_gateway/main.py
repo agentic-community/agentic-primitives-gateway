@@ -133,6 +133,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     team_session_reg = team_store.create_session_registry()
     if team_session_reg:
         get_team_runner().set_session_registry(team_session_reg)
+    if checkpoint_store and heartbeat:
+        get_team_runner().set_checkpoint_store(checkpoint_store, replica_id=heartbeat.replica_id)
 
     # Initialize auth backend
     from agentic_primitives_gateway.auth.base import AuthBackend
@@ -173,9 +175,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # Recover orphaned runs from crashed replicas + start periodic scan
     if checkpoint_store and heartbeat:
-        heartbeat.set_runner(agent_runner)
+        team_runner_ref = get_team_runner()
+        heartbeat.set_runner(agent_runner, team_runner=team_runner_ref)
         try:
-            await recover_orphaned_runs(checkpoint_store, agent_runner, heartbeat.replica_id)
+            await recover_orphaned_runs(
+                checkpoint_store,
+                agent_runner,
+                heartbeat.replica_id,
+                team_runner=team_runner_ref,
+            )
         except Exception:
             logger.exception("Orphan recovery failed")
         heartbeat.start_orphan_scanner()

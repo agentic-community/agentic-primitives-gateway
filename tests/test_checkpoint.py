@@ -374,3 +374,194 @@ class TestOrphanRecovery:
 
         recovered = await recover_orphaned_runs(store, runner, "r1")
         assert recovered == 1
+
+    @pytest.mark.asyncio
+    async def test_dispatches_team_checkpoint_to_team_runner(self):
+        """Team checkpoints (type='team') are dispatched to the team runner."""
+        from agentic_primitives_gateway.agents.checkpoint import recover_orphaned_runs
+
+        store = InMemoryCheckpointStore()
+        await store.save(
+            "alice:team-run-1",
+            {
+                "type": "team",
+                "spec_name": "research-team",
+                "team_run_id": "team-run-1",
+                "replica_id": "dead-replica",
+                "principal": {"id": "alice", "type": "user", "groups": [], "scopes": []},
+            },
+        )
+
+        agent_runner = AsyncMock()
+        agent_runner.resume = AsyncMock()
+        team_runner = AsyncMock()
+        team_runner.resume = AsyncMock()
+
+        recovered = await recover_orphaned_runs(store, agent_runner, "r1", team_runner=team_runner)
+        assert recovered == 1
+        agent_runner.resume.assert_not_called()
+        team_runner.resume.assert_called_once_with("alice:team-run-1")
+
+    @pytest.mark.asyncio
+    async def test_mixed_agent_and_team_checkpoints(self):
+        """Agent and team checkpoints are dispatched to the correct runners."""
+        from agentic_primitives_gateway.agents.checkpoint import recover_orphaned_runs
+
+        store = InMemoryCheckpointStore()
+        await store.save(
+            "alice:sess-1",
+            {
+                "spec_name": "agent-1",
+                "replica_id": "dead",
+                "principal": {"id": "alice", "type": "user", "groups": [], "scopes": []},
+            },
+        )
+        await store.save(
+            "alice:team-1",
+            {
+                "type": "team",
+                "spec_name": "team-1",
+                "replica_id": "dead",
+                "principal": {"id": "alice", "type": "user", "groups": [], "scopes": []},
+            },
+        )
+
+        agent_runner = AsyncMock()
+        team_runner = AsyncMock()
+
+        recovered = await recover_orphaned_runs(store, agent_runner, "r1", team_runner=team_runner)
+        assert recovered == 2
+        agent_runner.resume.assert_called_once()
+        team_runner.resume.assert_called_once()
+
+
+class TestTeamResume:
+    @pytest.mark.asyncio
+    async def test_resume_from_execution_phase(self):
+        """Team resume from execution phase re-runs execution + synthesis."""
+        from agentic_primitives_gateway.agents.team_runner import TeamRunner
+        from agentic_primitives_gateway.models.teams import TeamSpec
+
+        store = InMemoryCheckpointStore()
+
+        team_spec = TeamSpec(name="test-team", planner="planner", synthesizer="synth", workers=["w1"])
+
+        team_runner = TeamRunner()
+        team_runner._checkpoint_store = store
+        team_runner._team_store = AsyncMock()
+        team_runner._team_store.get = AsyncMock(return_value=team_spec)
+        team_runner._agent_store = AsyncMock()
+        team_runner._agent_runner = AsyncMock()
+
+        # Mock all phase methods
+        team_runner._run_planner = AsyncMock()
+        team_runner._run_with_replanning = AsyncMock(return_value=["w1"])
+        team_runner._run_synthesizer = AsyncMock(return_value="synthesized")
+
+        await store.save(
+            "alice:team-run-1",
+            {
+                "type": "team",
+                "spec_name": "test-team",
+                "team_run_id": "team-run-1",
+                "message": "do something",
+                "phase": "execution",
+                "replica_id": "dead",
+                "principal": {"id": "alice", "type": "user", "groups": [], "scopes": []},
+            },
+        )
+
+        await team_runner.resume("alice:team-run-1")
+
+        # Planning should NOT be called (already completed)
+        team_runner._run_planner.assert_not_called()
+        # Execution and synthesis should be called
+        team_runner._run_with_replanning.assert_called_once()
+        team_runner._run_synthesizer.assert_called_once()
+        # Checkpoint should be deleted
+        assert await store.load("alice:team-run-1") is None
+
+    @pytest.mark.asyncio
+    async def test_resume_from_synthesis_phase(self):
+        """Team resume from synthesis phase only re-runs synthesis."""
+        from agentic_primitives_gateway.agents.team_runner import TeamRunner
+        from agentic_primitives_gateway.models.teams import TeamSpec
+
+        store = InMemoryCheckpointStore()
+        team_spec = TeamSpec(name="test-team", planner="p", synthesizer="s", workers=["w"])
+
+        team_runner = TeamRunner()
+        team_runner._checkpoint_store = store
+        team_runner._team_store = AsyncMock()
+        team_runner._team_store.get = AsyncMock(return_value=team_spec)
+        team_runner._agent_store = AsyncMock()
+        team_runner._agent_runner = AsyncMock()
+        team_runner._run_planner = AsyncMock()
+        team_runner._run_with_replanning = AsyncMock()
+        team_runner._run_synthesizer = AsyncMock(return_value="done")
+
+        await store.save(
+            "bob:run-2",
+            {
+                "type": "team",
+                "spec_name": "test-team",
+                "team_run_id": "run-2",
+                "message": "hello",
+                "phase": "synthesis",
+                "replica_id": "dead",
+                "principal": {"id": "bob", "type": "user", "groups": [], "scopes": []},
+            },
+        )
+
+        await team_runner.resume("bob:run-2")
+
+        team_runner._run_planner.assert_not_called()
+        team_runner._run_with_replanning.assert_not_called()
+        team_runner._run_synthesizer.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_resume_skips_deleted_team(self):
+        from agentic_primitives_gateway.agents.team_runner import TeamRunner
+
+        store = InMemoryCheckpointStore()
+        team_runner = TeamRunner()
+        team_runner._checkpoint_store = store
+        team_runner._team_store = AsyncMock()
+        team_runner._team_store.get = AsyncMock(return_value=None)
+        team_runner._agent_store = AsyncMock()
+        team_runner._agent_runner = AsyncMock()
+
+        await store.save(
+            "alice:run-1",
+            {
+                "type": "team",
+                "spec_name": "deleted-team",
+                "team_run_id": "run-1",
+                "phase": "planning",
+                "principal": {"id": "alice", "type": "user", "groups": [], "scopes": []},
+            },
+        )
+
+        # Should not raise
+        await team_runner.resume("alice:run-1")
+
+    @pytest.mark.asyncio
+    async def test_resume_skips_non_team_checkpoint(self):
+        """Team runner skips checkpoints without type='team'."""
+        from agentic_primitives_gateway.agents.team_runner import TeamRunner
+
+        store = InMemoryCheckpointStore()
+        team_runner = TeamRunner()
+        team_runner._checkpoint_store = store
+        team_runner._team_store = AsyncMock()
+
+        await store.save(
+            "alice:sess-1",
+            {
+                "spec_name": "some-agent",
+                "principal": {"id": "alice", "type": "user", "groups": [], "scopes": []},
+            },
+        )
+
+        # Should return without doing anything (not a team checkpoint)
+        await team_runner.resume("alice:sess-1")

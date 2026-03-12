@@ -67,6 +67,8 @@ class TeamRunner:
         self._team_store: TeamStore | None = None
         self._agent_runner: AgentRunner | None = None
         self._session_registry: Any | None = None
+        self._checkpoint_store: Any | None = None
+        self._replica_id: str | None = None
 
     def set_stores(
         self,
@@ -81,6 +83,130 @@ class TeamRunner:
     def set_session_registry(self, registry: Any) -> None:
         self._session_registry = registry
 
+    def set_checkpoint_store(self, store: Any, replica_id: str | None = None) -> None:
+        self._checkpoint_store = store
+        self._replica_id = replica_id
+
+    async def _team_checkpoint(self, team_spec: TeamSpec, team_run_id: str, message: str, phase: str) -> None:
+        """Persist team run state for crash recovery. Task board is already durable."""
+        if not self._checkpoint_store:
+            return
+        principal = get_authenticated_principal()
+        if principal is None:
+            raise RuntimeError("Cannot checkpoint without an authenticated principal")
+        data = {
+            "type": "team",
+            "spec_name": team_spec.name,
+            "team_run_id": team_run_id,
+            "message": message,
+            "phase": phase,
+            "replica_id": self._replica_id,
+            "principal": {
+                "id": principal.id,
+                "type": principal.type,
+                "groups": list(principal.groups),
+                "scopes": list(principal.scopes),
+            },
+        }
+        try:
+            key = f"{principal.id}:{team_run_id}"
+            await self._checkpoint_store.save(key, data)
+        except Exception:
+            logger.debug("Failed to save team checkpoint for %s", team_run_id, exc_info=True)
+
+    async def _delete_team_checkpoint(self, team_run_id: str) -> None:
+        if not self._checkpoint_store:
+            return
+        principal = get_authenticated_principal()
+        if principal is None:
+            return
+        try:
+            await self._checkpoint_store.delete(f"{principal.id}:{team_run_id}")
+        except Exception:
+            logger.debug("Failed to delete team checkpoint for %s", team_run_id, exc_info=True)
+
+    async def resume(self, checkpoint_key: str) -> None:
+        """Resume a team run from a checkpoint (called during orphan recovery).
+
+        Reconstructs the auth context, loads the team spec, and resumes
+        from the checkpointed phase. The task board in Redis provides
+        the durable task state — we just need to re-run incomplete phases.
+        """
+        if not self._checkpoint_store or not self._team_store:
+            return
+
+        data = await self._checkpoint_store.load(checkpoint_key)
+        if data is None:
+            return
+        if data.get("type") != "team":
+            return  # Not a team checkpoint — skip
+
+        replica_id = uuid.uuid4().hex[:12]
+        if not await self._checkpoint_store.acquire_lock(checkpoint_key, replica_id):
+            logger.info("Team checkpoint %s is being recovered by another replica", checkpoint_key)
+            return
+
+        try:
+            await self._resume_team_from_data(data)
+        except Exception:
+            logger.exception("Failed to resume team run from checkpoint %s", checkpoint_key)
+        finally:
+            await self._checkpoint_store.release_lock(checkpoint_key)
+
+    async def _resume_team_from_data(self, data: dict[str, Any]) -> None:
+        from agentic_primitives_gateway.auth.models import AuthenticatedPrincipal
+        from agentic_primitives_gateway.context import set_authenticated_principal
+
+        p = data.get("principal")
+        if not p or "id" not in p:
+            raise ValueError("Team checkpoint is missing principal data")
+        principal = AuthenticatedPrincipal(
+            id=p["id"],
+            type=p.get("type", "user"),
+            groups=frozenset(p.get("groups", [])),
+            scopes=frozenset(p.get("scopes", [])),
+        )
+        set_authenticated_principal(principal)
+
+        spec_name = data["spec_name"]
+        team_spec = await self._team_store.get(spec_name)  # type: ignore[union-attr]
+        if team_spec is None:
+            logger.warning("Team '%s' not found during resume — skipping", spec_name)
+            return
+
+        team_run_id = data["team_run_id"]
+        message = data.get("message", "")
+        phase = data.get("phase", "planning")
+
+        assert self._agent_store is not None
+        assert self._agent_runner is not None
+
+        logger.info(
+            "Resuming team[%s] run=%s from phase=%s (user=%s)",
+            spec_name,
+            team_run_id,
+            phase,
+            principal.id,
+        )
+
+        # Resume from the checkpointed phase. Earlier phases already completed
+        # and their results are in the task board.
+        if phase == "planning":
+            await self._run_planner(team_spec, team_run_id, message)
+            phase = "execution"
+
+        if phase == "execution":
+            await self._team_checkpoint(team_spec, team_run_id, message, "execution")
+            await self._run_with_replanning(team_spec, team_run_id, message)
+            phase = "synthesis"
+
+        if phase == "synthesis":
+            await self._team_checkpoint(team_spec, team_run_id, message, "synthesis")
+            await self._run_synthesizer(team_spec, team_run_id, message)
+
+        await self._delete_team_checkpoint(team_run_id)
+        logger.info("Team[%s] run=%s resumed and completed", spec_name, team_run_id)
+
     # ── Public entry points ──────────────────────────────────────────
 
     async def run(
@@ -93,15 +219,19 @@ class TeamRunner:
         assert self._agent_store is not None
         assert self._agent_runner is not None
 
+        await self._team_checkpoint(team_spec, team_run_id, message, "planning")
         logger.info("Team[%s] run=%s phase=planning", team_spec.name, team_run_id)
         await self._run_planner(team_spec, team_run_id, message)
 
+        await self._team_checkpoint(team_spec, team_run_id, message, "execution")
         logger.info("Team[%s] run=%s phase=execution", team_spec.name, team_run_id)
         workers_used = await self._run_with_replanning(team_spec, team_run_id, message)
 
+        await self._team_checkpoint(team_spec, team_run_id, message, "synthesis")
         logger.info("Team[%s] run=%s phase=synthesis", team_spec.name, team_run_id)
         response = await self._run_synthesizer(team_spec, team_run_id, message)
 
+        await self._delete_team_checkpoint(team_run_id)
         all_tasks = await registry.tasks.list_tasks(team_run_id)
         done_count = sum(1 for t in all_tasks if t.status == TaskStatus.DONE)
 
@@ -128,6 +258,7 @@ class TeamRunner:
         yield {"type": "team_start", "team_run_id": team_run_id, "team_name": team_spec.name}
 
         # Phase 1: Initial planning
+        await self._team_checkpoint(team_spec, team_run_id, message, "planning")
         yield {"type": "phase_change", "phase": "planning"}
         async for event in self._run_planner_stream(team_spec, team_run_id, message):
             yield event
@@ -143,6 +274,7 @@ class TeamRunner:
         }
 
         # Phase 2: Execution with continuous re-planning
+        await self._team_checkpoint(team_spec, team_run_id, message, "execution")
         yield {"type": "phase_change", "phase": "execution"}
         workers_used: list[str] = []
         async for event in self._run_with_replanning_stream(team_spec, team_run_id, message):
@@ -151,6 +283,7 @@ class TeamRunner:
             yield event
 
         # Phase 3: Synthesis
+        await self._team_checkpoint(team_spec, team_run_id, message, "synthesis")
         yield {"type": "phase_change", "phase": "synthesis"}
         response = ""
         async for event in self._run_synthesizer_stream(team_spec, team_run_id, message):
@@ -158,6 +291,7 @@ class TeamRunner:
                 response += event.get("content", "")
             yield event
 
+        await self._delete_team_checkpoint(team_run_id)
         all_tasks = await registry.tasks.list_tasks(team_run_id)
         done_count = sum(1 for t in all_tasks if t.status == TaskStatus.DONE)
 

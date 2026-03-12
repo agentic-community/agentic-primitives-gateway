@@ -692,6 +692,26 @@ class AgentRunner:
             principal.id,
         )
 
+        # Notify event store that the run was resumed (UI can show indicator)
+
+        # Best-effort: find the background manager's event store to record the resume event
+        try:
+            from agentic_primitives_gateway.routes.agents import _bg as agent_bg
+
+            if agent_bg and agent_bg._event_store:
+                await agent_bg._event_store.append_event(
+                    ctx.session_id,
+                    {
+                        "type": "run_resumed",
+                        "session_id": ctx.session_id,
+                        "agent_name": spec.name,
+                        "turns_used": ctx.turns_used,
+                    },
+                )
+                await agent_bg._event_store.set_status(ctx.session_id, "running")
+        except Exception:
+            logger.debug("Could not record run_resumed event", exc_info=True)
+
         # Continue the LLM loop
         while ctx.turns_used < spec.max_turns:
             ctx.turns_used += 1
@@ -882,6 +902,17 @@ class AgentRunner:
         primitive = tool_def.primitive
         if primitive not in ("code_interpreter", "browser") or primitive in session_ctx:
             return
+
+        # Try to reattach to an existing session from the registry (e.g. after resume)
+        existing_sid = session_ctx.get(primitive)
+        if (
+            existing_sid
+            and self._session_registry
+            and await self._session_registry.is_registered(primitive, existing_sid)
+        ):
+            logger.info("Reattaching to existing %s session: %s", primitive, existing_sid)
+            return
+
         try:
             logger.info("Starting %s session...", primitive)
             if primitive == "code_interpreter":

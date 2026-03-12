@@ -153,9 +153,10 @@ class ReplicaHeartbeat:
         self._heartbeat_task: asyncio.Task[None] | None = None
         self._orphan_task: asyncio.Task[None] | None = None
 
-    def set_runner(self, runner: Any) -> None:
-        """Set the runner reference for orphan recovery."""
+    def set_runner(self, runner: Any, team_runner: Any | None = None) -> None:
+        """Set the runner references for orphan recovery."""
         self._runner = runner
+        self._team_runner = team_runner
 
     async def start(self) -> None:
         """Start the heartbeat and orphan scan loops."""
@@ -192,7 +193,12 @@ class ReplicaHeartbeat:
             await asyncio.sleep(self._orphan_scan_interval)
             try:
                 if self._runner:
-                    await recover_orphaned_runs(self._store, self._runner, self.replica_id)
+                    await recover_orphaned_runs(
+                        self._store,
+                        self._runner,
+                        self.replica_id,
+                        team_runner=getattr(self, "_team_runner", None),
+                    )
             except Exception:
                 logger.warning("Orphan scan failed", exc_info=True)
 
@@ -202,13 +208,17 @@ class ReplicaHeartbeat:
 
 async def recover_orphaned_runs(
     store: CheckpointStore,
-    runner: Any,
+    agent_runner: Any,
     replica_id: str,
+    team_runner: Any | None = None,
 ) -> int:
     """Scan for orphaned checkpoints and resume them.
 
     A checkpoint is orphaned if its ``replica_id`` field refers to a
     replica whose heartbeat has expired.
+
+    Dispatches to the agent runner or team runner based on the checkpoint's
+    ``type`` field (``"team"`` for teams, anything else for agents).
 
     Returns the number of runs recovered.
     """
@@ -230,10 +240,18 @@ async def recover_orphaned_runs(
             # Owning replica is still alive — skip
             continue
 
-        logger.info("Found orphaned checkpoint: %s (replica=%s)", key, cp_replica or "unknown")
+        logger.info(
+            "Found orphaned checkpoint: %s (replica=%s, type=%s)",
+            key,
+            cp_replica or "unknown",
+            data.get("type", "agent"),
+        )
 
         try:
-            await runner.resume(key)
+            if data.get("type") == "team" and team_runner is not None:
+                await team_runner.resume(key)
+            else:
+                await agent_runner.resume(key)
             recovered += 1
         except Exception:
             logger.exception("Failed to recover orphaned run: %s", key)
