@@ -359,6 +359,26 @@ async def get_session_status(name: str, session_id: str) -> dict:
     return {"status": await _bg.get_status_async(session_id)}
 
 
+@router.delete("/{name}/sessions/{session_id}/run")
+async def cancel_session_run(name: str, session_id: str) -> dict:
+    """Cancel an active agent run for this session."""
+    store = _get_store()
+    spec = await store.get(name)
+    if spec is None:
+        raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
+    require_access(_principal(), spec.owner_id, spec.shared_with)
+
+    # Verify run ownership via event store
+    owner = await _bg.get_owner_async(session_id)
+    if owner and owner != _principal().id and not _principal().is_admin:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    cancelled = await _bg.cancel(session_id)
+    if not cancelled:
+        raise HTTPException(status_code=404, detail="No active run found for this session")
+    return {"status": "cancelled"}
+
+
 @router.get("/{name}/sessions/{session_id}", response_model=SessionHistoryResponse)
 async def get_session_history(name: str, session_id: str) -> SessionHistoryResponse:
     """Retrieve conversation history for a specific agent session."""

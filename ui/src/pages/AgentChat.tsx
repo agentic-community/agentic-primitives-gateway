@@ -273,6 +273,17 @@ export default function AgentChat() {
     }
   }, [name, sessionId, userId]);
 
+  const handleClearOldSessions = useCallback(async () => {
+    if (!name) return;
+    const all = getSessions(userId, name).filter((s) => s !== sessionId);
+    for (const sid of all) {
+      removeSession(userId, name, sid);
+      try { await api.deleteSession(name, sid); } catch { /* ignore */ }
+    }
+    // Force re-render by navigating to current session
+    window.location.href = `/ui/agents/${name}/chat?session_id=${sessionId}`;
+  }, [name, sessionId, userId]);
+
   function handleStreamEvent(event: StreamEvent, turnIndex: number) {
     switch (event.type) {
       case "token":
@@ -422,6 +433,13 @@ export default function AgentChat() {
                     </button>
                   </span>
                 ))}
+                <span>|</span>
+                <button
+                  className="text-red-400 hover:text-red-600"
+                  onClick={handleClearOldSessions}
+                >
+                  clear old
+                </button>
               </>
             )}
           </div>
@@ -497,7 +515,24 @@ export default function AgentChat() {
 
       {/* Input */}
       <div className="border-t border-gray-200 dark:border-gray-800 pt-3">
-        <ChatInput onSend={handleSend} disabled={sending || polling} />
+        <div className="flex items-center gap-2">
+          <div className="flex-1">
+            <ChatInput onSend={handleSend} disabled={sending || polling} />
+          </div>
+          {(sending || polling) && (
+            <button
+              onClick={async () => {
+                abortRef.current?.abort();
+                try { await api.cancelSessionRun(name!, sessionId); } catch { /* ignore */ }
+                setSending(false);
+                setPolling(false);
+              }}
+              className="shrink-0 rounded border border-red-300 dark:border-red-700 px-3 py-1.5 text-xs font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30"
+            >
+              Cancel
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );

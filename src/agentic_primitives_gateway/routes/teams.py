@@ -199,9 +199,23 @@ async def list_team_runs(name: str) -> dict:
     return {"team_name": name, "runs": runs}
 
 
+async def _require_run_owner(team_run_id: str) -> None:
+    """Raise 403 if the current principal does not own the run."""
+    owner = await _bg.get_owner_async(team_run_id)
+    if owner and owner != _principal().id and not _principal().is_admin:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+
 @router.delete("/{name}/runs/{team_run_id}")
 async def delete_team_run(name: str, team_run_id: str) -> dict:
     """Delete a team run's data (tasks, events)."""
+    store = _get_store()
+    spec = await store.get(name)
+    if spec is None:
+        raise HTTPException(status_code=404, detail=f"Team '{name}' not found")
+    require_access(_principal(), spec.owner_id, spec.shared_with)
+    await _require_run_owner(team_run_id)
+
     # Clean up task board
     try:
         all_tasks = await registry.tasks.list_tasks(team_run_id)
@@ -224,13 +238,43 @@ async def delete_team_run(name: str, team_run_id: str) -> dict:
 @router.get("/{name}/runs/{team_run_id}/status")
 async def get_team_run_status(name: str, team_run_id: str) -> dict:
     """Check if a team run is currently active."""
+    store = _get_store()
+    spec = await store.get(name)
+    if spec is None:
+        raise HTTPException(status_code=404, detail=f"Team '{name}' not found")
+    require_access(_principal(), spec.owner_id, spec.shared_with)
+    await _require_run_owner(team_run_id)
+
     _bg.cleanup()
     return {"status": await _bg.get_status_async(team_run_id)}
+
+
+@router.delete("/{name}/runs/{team_run_id}/cancel")
+async def cancel_team_run(name: str, team_run_id: str) -> dict:
+    """Cancel an active team run."""
+    store = _get_store()
+    spec = await store.get(name)
+    if spec is None:
+        raise HTTPException(status_code=404, detail=f"Team '{name}' not found")
+    require_access(_principal(), spec.owner_id, spec.shared_with)
+    await _require_run_owner(team_run_id)
+
+    cancelled = await _bg.cancel(team_run_id)
+    if not cancelled:
+        raise HTTPException(status_code=404, detail="No active run found")
+    return {"status": "cancelled"}
 
 
 @router.get("/{name}/runs/{team_run_id}/events")
 async def get_team_run_events(name: str, team_run_id: str) -> dict:
     """Return all recorded SSE events for a team run (for UI replay)."""
+    store = _get_store()
+    spec = await store.get(name)
+    if spec is None:
+        raise HTTPException(status_code=404, detail=f"Team '{name}' not found")
+    require_access(_principal(), spec.owner_id, spec.shared_with)
+    await _require_run_owner(team_run_id)
+
     _bg.cleanup()
     status = await _bg.get_status_async(team_run_id)
     events = await _bg.get_events_async(team_run_id)
@@ -246,6 +290,13 @@ async def get_team_run_events(name: str, team_run_id: str) -> dict:
 @router.get("/{name}/runs/{team_run_id}")
 async def get_team_run(name: str, team_run_id: str) -> dict:
     """Retrieve task board state for a completed or in-progress team run."""
+    store = _get_store()
+    spec = await store.get(name)
+    if spec is None:
+        raise HTTPException(status_code=404, detail=f"Team '{name}' not found")
+    require_access(_principal(), spec.owner_id, spec.shared_with)
+    await _require_run_owner(team_run_id)
+
     try:
         all_tasks = await registry.tasks.list_tasks(team_run_id)
     except (NotImplementedError, Exception):

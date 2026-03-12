@@ -1448,6 +1448,12 @@ class AgenticPlatformClient:
         resp = await self._delete(f"/api/v1/agents/{name}/sessions/{session_id}")
         self._raise_for_status(resp)
 
+    async def cancel_session_run(self, name: str, session_id: str) -> dict[str, Any]:
+        """Cancel an active agent run for a session."""
+        resp = await self._delete(f"/api/v1/agents/{name}/sessions/{session_id}/run")
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
     # ── Teams ─────────────────────────────────────────────────────────
 
     async def create_team(self, spec: dict[str, Any]) -> dict[str, Any]:
@@ -1512,6 +1518,12 @@ class AgenticPlatformClient:
     async def get_team_run_events(self, name: str, run_id: str) -> dict[str, Any]:
         """Get all recorded SSE events for a team run (for replay)."""
         resp = await self._get(f"/api/v1/teams/{name}/runs/{run_id}/events")
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def cancel_team_run(self, name: str, run_id: str) -> dict[str, Any]:
+        """Cancel an active team run."""
+        resp = await self._delete(f"/api/v1/teams/{name}/runs/{run_id}/cancel")
         self._raise_for_status(resp)
         return self._json_dict(resp)
 

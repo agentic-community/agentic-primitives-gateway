@@ -321,6 +321,20 @@ export default function TeamRun() {
     }
   }, [name, teamRunId]);
 
+  const handleClearOldRuns = useCallback(async () => {
+    if (!name) return;
+    const all = getRuns(userId, name).filter((r) => r !== teamRunId);
+    for (const rid of all) {
+      removeRun(userId, name, rid);
+      try { await api.deleteTeamRun(name, rid); } catch { /* ignore */ }
+    }
+    if (teamRunId) {
+      window.location.href = `/ui/teams/${name}/run?run_id=${teamRunId}`;
+    } else {
+      window.location.href = `/ui/teams/${name}/run`;
+    }
+  }, [name, teamRunId, userId]);
+
   const handleSend = useCallback(
     async (message: string) => {
       if (!name) return;
@@ -511,6 +525,13 @@ export default function TeamRun() {
                     </button>
                   </span>
                 ))}
+                <span>|</span>
+                <button
+                  className="text-red-400 hover:text-red-600"
+                  onClick={handleClearOldRuns}
+                >
+                  clear old
+                </button>
               </>
             )}
           </div>
@@ -618,7 +639,24 @@ export default function TeamRun() {
 
       {/* Input */}
       <div className="border-t border-gray-200 dark:border-gray-800 pt-3">
-        <ChatInput onSend={handleSend} disabled={running || polling} />
+        <div className="flex items-center gap-2">
+          <div className="flex-1">
+            <ChatInput onSend={handleSend} disabled={running || polling} />
+          </div>
+          {(running || polling) && teamRunId && (
+            <button
+              onClick={async () => {
+                abortRef.current?.abort();
+                try { await api.cancelTeamRun(name!, teamRunId); } catch { /* ignore */ }
+                setRunning(false);
+                setPolling(false);
+              }}
+              className="shrink-0 rounded border border-red-300 dark:border-red-700 px-3 py-1.5 text-xs font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30"
+            >
+              Cancel
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Expanded response modal */}

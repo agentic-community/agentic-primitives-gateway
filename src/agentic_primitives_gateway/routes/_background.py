@@ -267,6 +267,17 @@ class BackgroundRunManager:
         self._runs[key] = (task, queue, event_log, time.monotonic())
         return queue, event_log
 
+    async def cancel(self, key: str) -> bool:
+        """Cancel a running background task. Returns True if cancelled."""
+        entry = self._runs.get(key)
+        if entry is None or entry[0].done():
+            return False
+        task = entry[0]
+        task.cancel()
+        if self._event_store:
+            await self._event_store.set_status(key, "cancelled")
+        return True
+
     def rekey(self, old_key: str, new_key: str) -> None:
         """Re-key a run entry (e.g. when team_run_id becomes known)."""
         entry = self._runs.pop(old_key, None)

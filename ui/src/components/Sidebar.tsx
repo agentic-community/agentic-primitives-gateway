@@ -1,4 +1,4 @@
-import { NavLink } from "react-router-dom";
+import { NavLink, useLocation } from "react-router-dom";
 import { useAuth } from "../auth/AuthProvider";
 import { cn } from "../lib/cn";
 import ThemeToggle from "./ThemeToggle";
@@ -15,6 +15,9 @@ const links = [
 export default function Sidebar() {
   const { user, logout, backend } = useAuth();
   const username = user?.profile?.preferred_username || user?.profile?.name || user?.profile?.sub || "";
+  const location = useLocation();
+  const activeAgent = decodeURIComponent(location.pathname.match(/\/agents\/([^/]+)\/chat/)?.[1] ?? "");
+  const activeTeam = decodeURIComponent(location.pathname.match(/\/teams\/([^/]+)\/run/)?.[1] ?? "");
 
   return (
     <aside className="flex w-56 flex-col border-r border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900">
@@ -54,7 +57,21 @@ export default function Sidebar() {
                 )
               }
             >
-              {link.label}
+              <span className="flex items-center justify-between w-full">
+                <span>{link.label}</span>
+                {link.label === "Agents" && activeAgent && (
+                  <span className="flex items-center gap-1 text-[10px] font-mono text-indigo-500 dark:text-indigo-400 truncate max-w-[5rem]">
+                    <span className="inline-block w-1.5 h-1.5 rounded-full bg-indigo-500 animate-pulse shrink-0" />
+                    {activeAgent}
+                  </span>
+                )}
+                {link.label === "Teams" && activeTeam && (
+                  <span className="flex items-center gap-1 text-[10px] font-mono text-indigo-500 dark:text-indigo-400 truncate max-w-[5rem]">
+                    <span className="inline-block w-1.5 h-1.5 rounded-full bg-indigo-500 animate-pulse shrink-0" />
+                    {activeTeam}
+                  </span>
+                )}
+              </span>
             </NavLink>
           ),
         )}
