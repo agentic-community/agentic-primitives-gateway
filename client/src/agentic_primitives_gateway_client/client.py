@@ -8,6 +8,20 @@ Usage::
         record = await client.store_memory("agent:my-agent", "key1", "some content")
         results = await client.search_memory("agent:my-agent", "some query")
 
+With authentication::
+
+    # Bearer token (JWT from OIDC provider)
+    client = AgenticPlatformClient(
+        "http://localhost:8000",
+        auth_token="eyJhbGciOiJSUzI1NiIs...",
+    )
+
+    # API key
+    client = AgenticPlatformClient(
+        "http://localhost:8000",
+        api_key="sk-dev-12345",
+    )
+
 With AWS credential pass-through for AgentCore backends::
 
     # Explicit credentials
@@ -71,6 +85,8 @@ class AgenticPlatformClient:
         self,
         base_url: str = "http://localhost:8000",
         timeout: float = 30.0,
+        auth_token: str | None = None,
+        api_key: str | None = None,
         aws_access_key_id: str | None = None,
         aws_secret_access_key: str | None = None,
         aws_session_token: str | None = None,
@@ -88,6 +104,7 @@ class AgenticPlatformClient:
         self._retry_backoff = retry_backoff
         self._retry_status_codes = retry_status_codes if retry_status_codes is not None else {502, 503, 504}
 
+        self._auth_headers: dict[str, str] = {}
         self._aws_headers: dict[str, str] = {}
         self._aws_from_environment = aws_from_environment
         self._aws_profile = aws_profile
@@ -96,6 +113,10 @@ class AgenticPlatformClient:
         self._service_cred_headers: dict[str, str] = {}
         self._agent_id_header: dict[str, str] = {}
 
+        if auth_token:
+            self.set_auth_token(auth_token)
+        elif api_key:
+            self.set_api_key(api_key)
         if agent_id:
             self.set_agent_id(agent_id)
         if provider:
@@ -150,6 +171,25 @@ class AgenticPlatformClient:
     def clear_aws_credentials(self) -> None:
         """Remove AWS credentials from future requests."""
         self._aws_headers = {}
+
+    def set_auth_token(self, token: str) -> None:
+        """Set a Bearer token (e.g. JWT) for authentication.
+
+        Sent as ``Authorization: Bearer <token>`` on every request.
+        The server validates the token and extracts the user principal.
+        """
+        self._auth_headers = {"authorization": f"Bearer {token}"}
+
+    def set_api_key(self, key: str) -> None:
+        """Set a static API key for authentication.
+
+        Sent as ``X-Api-Key: <key>`` on every request.
+        """
+        self._auth_headers = {"x-api-key": key}
+
+    def clear_auth(self) -> None:
+        """Remove authentication headers from future requests."""
+        self._auth_headers = {}
 
     def set_provider(self, name: str) -> None:
         """Set the default provider for all primitives.
@@ -254,6 +294,7 @@ class AgenticPlatformClient:
     def _headers(self) -> dict[str, str]:
         try:
             headers: dict[str, str] = {}
+            headers.update(self._auth_headers)
             if self._aws_from_environment:
                 headers.update(self._resolve_aws_headers())
             else:

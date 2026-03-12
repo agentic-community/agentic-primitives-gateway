@@ -724,6 +724,7 @@ class TestClientErrorHandling:
 class TestAWSCredentials:
     def test_explicit_credentials_set_headers(self) -> None:
         client = AgenticPlatformClient.__new__(AgenticPlatformClient)
+        client._auth_headers = {}
         client._aws_headers = {}
         client._aws_from_environment = False
         client._provider_headers = {}
@@ -743,6 +744,7 @@ class TestAWSCredentials:
 
     def test_clear_credentials(self) -> None:
         client = AgenticPlatformClient.__new__(AgenticPlatformClient)
+        client._auth_headers = {}
         client._aws_headers = {"x-aws-access-key-id": "AKIA"}
         client._aws_from_environment = False
         client._provider_headers = {}
@@ -753,6 +755,7 @@ class TestAWSCredentials:
 
     def test_no_credentials_returns_empty_headers(self) -> None:
         client = AgenticPlatformClient.__new__(AgenticPlatformClient)
+        client._auth_headers = {}
         client._aws_headers = {}
         client._aws_from_environment = False
         client._provider_headers = {}
@@ -777,6 +780,7 @@ class TestAWSCredentials:
         mock_session.region_name = "ap-southeast-1"
 
         client = AgenticPlatformClient.__new__(AgenticPlatformClient)
+        client._auth_headers = {}
         client._aws_headers = {}
         client._aws_from_environment = True
         client._aws_profile = None
@@ -810,6 +814,7 @@ class TestAWSCredentials:
         mock_session.region_name = "us-east-1"
 
         client = AgenticPlatformClient.__new__(AgenticPlatformClient)
+        client._auth_headers = {}
         client._aws_headers = {}
         client._aws_from_environment = True
         client._aws_profile = None
@@ -1079,6 +1084,7 @@ class TestClientEvaluations:
 class TestAgentId:
     def _make_client(self) -> AgenticPlatformClient:
         client = AgenticPlatformClient.__new__(AgenticPlatformClient)
+        client._auth_headers = {}
         client._aws_headers = {}
         client._aws_from_environment = False
         client._provider_headers = {}
@@ -1114,3 +1120,73 @@ class TestAgentId:
         headers = client._headers
         assert headers["x-agent-id"] == "my-agent"
         assert headers["x-aws-access-key-id"] == "AKIA_TEST"
+
+
+class TestAuth:
+    def _make_client(self) -> AgenticPlatformClient:
+        client = AgenticPlatformClient.__new__(AgenticPlatformClient)
+        client._auth_headers = {}
+        client._aws_headers = {}
+        client._aws_from_environment = False
+        client._provider_headers = {}
+        client._service_cred_headers = {}
+        client._agent_id_header = {}
+        return client
+
+    def test_set_auth_token(self) -> None:
+        client = self._make_client()
+        client.set_auth_token("eyJhbGciOiJSUzI1NiIs...")
+        assert client._headers["authorization"] == "Bearer eyJhbGciOiJSUzI1NiIs..."
+
+    def test_set_api_key(self) -> None:
+        client = self._make_client()
+        client.set_api_key("sk-dev-12345")
+        assert client._headers["x-api-key"] == "sk-dev-12345"
+
+    def test_clear_auth(self) -> None:
+        client = self._make_client()
+        client.set_auth_token("token")
+        client.clear_auth()
+        assert "authorization" not in client._headers
+        assert "x-api-key" not in client._headers
+
+    def test_api_key_replaces_token(self) -> None:
+        client = self._make_client()
+        client.set_auth_token("token")
+        client.set_api_key("sk-key")
+        assert "authorization" not in client._headers
+        assert client._headers["x-api-key"] == "sk-key"
+
+    def test_token_replaces_api_key(self) -> None:
+        client = self._make_client()
+        client.set_api_key("sk-key")
+        client.set_auth_token("token")
+        assert client._headers["authorization"] == "Bearer token"
+        assert "x-api-key" not in client._headers
+
+    def test_auth_coexists_with_aws_headers(self) -> None:
+        client = self._make_client()
+        client.set_auth_token("jwt-token")
+        client.set_aws_credentials(access_key_id="AKIA", secret_access_key="SECRET")
+        headers = client._headers
+        assert headers["authorization"] == "Bearer jwt-token"
+        assert headers["x-aws-access-key-id"] == "AKIA"
+
+    def test_auth_token_in_constructor(self) -> None:
+        client = AgenticPlatformClient(
+            "http://localhost:8000",
+            auth_token="my-jwt",
+        )
+        assert client._headers["authorization"] == "Bearer my-jwt"
+
+    def test_api_key_in_constructor(self) -> None:
+        client = AgenticPlatformClient(
+            "http://localhost:8000",
+            api_key="sk-test",
+        )
+        assert client._headers["x-api-key"] == "sk-test"
+
+    def test_no_auth_empty_headers(self) -> None:
+        client = self._make_client()
+        assert "authorization" not in client._headers
+        assert "x-api-key" not in client._headers
