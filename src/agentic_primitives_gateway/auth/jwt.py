@@ -45,12 +45,14 @@ class JwtAuthBackend(AuthBackend):
         self,
         issuer: str,
         audience: str | None = None,
+        client_id: str | None = None,
         jwks_url: str | None = None,
         algorithms: list[str] | None = None,
         claims_mapping: dict[str, str] | None = None,
         jwks_cache_seconds: int = _DEFAULT_JWKS_CACHE_SECONDS,
     ) -> None:
         self._issuer = issuer.rstrip("/")
+        self._client_id = client_id
         self._audience = audience
         self._algorithms = algorithms or ["RS256"]
         self._claims_mapping = claims_mapping or {}

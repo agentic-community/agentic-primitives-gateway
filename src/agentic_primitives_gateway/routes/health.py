@@ -4,6 +4,7 @@ import logging
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
+from agentic_primitives_gateway.config import settings
 from agentic_primitives_gateway.metrics import PROVIDER_HEALTH
 from agentic_primitives_gateway.models.enums import HealthStatus
 from agentic_primitives_gateway.registry import PRIMITIVES, registry
@@ -19,6 +20,27 @@ _HEALTHCHECK_TIMEOUT = 2.0
 @router.get("/healthz")
 async def liveness() -> dict[str, str]:
     return {"status": HealthStatus.OK}
+
+
+@router.get("/auth/config")
+async def auth_config() -> dict:
+    """Return auth configuration for the UI to initiate OIDC login.
+
+    Exposes only the public-facing fields needed by the frontend:
+    backend type, issuer, client_id, and scopes. Never exposes secrets.
+    """
+    auth = settings.auth
+    if auth.backend == "jwt":
+        jwt_cfg = auth.jwt
+        # client_id for the UI OIDC flow. Falls back to audience if not set.
+        client_id = jwt_cfg.get("client_id") or jwt_cfg.get("audience") or ""
+        return {
+            "backend": "jwt",
+            "issuer": jwt_cfg.get("issuer", ""),
+            "client_id": client_id,
+            "scopes": "openid profile email",
+        }
+    return {"backend": auth.backend}
 
 
 async def _check_provider(primitive: str, provider_name: str) -> tuple[str, str, str, bool]:

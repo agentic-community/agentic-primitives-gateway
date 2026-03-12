@@ -1,4 +1,5 @@
 import { NavLink } from "react-router-dom";
+import { useAuth } from "../auth/AuthProvider";
 import { cn } from "../lib/cn";
 import ThemeToggle from "./ThemeToggle";
 
@@ -12,6 +13,9 @@ const links = [
 ];
 
 export default function Sidebar() {
+  const { user, logout, backend } = useAuth();
+  const username = user?.profile?.preferred_username || user?.profile?.name || user?.profile?.sub || "";
+
   return (
     <aside className="flex w-56 flex-col border-r border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900">
       <div className="px-4 py-4 border-b border-gray-200 dark:border-gray-800">
@@ -56,7 +60,20 @@ export default function Sidebar() {
         )}
       </nav>
 
-      <div className="px-4 py-3 border-t border-gray-200 dark:border-gray-800">
+      <div className="px-4 py-3 border-t border-gray-200 dark:border-gray-800 space-y-2">
+        {backend === "jwt" && username && (
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-gray-500 dark:text-gray-400 truncate" title={username}>
+              {username}
+            </span>
+            <button
+              onClick={logout}
+              className="text-[10px] text-gray-400 hover:text-red-500 dark:hover:text-red-400"
+            >
+              Logout
+            </button>
+          </div>
+        )}
         <ThemeToggle />
       </div>
     </aside>

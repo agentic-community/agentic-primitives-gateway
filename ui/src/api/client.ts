@@ -34,11 +34,26 @@ class ApiError extends Error {
   }
 }
 
+// ── Auth token injection ──────────────────────────────────────────
+// The AuthProvider sets this so all API calls include the Bearer token.
+let _authToken = "";
+export function setApiAuthToken(token: string) {
+  _authToken = token;
+}
+
+function authHeaders(): Record<string, string> {
+  if (_authToken) {
+    return { Authorization: `Bearer ${_authToken}` };
+  }
+  return {};
+}
+
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, {
     ...init,
     headers: {
       "Content-Type": "application/json",
+      ...authHeaders(),
       ...init?.headers,
     },
   });
@@ -55,7 +70,7 @@ function sseStream(url: string, body: string, signal?: AbortSignal): ReadableStr
     async start(controller) {
       const res = await fetch(url, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...authHeaders() },
         body,
         signal,
       });

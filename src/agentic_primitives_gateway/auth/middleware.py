@@ -24,6 +24,7 @@ AUTH_EXEMPT_PREFIXES = (
     "/redoc",
     "/openapi.json",
     "/api/v1/openapi",
+    "/auth/config",
     "/ui",
 )
 
