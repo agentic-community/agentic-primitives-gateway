@@ -92,7 +92,7 @@ class TestAgentMemoryEndpoint:
         assert resp.status_code == 200
         data = resp.json()
         assert data["memory_enabled"] is True
-        assert data["namespace"] == "agent:test-agent"
+        assert data["namespace"].startswith("agent:test-agent:u:")
 
     def test_404_for_unknown_agent(self) -> None:
         client = TestClient(app)
