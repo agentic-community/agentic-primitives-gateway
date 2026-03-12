@@ -9,11 +9,25 @@ from collections.abc import AsyncIterator
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from agentic_primitives_gateway.agents.runner import AgentRunner, _RunContext
 from agentic_primitives_gateway.agents.tools import MAX_AGENT_DEPTH
+from agentic_primitives_gateway.auth.models import AuthenticatedPrincipal
+from agentic_primitives_gateway.context import set_authenticated_principal
 from agentic_primitives_gateway.models.agents import AgentSpec, HooksConfig, PrimitiveConfig
 
 _RUNNER_MOD = "agentic_primitives_gateway.agents.runner"
+
+_TEST_PRINCIPAL = AuthenticatedPrincipal(id="test-user", type="user")
+
+
+@pytest.fixture(autouse=True)
+def _set_test_principal():
+    """Ensure all runner tests have an authenticated principal."""
+    set_authenticated_principal(_TEST_PRINCIPAL)
+    yield
+    set_authenticated_principal(None)  # type: ignore[arg-type]
 
 
 def _make_spec(

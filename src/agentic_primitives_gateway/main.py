@@ -106,6 +106,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if agent_session_reg:
         agent_runner.set_session_registry(agent_session_reg)
 
+    # Wire checkpoint store for durable runs (Redis backends only)
+    checkpoint_store = agent_store.create_checkpoint_store()
+    if checkpoint_store:
+        agent_runner.set_checkpoint_store(checkpoint_store)
+
     from agentic_primitives_gateway.routes.teams import get_team_runner, set_team_store
 
     team_store_cls = _load_class(TEAM_STORE_ALIASES.get(settings.teams.store.backend, settings.teams.store.backend))

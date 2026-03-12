@@ -50,6 +50,11 @@ class RedisAgentStore(AgentStore):
 
         return RedisSessionRegistry(redis_url=self._redis_url)
 
+    def create_checkpoint_store(self) -> Any:
+        from agentic_primitives_gateway.agents.checkpoint import RedisCheckpointStore
+
+        return RedisCheckpointStore(redis_url=self._redis_url)
+
     def seed(self, specs: dict[str, dict[str, Any]]) -> None:
         """Seed agents from config. Runs synchronously at startup via asyncio.
 

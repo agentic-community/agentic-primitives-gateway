@@ -636,9 +636,10 @@ class TeamRunner:
                 logger.info("Started %s session: %s", prim_name, session_ctx[prim_name])
                 if self._session_registry:
                     principal = get_authenticated_principal()
-                    user_id = principal.id if principal else "anonymous"
+                    if principal is None:
+                        raise RuntimeError("Cannot register session without an authenticated principal")
                     await self._session_registry.register(
-                        prim_name, session_ctx[prim_name], metadata={"user_id": user_id}
+                        prim_name, session_ctx[prim_name], metadata={"user_id": principal.id}
                     )
             except Exception:
                 logger.warning("Failed to start %s session", prim_name, exc_info=True)

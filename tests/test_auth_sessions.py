@@ -23,9 +23,9 @@ class TestResolveActorId:
         result = resolve_actor_id("my-agent", ANONYMOUS_PRINCIPAL)
         assert result == "my-agent:u:anonymous"
 
-    def test_none_principal_scoped_as_anonymous(self):
-        result = resolve_actor_id("my-agent", None)
-        assert result == "my-agent:u:anonymous"
+    def test_none_principal_raises(self):
+        with pytest.raises(AttributeError):
+            resolve_actor_id("my-agent", None)  # type: ignore[arg-type]
 
     def test_authenticated_user_scoped(self):
         p = AuthenticatedPrincipal(id="alice", type="user")

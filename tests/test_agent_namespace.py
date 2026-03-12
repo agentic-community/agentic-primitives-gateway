@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from agentic_primitives_gateway.agents.namespace import (
     resolve_knowledge_namespace,
     resolve_knowledge_namespace_for_name,
@@ -23,9 +25,10 @@ class TestResolveKnowledgeNamespace:
         spec = self._make_spec()
         assert resolve_knowledge_namespace(spec, _ALICE) == "agent:test-agent:u:alice"
 
-    def test_default_namespace_no_principal(self) -> None:
+    def test_requires_principal(self) -> None:
         spec = self._make_spec()
-        assert resolve_knowledge_namespace(spec) == "agent:test-agent:u:anonymous"
+        with pytest.raises(TypeError):
+            resolve_knowledge_namespace(spec)  # type: ignore[call-arg]
 
     def test_explicit_namespace_without_session(self) -> None:
         spec = self._make_spec("myapp:{agent_name}")
@@ -67,8 +70,9 @@ class TestResolveKnowledgeNamespaceForName:
     def test_no_session_id_in_template(self) -> None:
         assert resolve_knowledge_namespace_for_name("bot", "custom:{agent_name}", _ALICE) == "custom:bot:u:alice"
 
-    def test_no_principal(self) -> None:
-        assert resolve_knowledge_namespace_for_name("bot", None) == "agent:bot:u:anonymous"
+    def test_requires_principal(self) -> None:
+        with pytest.raises(TypeError):
+            resolve_knowledge_namespace_for_name("bot", None)  # type: ignore[call-arg]
 
 
 class TestNamespaceIsolation:

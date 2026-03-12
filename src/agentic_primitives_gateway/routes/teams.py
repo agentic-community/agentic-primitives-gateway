@@ -7,7 +7,7 @@ from starlette.responses import StreamingResponse
 from agentic_primitives_gateway.agents.team_runner import TeamRunner
 from agentic_primitives_gateway.agents.team_store import TeamStore
 from agentic_primitives_gateway.auth.access import require_access, require_owner_or_admin
-from agentic_primitives_gateway.auth.models import ANONYMOUS_PRINCIPAL, AuthenticatedPrincipal
+from agentic_primitives_gateway.auth.models import AuthenticatedPrincipal
 from agentic_primitives_gateway.context import get_authenticated_principal
 from agentic_primitives_gateway.models.teams import (
     CreateTeamRequest,
@@ -53,8 +53,11 @@ def _get_store() -> TeamStore:
 
 
 def _principal() -> AuthenticatedPrincipal:
-    """Return the authenticated principal, falling back to anonymous."""
-    return get_authenticated_principal() or ANONYMOUS_PRINCIPAL
+    """Return the authenticated principal. Raises if not set."""
+    principal = get_authenticated_principal()
+    if principal is None:
+        raise RuntimeError("No authenticated principal — auth middleware did not run")
+    return principal
 
 
 @router.post("", response_model=TeamSpec, status_code=201)

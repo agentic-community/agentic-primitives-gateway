@@ -105,16 +105,22 @@ def _get_action_rules(app: object) -> list[tuple[str, re.Pattern[str], str]]:
 def _resolve_principal(request: Request) -> str:
     """Derive the Cedar principal from the authenticated principal in context.
 
-    If authentication middleware has set a principal, use it directly.
-    Otherwise fall back to header-based derivation for backwards
-    compatibility (e.g. when auth is noop).
+    For authenticated requests (non-exempt paths), the auth middleware always
+    sets a non-anonymous principal. This function reads it from context.
+
+    For exempt paths (health, docs, UI), the principal may be anonymous.
+    In that case we fall back to header-based derivation for Cedar evaluation.
+    The final ``Agent::"anonymous"`` is only reachable on exempt paths where
+    no identifying headers are present — these paths are skipped by enforcement
+    anyway (checked in ``_EXEMPT_PREFIXES``).
     """
     principal = get_authenticated_principal()
     if principal is not None and not principal.is_anonymous:
         type_label = principal.type.capitalize()
         return f'{type_label}::"{principal.id}"'
 
-    # Fall back to header-based derivation (noop auth / anonymous)
+    # Header-based fallback (exempt paths only — non-exempt paths always
+    # have a real principal from auth middleware, or got 401 already)
     agent_id = request.headers.get("x-agent-id")
     if agent_id:
         return f'Agent::"{agent_id}"'

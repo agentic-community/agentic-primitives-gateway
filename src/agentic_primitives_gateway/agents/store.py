@@ -57,6 +57,14 @@ class AgentStore(ABC):
         """
         return None
 
+    def create_checkpoint_store(self) -> Any:
+        """Create a CheckpointStore for durable run execution.
+
+        Override in backends that support cross-replica state persistence.
+        Returns None if checkpointing is not supported (runs are ephemeral).
+        """
+        return None
+
 
 class FileAgentStore(AgentStore):
     """JSON-file-backed agent store.

@@ -9,7 +9,7 @@ from agentic_primitives_gateway.agents.runner import AgentRunner
 from agentic_primitives_gateway.agents.store import AgentStore
 from agentic_primitives_gateway.agents.tools import _TOOL_CATALOG, build_tool_list
 from agentic_primitives_gateway.auth.access import require_access, require_owner_or_admin
-from agentic_primitives_gateway.auth.models import ANONYMOUS_PRINCIPAL, AuthenticatedPrincipal
+from agentic_primitives_gateway.auth.models import AuthenticatedPrincipal
 from agentic_primitives_gateway.context import (
     get_authenticated_principal,
     get_provider_override,
@@ -61,8 +61,11 @@ def _get_store() -> AgentStore:
 
 
 def _principal() -> AuthenticatedPrincipal:
-    """Return the authenticated principal, falling back to anonymous."""
-    return get_authenticated_principal() or ANONYMOUS_PRINCIPAL
+    """Return the authenticated principal. Raises if not set."""
+    principal = get_authenticated_principal()
+    if principal is None:
+        raise RuntimeError("No authenticated principal — auth middleware did not run")
+    return principal
 
 
 @router.post("", response_model=AgentSpec, status_code=201)

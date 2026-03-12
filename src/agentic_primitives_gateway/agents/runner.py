@@ -8,6 +8,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any
 
+from agentic_primitives_gateway.agents.checkpoint import CheckpointStore
 from agentic_primitives_gateway.agents.namespace import resolve_actor_id, resolve_knowledge_namespace
 from agentic_primitives_gateway.agents.store import AgentStore
 from agentic_primitives_gateway.agents.tools import (
@@ -64,6 +65,7 @@ class AgentRunner:
     def __init__(self) -> None:
         self._store: AgentStore | None = None
         self._session_registry: Any | None = None
+        self._checkpoint_store: CheckpointStore | None = None
 
     def set_store(self, store: AgentStore) -> None:
         """Set the agent store reference (called during app lifespan)."""
@@ -71,6 +73,9 @@ class AgentRunner:
 
     def set_session_registry(self, registry: Any) -> None:
         self._session_registry = registry
+
+    def set_checkpoint_store(self, store: CheckpointStore) -> None:
+        self._checkpoint_store = store
 
     # ── Public entry points ──────────────────────────────────────────
 
@@ -94,6 +99,7 @@ class AgentRunner:
 
         while ctx.turns_used < spec.max_turns:
             ctx.turns_used += 1
+            await self._checkpoint(ctx, message)
             request_dict = self._build_request(ctx)
 
             logger.info(
@@ -164,6 +170,7 @@ class AgentRunner:
 
         while ctx.turns_used < spec.max_turns:
             ctx.turns_used += 1
+            await self._checkpoint(ctx, message)
             request_dict = self._build_request(ctx)
 
             # Stream LLM response
@@ -222,6 +229,8 @@ class AgentRunner:
         """Set up everything needed before the tool-call loop."""
         prev_overrides = self._apply_overrides(spec)
         principal = get_authenticated_principal()
+        if principal is None:
+            raise RuntimeError("Cannot run agent without an authenticated principal")
         knowledge_ns = resolve_knowledge_namespace(spec, principal)
         actor_id = resolve_actor_id(spec.name, principal)
 
@@ -506,7 +515,7 @@ class AgentRunner:
     # ── Shared finalization ──────────────────────────────────────────
 
     async def _finalize(self, ctx: _RunContext, user_message: str) -> None:
-        """Cleanup sessions, restore overrides, store turn, trace."""
+        """Cleanup sessions, restore overrides, store turn, trace, delete checkpoint."""
         await self._cleanup_sessions(ctx.session_ctx)
         self._restore_overrides(ctx.prev_overrides)
 
@@ -523,6 +532,8 @@ class AgentRunner:
                 ctx.tools_called,
             )
 
+        await self._delete_checkpoint(ctx)
+
     @staticmethod
     def _serialize_artifacts(artifacts: list[ToolArtifact]) -> list[dict[str, Any]]:
         """Convert ToolArtifacts to dicts for the SSE done event."""
@@ -538,6 +549,172 @@ class AgentRunner:
                 }
             )
         return result
+
+    # ── Checkpointing ────────────────────────────────────────────────
+
+    @staticmethod
+    def _checkpoint_key(ctx: _RunContext) -> str:
+        principal = get_authenticated_principal()
+        if principal is None:
+            raise RuntimeError("Cannot checkpoint without an authenticated principal")
+        return f"{principal.id}:{ctx.session_id}"
+
+    async def _checkpoint(self, ctx: _RunContext, original_message: str) -> None:
+        """Persist run state to Redis for crash recovery."""
+        if not self._checkpoint_store:
+            return
+        principal = get_authenticated_principal()
+        if principal is None:
+            raise RuntimeError("Cannot checkpoint without an authenticated principal")
+        data = {
+            "spec_name": ctx.spec.name,
+            "session_id": ctx.session_id,
+            "actor_id": ctx.actor_id,
+            "knowledge_ns": ctx.knowledge_ns,
+            "trace_id": ctx.trace_id,
+            "depth": ctx.depth,
+            "prev_overrides": ctx.prev_overrides,
+            "session_ctx": ctx.session_ctx,
+            "messages": ctx.messages,
+            "turns_used": ctx.turns_used,
+            "tools_called": ctx.tools_called,
+            "content": ctx.content,
+            "original_message": original_message,
+            "principal": {
+                "id": principal.id,
+                "type": principal.type,
+                "groups": list(principal.groups),
+                "scopes": list(principal.scopes),
+            },
+        }
+        try:
+            await self._checkpoint_store.save(self._checkpoint_key(ctx), data)
+        except Exception:
+            logger.debug("Failed to save checkpoint for %s", ctx.session_id, exc_info=True)
+
+    async def _delete_checkpoint(self, ctx: _RunContext) -> None:
+        """Remove checkpoint after successful finalization."""
+        if not self._checkpoint_store:
+            return
+        try:
+            await self._checkpoint_store.delete(self._checkpoint_key(ctx))
+        except Exception:
+            logger.debug("Failed to delete checkpoint for %s", ctx.session_id, exc_info=True)
+
+    async def resume(self, checkpoint_key: str) -> None:
+        """Resume a run from a checkpoint (called during orphan recovery).
+
+        Reconstructs the auth context from the checkpoint, rebuilds tools,
+        and continues the LLM loop from the last completed turn.
+        """
+        if not self._checkpoint_store or not self._store:
+            return
+
+        data = await self._checkpoint_store.load(checkpoint_key)
+        if data is None:
+            return
+
+        # Acquire distributed lock
+        replica_id = uuid.uuid4().hex[:12]
+        if not await self._checkpoint_store.acquire_lock(checkpoint_key, replica_id):
+            logger.info("Checkpoint %s is being recovered by another replica", checkpoint_key)
+            return
+
+        try:
+            await self._resume_from_data(data)
+        except Exception:
+            logger.exception("Failed to resume run from checkpoint %s", checkpoint_key)
+        finally:
+            await self._checkpoint_store.release_lock(checkpoint_key)
+
+    async def _resume_from_data(self, data: dict[str, Any]) -> None:
+        """Internal resume logic — separated for testability."""
+        from agentic_primitives_gateway.auth.models import AuthenticatedPrincipal
+        from agentic_primitives_gateway.context import set_authenticated_principal
+
+        # Reconstruct principal and set in contextvar
+        p = data.get("principal")
+        if not p or "id" not in p:
+            raise ValueError("Checkpoint is missing principal data — cannot resume")
+        principal = AuthenticatedPrincipal(
+            id=p["id"],
+            type=p.get("type", "user"),
+            groups=frozenset(p.get("groups", [])),
+            scopes=frozenset(p.get("scopes", [])),
+        )
+        set_authenticated_principal(principal)
+
+        # Load spec (current version from store)
+        spec_name = data["spec_name"]
+        spec = await self._store.get(spec_name)  # type: ignore[union-attr]
+        if spec is None:
+            logger.warning("Agent '%s' not found during resume — skipping", spec_name)
+            return
+
+        # Rebuild tools (handlers can't be serialized)
+        prev_overrides = self._apply_overrides(spec)
+        tools = build_tool_list(
+            spec.primitives,
+            namespace=data.get("knowledge_ns", ""),
+            session_ctx=data.get("session_ctx", {}),
+            agent_store=self._store,
+            agent_runner=self,
+            agent_depth=data.get("depth", 0),
+        )
+
+        ctx = _RunContext(
+            spec=spec,
+            session_id=data["session_id"],
+            actor_id=data["actor_id"],
+            trace_id=data.get("trace_id", uuid.uuid4().hex),
+            knowledge_ns=data.get("knowledge_ns", ""),
+            depth=data.get("depth", 0),
+            prev_overrides=prev_overrides,
+            session_ctx=data.get("session_ctx", {}),
+            tools=tools,
+            gateway_tools=to_gateway_tools(tools) if tools else None,
+            messages=data.get("messages", []),
+            turns_used=data.get("turns_used", 0),
+            tools_called=data.get("tools_called", []),
+            content=data.get("content", ""),
+        )
+
+        original_message = data.get("original_message", "")
+
+        logger.info(
+            "Resuming agent[%s] session=%s from turn %d (user=%s)",
+            spec.name,
+            ctx.session_id,
+            ctx.turns_used,
+            principal.id,
+        )
+
+        # Continue the LLM loop
+        while ctx.turns_used < spec.max_turns:
+            ctx.turns_used += 1
+            request_dict = self._build_request(ctx)
+            await self._checkpoint(ctx, original_message)
+
+            response = await registry.gateway.route_request(request_dict)
+            stop_reason = response.get("stop_reason", "end_turn")
+            tool_calls = response.get("tool_calls")
+            turn_content = response.get("content", "")
+            if turn_content:
+                ctx.content = turn_content
+
+            if stop_reason != "tool_use" or not tool_calls:
+                ctx.messages.append({"role": "assistant", "content": ctx.content})
+                break
+
+            ctx.messages.append({"role": "assistant", "content": ctx.content, "tool_calls": tool_calls})
+            await self._exec_tools_parallel(ctx, tool_calls)
+        else:
+            ctx.content = (
+                f"I've reached the maximum number of turns ({spec.max_turns}). Here's what I have so far: {ctx.content}"
+            )
+            ctx.messages.append({"role": "assistant", "content": ctx.content})
+
+        await self._finalize(ctx, original_message)
 
     # ── Provider overrides ───────────────────────────────────────────
 
@@ -713,8 +890,11 @@ class AgentRunner:
             logger.info("Started %s session: %s", primitive, session_ctx[primitive])
             if self._session_registry:
                 principal = get_authenticated_principal()
-                user_id = principal.id if principal else "anonymous"
-                await self._session_registry.register(primitive, session_ctx[primitive], metadata={"user_id": user_id})
+                if principal is None:
+                    raise RuntimeError("Cannot register session without an authenticated principal")
+                await self._session_registry.register(
+                    primitive, session_ctx[primitive], metadata={"user_id": principal.id}
+                )
         except (NotImplementedError, Exception):
             logger.warning("Failed to start %s session", primitive, exc_info=True)
             session_ctx[primitive] = uuid.uuid4().hex[:16]
