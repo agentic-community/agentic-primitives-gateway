@@ -55,12 +55,17 @@ Agentic Primitives Gateway is a FastAPI service. Agent developers call it via RE
 |  +----+----+ +----+----+     |       +----+----+ +----+----+          |
 |       |           |           |       |         | |         |          |
 |  +----v-----------v-----------v-------v---------v-v---------v--------+ |
-|  |              PolicyEnforcementMiddleware                          | |
+|  |              PolicyEnforcementMiddleware (innermost)              | |
 |  |  (Cedar evaluation via PolicyEnforcer ABC; exempt: health/docs)  | |
 |  +----+----------+-----------+-------+---------+----------+----------+ |
 |       |          |           |       |         |          |            |
 |  +----v-----------v-----------v-------v---------v---------v----------+ |
-|  |                  RequestContextMiddleware                         | |
+|  |                  AuthenticationMiddleware                         | |
+|  |    (JWT/API-key/noop; sets AuthenticatedPrincipal in context)    | |
+|  +----+----------+-----------+-------+---------+----------+----------+ |
+|       |          |           |       |         |          |            |
+|  +----v-----------v-----------v-------v---------v---------v----------+ |
+|  |              RequestContextMiddleware (outermost, after CORS)     | |
 |  |          (AWS creds + provider routing from headers)              | |
 |  +----+----------+-----------+-------+---------+----------+----------+ |
 |       |          |           |       |         |          |            |
@@ -106,7 +111,7 @@ All nine primitives are fully implemented and wired to their respective provider
 - **Agent teams** — Multi-agent collaboration with shared task board, continuous replanning, and parallel execution
 - **Parallel tool execution** — Multiple tool calls in a single turn run concurrently via `asyncio.gather`
 - **Tool artifacts** — Code execution outputs and sub-agent results are captured and returned to the coordinator
-- **Memory persistence** — Agent-scoped knowledge namespace persists across sessions; conversation history is session-scoped
+- **Memory persistence** — Agent-scoped knowledge namespace persists across sessions; conversation history is session-scoped. In multi-user deployments, both knowledge and conversation history are automatically scoped per user (`{..}:u:{user_id}`) so two users on the same agent have fully isolated memory
 - **Provider overrides** — Each agent can specify which provider to use per primitive, with proper save/restore for nested delegation
 
 ## API Reference
@@ -117,6 +122,12 @@ All nine primitives are fully implemented and wired to their respective provider
 |--------|------|-------------|
 | `GET` | `/healthz` | Liveness probe. Returns `{"status": "ok"}`. |
 | `GET` | `/readyz` | Readiness probe. Checks all provider healthchecks. Returns 200 or 503. |
+
+### Authentication
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/auth/config` | Returns auth configuration for UI OIDC flow. Exempt from authentication. |
 
 ### Provider Discovery
 
@@ -655,6 +666,93 @@ forbid(principal == Agent::"untrusted", action == Action::"code_interpreter:exec
 - Policy evaluation is shared across all tenants. Cedar's principal/action/resource matching naturally scopes policies.
 - `X-Agent-Id` is trusted as-is. In production multi-tenant deployments, validate it via an authenticating reverse proxy.
 - Each pod runs its own enforcer reading from the same policy store. Updates propagate within one refresh interval.
+
+---
+
+## Authentication
+
+The gateway includes a pluggable authentication layer that identifies users before requests reach the policy enforcer or route handlers. Authentication is handled by `AuthenticationMiddleware`, which sits between `RequestContextMiddleware` and `PolicyEnforcementMiddleware` in the middleware stack.
+
+Execution order: CORS → RequestContextMiddleware → AuthenticationMiddleware → PolicyEnforcementMiddleware → route handler.
+
+### Auth Backends
+
+| Backend | Behavior |
+|---------|----------|
+| `noop` (default) | Returns an admin principal with full access. Dev/testing only. |
+| `api_key` | Static API keys in config, each mapped to a principal with groups and scopes. |
+| `jwt` | OIDC token validation via JWKS. Supports Cognito, Auth0, Okta, Keycloak, and any standards-compliant OIDC provider. |
+
+### Resource Ownership
+
+Every agent and team has `owner_id` and `shared_with` fields that control access:
+
+| Field | Description |
+|-------|-------------|
+| `owner_id` | The user who created the resource. Set automatically from the authenticated principal. |
+| `shared_with` | List of groups (or `["*"]` for all authenticated users) who can view/use the resource. |
+
+Default behavior:
+- **API-created** resources: `shared_with: []` (private to the owner)
+- **Config-seeded** resources: `shared_with: ["*"]` (visible to all authenticated users)
+- **Owner** can edit and delete their resources
+- **Shared groups** can view and use (but not edit/delete)
+- **Admins** bypass all ownership checks
+
+### User-Scoped Memory
+
+Conversation history and knowledge are automatically scoped per user via `{..}:u:{user_id}` namespace suffixes. Two users chatting with the same agent have fully isolated conversations and stored facts. No configuration needed -- the runner injects user scoping when an authenticated principal is present.
+
+### UI OIDC Flow
+
+The web UI supports Authorization Code + PKCE flow for browser-based authentication:
+
+1. UI fetches `GET /auth/config` to discover OIDC settings (issuer, client_id, scopes)
+2. UI redirects user to the OIDC provider's authorization endpoint
+3. On callback, UI exchanges the authorization code for tokens
+4. UI sends the access token as `Authorization: Bearer <token>` on all API requests
+
+Requires a **public** OIDC client (e.g., Keycloak with Client authentication OFF, Cognito app client without a secret).
+
+### Configuration
+
+```yaml
+# Default: no authentication (dev mode)
+auth:
+  backend: noop
+
+# Static API keys
+auth:
+  backend: api_key
+  api_key:
+    keys:
+      - key: "sk-dev-abc123"
+        principal_id: "alice"
+        groups: ["engineering"]
+        scopes: ["read", "write"]
+      - key: "sk-dev-def456"
+        principal_id: "bob"
+        groups: ["data-science"]
+        scopes: ["read"]
+
+# JWT / OIDC
+auth:
+  backend: jwt
+  jwt:
+    issuer: "https://keycloak.example.com/realms/my-realm"
+    audience: ""
+    client_id: "my-app-ui"
+    algorithms: ["RS256"]
+    claims_mapping:
+      groups: "groups"
+      scopes: "scope"
+```
+
+The `jwt` backend fetches JWKS keys from the issuer's `/.well-known/openid-configuration` endpoint and caches them. Token validation checks signature, expiration, issuer, and audience (if configured).
+
+### Exempt Paths
+
+These paths are exempt from authentication: `/healthz`, `/readyz`, `/metrics`, `/docs`, `/redoc`, `/openapi.json`, `/auth/config`.
 
 ---
 
@@ -1584,6 +1682,8 @@ providers:
 
 ### AWS Credential Pass-Through
 
+> **Note:** Credential pass-through is separate from authentication. Authentication (JWT, API key, or noop) identifies *who the user is*. Credential pass-through forwards *backend-specific credentials* (AWS keys, Langfuse tokens, etc.) to the underlying providers. A request can be authenticated via JWT while also passing AWS credentials for AgentCore calls.
+
 The server **does not use its own AWS credentials** for AgentCore calls. Instead, credentials are passed through from the client on every request via HTTP headers:
 
 | Header | Required | Description |
@@ -1768,6 +1868,14 @@ agentic-primitives-gateway/
 │   │       ├── handlers.py         # Handler functions per primitive (memory, browser, code, tools, identity)
 │   │       ├── catalog.py          # ToolDefinition, _TOOL_CATALOG, build_tool_list, execute_tool
 │   │       └── delegation.py       # Agent-as-tool: _build_agent_tools, MAX_AGENT_DEPTH
+│   ├── auth/                       # Authentication subsystem (not a primitive)
+│   │   ├── base.py                 # AuthBackend ABC
+│   │   ├── models.py               # AuthenticatedPrincipal, ANONYMOUS/NOOP principals
+│   │   ├── noop.py                 # NoopAuthBackend (dev mode, admin access)
+│   │   ├── api_key.py              # ApiKeyAuthBackend (static keys from config)
+│   │   ├── jwt.py                  # JwtAuthBackend (OIDC/JWKS validation)
+│   │   ├── middleware.py           # AuthenticationMiddleware
+│   │   └── access.py               # check_access, require_access, require_owner_or_admin
 │   ├── enforcement/                # Policy enforcement (separate from primitives)
 │   │   ├── base.py                 # PolicyEnforcer ABC
 │   │   ├── noop.py                 # Default allow-all

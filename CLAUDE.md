@@ -16,6 +16,7 @@ FastAPI service providing pluggable primitives (memory, observability, gateway, 
   - `primitives/` — Abstract base classes + backend implementations per primitive; `_sync.py` provides `SyncRunnerMixin` for executor-based async wrappers
   - `routes/` — FastAPI routers, one per primitive plus health and agents; `_helpers.py` provides `@handle_provider_errors` decorator
   - `enforcement/` — Policy enforcement layer: `base.py` (PolicyEnforcer ABC), `noop.py` (default allow-all), `cedar.py` (local Cedar evaluation via cedarpy), `middleware.py` (Starlette middleware mapping requests to Cedar principals/actions/resources)
+  - `auth/` — Authentication subsystem: `base.py` (AuthBackend ABC), `models.py` (AuthenticatedPrincipal), `noop.py`, `api_key.py`, `jwt.py` (OIDC/JWKS), `middleware.py` (AuthenticationMiddleware), `access.py` (check_access, require_access)
   - `routes/_background.py` — `BackgroundRunManager` (asyncio.Task + Queue decoupling), `EventStore` ABC, `RedisEventStore`, `sse_response()` helper
   - `agents/` — Declarative agent orchestration
     - `runner.py` — `AgentRunner` with `_RunContext` dataclass; `run()` (non-streaming) and `run_stream()` (SSE) share init/request/finalize via helpers
@@ -40,13 +41,13 @@ FastAPI service providing pluggable primitives (memory, observability, gateway, 
 - `client/` — Separate `agentic-primitives-gateway-client` package (httpx-based, no server dependency)
 - `tests/` — Server unit/system tests (pytest, async); 1087+ tests
 - `client/tests/` — Client unit tests (100 tests)
-- `configs/` — YAML presets (local, agentcore, agentcore-redis, kitchen-sink, milvus-langfuse, agents-agentcore, agents-mem0-langfuse, agents-mixed)
+- `configs/` — YAML presets (local, local-jwt, agentcore, agentcore-redis, kitchen-sink, milvus-langfuse, agents-agentcore, agents-mem0-langfuse, agents-mixed)
 - `examples/` — Example agents (langchain, strands)
 - `deploy/helm/` — Kubernetes Helm chart
 
 ## Architecture
 
-Each primitive has an abstract base class (`primitives/*/base.py`) with multiple backend implementations (noop, in_memory, agentcore, mem0, langfuse, etc.). The registry dynamically loads provider classes via `importlib` at startup from config. Requests flow through `RequestContextMiddleware` (in `middleware.py`) that extracts credentials and provider routing headers into contextvars, then through `PolicyEnforcementMiddleware` for Cedar policy evaluation, then routes call `registry.{primitive}` which resolves the correct backend.
+Each primitive has an abstract base class (`primitives/*/base.py`) with multiple backend implementations (noop, in_memory, agentcore, mem0, langfuse, etc.). The registry dynamically loads provider classes via `importlib` at startup from config. Requests flow through `RequestContextMiddleware` (in `middleware.py`) that extracts credentials and provider routing headers into contextvars, then through `AuthenticationMiddleware` (in `auth/middleware.py`) that validates credentials and sets `AuthenticatedPrincipal` in a contextvar, then through `PolicyEnforcementMiddleware` for Cedar policy evaluation, then routes call `registry.{primitive}` which resolves the correct backend.
 
 The agents subsystem sits above the primitives. An agent spec (system prompt + model + enabled tools + hooks) defines a declarative agent. The `AgentRunner` (in `agents/runner.py`) uses a `_RunContext` dataclass to share state across phases. `run()` and `run_stream()` share initialization, request building, session management, and finalization — only LLM calling and tool execution differ. Streaming uses SSE with token-by-token delivery and real-time sub-agent event forwarding. Tool calls within a turn execute in parallel via `asyncio.gather` (non-streaming) or `asyncio.Queue` (streaming). Agents can delegate to other agents as tools (agent-as-tool pattern) with configurable depth limiting (`MAX_AGENT_DEPTH=3`). Agent specs are stored in `FileAgentStore` (JSON persistence) or `RedisAgentStore` (Redis hash) and seeded from YAML config on startup (config overwrites existing agents).
 
@@ -102,6 +103,11 @@ pre-commit run --all-files # Run all hooks on entire repo
 - **SyncRunnerMixin** — `primitives/_sync.py` provides a shared `_run_sync` method. All providers wrapping synchronous client libraries inherit from it instead of duplicating the executor boilerplate.
 - **Client is independent** — `client/` has no imports from the server package. It's a thin HTTP wrapper; validation happens server-side.
 - **Enforcement is NOT a primitive** — `enforcement/` is a separate subsystem (like `agents/`) that evaluates requests against policies at the middleware level. `PolicyEnforcementMiddleware` maps requests to Cedar principals/actions/resources and delegates to a `PolicyEnforcer` implementation. Default is `NoopPolicyEnforcer` (all allowed). `CedarPolicyEnforcer` uses `cedarpy` for local evaluation with background policy refresh from `registry.policy`. Default-deny when Cedar is active: no loaded policies = all denied.
+- **Authentication is NOT a primitive** — `auth/` is a separate subsystem (like `enforcement/`). `AuthenticationMiddleware` validates credentials (JWT, API key, or noop) and sets `AuthenticatedPrincipal` in a contextvar. Routes call `require_access()` / `require_owner_or_admin()` for resource-level checks. Auth config is in `Settings.auth` with pluggable backends via `AUTH_BACKEND_ALIASES`.
+- **Resource ownership** — `AgentSpec` and `TeamSpec` have `owner_id` and `shared_with` fields. `shared_with: []` = private (default), `shared_with: ["*"]` = all authenticated users. Config-seeded resources get `["*"]` injected by seed functions. `list_for_user(principal)` on stores filters by ownership/groups.
+- **User-scoped memory** — Both knowledge namespace and conversation history include `:u:{user_id}` via `resolve_knowledge_namespace(spec, principal)` and `resolve_actor_id(agent_name, principal)`. Two users on the same agent have fully isolated memory.
+- **Noop auth = admin** — `NoopAuthBackend` returns a principal with `scopes={"admin"}`, not anonymous. Dev mode gets full access. API key/JWT backends return 401 for missing credentials.
+- **UI OIDC** — React SPA uses `oidc-client-ts` for Authorization Code + PKCE flow. `GET /auth/config` (exempt from auth) provides OIDC settings. `setApiAuthToken()` injects Bearer token into all API calls.
 - **Agents are NOT primitives** — They're a higher-level orchestration layer in `agents/` that composes primitives. Not registered in the provider registry.
 - **Agent tool system** — `agents/tools/` is a package: `handlers.py` (primitive handler functions), `catalog.py` (ToolDefinition + _TOOL_CATALOG + builder/executor), `delegation.py` (agent-as-tool with depth limiting). `functools.partial` binds namespace/session_id so the LLM doesn't specify them.
 - **Agent-as-tool delegation** — Agents can call other agents as tools. A coordinator agent with `primitives.agents.tools: ["researcher", "coder"]` gets `call_researcher` and `call_coder` tools. Sub-agent runs are full `run()`/`run_stream()` calls with depth tracking. `MAX_AGENT_DEPTH=3` prevents infinite recursion.
@@ -129,10 +135,11 @@ pre-commit run --all-files # Run all hooks on entire repo
 - **Ruff** for linting + formatting, **mypy** for type checking (configured in root `pyproject.toml`)
 - Pre-commit hooks enforce Ruff on every commit: `pre-commit install`
 - `make lint` to check, `make format` to auto-fix, `make typecheck` for mypy
+- `auth/` follows the same subsystem patterns as `enforcement/` (ABC + pluggable backends + middleware)
 
 ## Web UI
 
-React + Vite SPA served at `/ui/`. Pages: Dashboard (health, providers, agents), Agent List (CRUD with inline edit), Agent Chat (token-streaming, sub-agent activity, tool artifacts, session resume with polling, multi-session picker), Team List (CRUD), Team Run (streaming task board, event replay on reconnect, background run indicator, multi-run picker), Policy Manager, Primitive Explorer. Shared `useFetch<T>` hook, `useAutoScroll` hook, `CollapsibleSection` component, `sseStream()` fetch wrapper, and centralized theme constants (`CODE_THEME`, `PROSE_CLASSES`) reduce duplication.
+React + Vite SPA served at `/ui/`. Supports OIDC authentication via `oidc-client-ts` (Authorization Code + PKCE); unauthenticated mode when auth is disabled. Pages: Dashboard (health, providers, agents), Agent List (CRUD with inline edit), Agent Chat (token-streaming, sub-agent activity, tool artifacts, session resume with polling, multi-session picker), Team List (CRUD), Team Run (streaming task board, event replay on reconnect, background run indicator, multi-run picker), Policy Manager, Primitive Explorer. Shared `useFetch<T>` hook, `useAutoScroll` hook, `CollapsibleSection` component, `sseStream()` fetch wrapper, and centralized theme constants (`CODE_THEME`, `PROSE_CLASSES`) reduce duplication.
 
 ```bash
 # Development (hot reload, proxies API to :8000)
