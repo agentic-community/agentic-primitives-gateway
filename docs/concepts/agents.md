@@ -150,6 +150,20 @@ Each chat uses a `session_id` to track conversation history. When `auto_memory` 
 
 **Multiple sessions:** Each agent can have many sessions. The UI stores session IDs in localStorage and provides a session picker to switch between them.
 
+## Checkpointing
+
+Agent runs can be made durable by setting `checkpointing_enabled: true` on the agent spec. When enabled, the runner saves state to Redis before each LLM call. If the server crashes, another replica can resume the run from the last checkpoint. Partial tokens already delivered are recovered from the event store and fed back as a system prompt hint so the LLM continues where it left off.
+
+See [Configuration](../getting-started/configuration.md) for the `checkpointing` config block.
+
+## Run Cancellation
+
+An active run can be cancelled via `DELETE /api/v1/agents/{name}/sessions/{session_id}/run`. This cancels the background `asyncio.Task`, deletes the checkpoint from Redis, and sets the event store status to `"cancelled"`. The session history up to the cancellation point is preserved.
+
+## SSE Reconnection
+
+If a stream drops (server restart, network error), clients can reconnect to `GET /api/v1/agents/{name}/sessions/{session_id}/stream`. This endpoint replays all stored events from the event store, then polls for new events if the run is still active. Token events are throttled during replay for smooth delivery. The endpoint stays open for up to 3 minutes waiting for a resumed run to start producing events.
+
 ## API
 
 | Method | Path | Description |
@@ -165,6 +179,8 @@ Each chat uses a `session_id` to track conversation history. When `auto_memory` 
 | `GET` | `/api/v1/agents/{name}/sessions/{id}` | Get conversation history |
 | `GET` | `/api/v1/agents/{name}/sessions/{id}/status` | Check run status |
 | `DELETE` | `/api/v1/agents/{name}/sessions/{id}` | Delete session |
+| `GET` | `/api/v1/agents/{name}/sessions/{id}/stream` | SSE reconnect stream |
+| `DELETE` | `/api/v1/agents/{name}/sessions/{id}/run` | Cancel active run |
 | `GET` | `/api/v1/agents/{name}/tools` | List agent's tools with providers |
 | `GET` | `/api/v1/agents/{name}/memory` | Introspect memory stores |
 | `GET` | `/api/v1/agents/tool-catalog` | List all available primitives/tools |

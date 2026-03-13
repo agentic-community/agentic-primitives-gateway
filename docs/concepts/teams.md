@@ -292,6 +292,20 @@ teams:
 
 **Multiple runs:** Each team can have many runs. The UI stores run IDs and provides a run picker to switch between them.
 
+## Checkpointing
+
+Team runs can be made durable similarly to agent runs. The checkpoint stores the current phase (planning, execution, or synthesis). Task board state is already durable when using `RedisTasksProvider`. On resume, any in-progress tasks are reset to pending, and the current phase restarts with partial token recovery from the event store.
+
+See [Configuration](../getting-started/configuration.md) for the `checkpointing` config block.
+
+## Run Cancellation
+
+An active team run can be cancelled via `DELETE /api/v1/teams/{name}/runs/{run_id}/cancel`. Cancellation is cooperative: the runner checks an `asyncio.Event` at every worker checkpoint. When triggered, all in-progress tasks are marked as failed and the run terminates. This works for both local runs and runs recovered from a checkpoint on another replica.
+
+## SSE Reconnection
+
+If a stream drops, clients can reconnect to `GET /api/v1/teams/{name}/runs/{run_id}/stream`. This replays all stored events from the event store and then polls for new events if the run is still active. Token events are throttled during replay for smooth delivery.
+
 ## API
 
 | Method | Path | Description |
@@ -307,4 +321,6 @@ teams:
 | `GET` | `/api/v1/teams/{name}/runs/{id}` | Get task board state |
 | `GET` | `/api/v1/teams/{name}/runs/{id}/status` | Check run status |
 | `GET` | `/api/v1/teams/{name}/runs/{id}/events` | Get recorded events for replay |
+| `GET` | `/api/v1/teams/{name}/runs/{id}/stream` | SSE reconnect stream |
+| `DELETE` | `/api/v1/teams/{name}/runs/{id}/cancel` | Cancel active run |
 | `DELETE` | `/api/v1/teams/{name}/runs/{id}` | Delete run data |

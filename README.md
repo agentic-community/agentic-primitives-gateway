@@ -488,6 +488,9 @@ Chat response:
 | `max_turns` | int | Safety limit for the tool-call loop (default: 20). |
 | `temperature` | float | LLM temperature (default: 1.0). |
 | `max_tokens` | int | LLM max tokens (optional). |
+| `owner_id` | string | User ID of the creator (set automatically from authenticated principal). |
+| `shared_with` | list[string] | Groups that can access this agent. `[]` = private, `["*"]` = public. |
+| `checkpointing_enabled` | bool | Enable durable execution with Redis checkpointing (default: false). |
 
 **Available tools per primitive:**
 
@@ -533,11 +536,17 @@ curl http://localhost:8000/api/v1/agents/researcher/sessions/{session_id}
 # Check if a background run is active
 curl http://localhost:8000/api/v1/agents/researcher/sessions/{session_id}/status
 
+# SSE reconnect stream (replays events from store, polls for new ones)
+curl -N http://localhost:8000/api/v1/agents/researcher/sessions/{session_id}/stream
+
+# Cancel an active agent run
+curl -X DELETE http://localhost:8000/api/v1/agents/researcher/sessions/{session_id}/run
+
 # Delete a session
 curl -X DELETE http://localhost:8000/api/v1/agents/researcher/sessions/{session_id}
 ```
 
-If the client disconnects mid-stream (page refresh, navigation), the agent run continues in the background. On reconnect, the UI polls for completion and restores the conversation.
+If the client disconnects mid-stream (page refresh, server restart), the agent run continues in the background. On reconnect, the UI connects to a SSE reconnect endpoint that replays stored events and streams new ones in real-time. Token events are throttled during replay so they feel like live streaming.
 
 ### Teams (`/api/v1/teams`)
 
@@ -556,6 +565,8 @@ Teams orchestrate multiple agents working off a shared task board. A planner dec
 | GET | `/api/v1/teams/{name}/runs/{id}` | Get task board state |
 | GET | `/api/v1/teams/{name}/runs/{id}/status` | Check if run is active |
 | GET | `/api/v1/teams/{name}/runs/{id}/events` | Get all SSE events (for UI replay) |
+| GET | `/api/v1/teams/{name}/runs/{id}/stream` | SSE reconnect stream (replays events, polls for new ones) |
+| DELETE | `/api/v1/teams/{name}/runs/{id}/cancel` | Cancel an active team run |
 | DELETE | `/api/v1/teams/{name}/runs/{id}` | Delete run data |
 
 ```bash
@@ -755,6 +766,63 @@ The `jwt` backend fetches JWKS keys from the issuer's `/.well-known/openid-confi
 ### Exempt Paths
 
 These paths are exempt from authentication: `/healthz`, `/readyz`, `/metrics`, `/docs`, `/redoc`, `/openapi.json`, `/auth/config`.
+
+---
+
+## Durable Execution (Checkpointing)
+
+Agent and team runs can survive server restarts via Redis checkpointing. When enabled, the runner periodically saves the full run state (messages, turns, credentials) to Redis. If the server crashes, another replica detects the orphaned checkpoint and resumes the run.
+
+### How It Works
+
+1. **Checkpoint on each turn**: Before every LLM call, the runner saves the full `_RunContext` (messages, tools_called, content, turn count) plus encrypted credentials to Redis
+2. **Replica heartbeat**: Each server replica refreshes a heartbeat key every 15s (TTL 30s)
+3. **Orphan detection**: A periodic scan (every 60s) finds checkpoints whose owning replica's heartbeat has expired
+4. **Distributed resume**: Multiple replicas race to acquire a lock (`SET NX`) on orphaned checkpoints. Only one wins per checkpoint. Checkpoints are shuffled so replicas don't all try the same ones
+5. **Partial token recovery**: On resume, the runner reads previously-streamed tokens from the Redis event store and injects them as a system prompt hint so the model continues from where it left off
+
+### Configuration
+
+```yaml
+agents:
+  store:
+    backend: redis
+    config:
+      redis_url: "redis://localhost:6379/0"
+  checkpointing:
+    enabled: true
+    redis_url: "redis://localhost:6379/0"
+```
+
+Set `checkpointing_enabled: true` on individual agent/team specs to opt in.
+
+### Run Cancellation
+
+Active runs can be cancelled via API:
+
+```bash
+# Cancel an agent run
+curl -X DELETE http://localhost:8000/api/v1/agents/{name}/sessions/{session_id}/run
+
+# Cancel a team run
+curl -X DELETE http://localhost:8000/api/v1/teams/{name}/runs/{run_id}/cancel
+```
+
+Cancellation uses cooperative events checked at every turn boundary and tool execution point. For team runs, all in-progress tasks are marked as failed and the checkpoint is deleted to prevent recovery.
+
+### SSE Reconnection
+
+If a streaming connection drops (server restart, network issue), clients can reconnect to the event store:
+
+```bash
+# Reconnect to an agent session stream
+curl -N http://localhost:8000/api/v1/agents/{name}/sessions/{session_id}/stream
+
+# Reconnect to a team run stream
+curl -N http://localhost:8000/api/v1/teams/{name}/runs/{run_id}/stream
+```
+
+These endpoints replay all stored events, then poll for new ones until the run completes. Token events are throttled with 5ms delays during replay so text appears progressively rather than in a wall of text.
 
 ---
 
@@ -1453,7 +1521,7 @@ pip install -e ".[dev]"
 pytest tests/ -v
 ```
 
-The test suite contains 634 unit/system tests plus 42 integration tests covering all primitives, provider routing, and AWS credential pass-through.
+The test suite contains 1350+ unit/system tests plus integration tests covering all primitives, provider routing, and AWS credential pass-through.
 
 ---
 
@@ -1850,7 +1918,7 @@ agentic-primitives-gateway/
 │   ├── metrics.py                  # Prometheus MetricsProxy wrapper for all providers
 │   ├── watcher.py                  # Config file watcher for hot-reload (K8s ConfigMap aware)
 │   ├── routes/
-│   │   ├── _helpers.py             # @handle_provider_errors decorator (NotImplementedError → 501)
+│   │   ├── _helpers.py             # @handle_provider_errors decorator (NotImplementedError → 501), require_principal()
 │   │   ├── health.py               # /healthz, /readyz
 │   │   ├── memory.py               # /api/v1/memory/* (23 endpoints incl. /namespaces)
 │   │   ├── identity.py             # /api/v1/identity/* (14 endpoints)
@@ -1866,6 +1934,10 @@ agentic-primitives-gateway/
 │   │   ├── runner.py               # AgentRunner + _RunContext: run() and run_stream() with shared helpers
 │   │   ├── namespace.py            # Shared knowledge namespace resolution (no session_id)
 │   │   ├── store.py                # Agent spec persistence (FileAgentStore, YAML seed with overwrite)
+│   │   ├── base_store.py           # Generic SpecStore[T], FileSpecStore[T], RedisSpecStore[T] base classes
+│   │   ├── checkpoint.py           # CheckpointStore ABC, RedisCheckpointStore, ReplicaHeartbeat (orphan recovery)
+│   │   ├── checkpoint_utils.py     # Shared auth context serialization/restoration for checkpoint save/resume
+│   │   ├── team_agent_loop.py      # Generic LLM tool-call loops for team execution (planner, worker, synthesizer)
 │   │   └── tools/                  # Tool system package
 │   │       ├── handlers.py         # Handler functions per primitive (memory, browser, code, tools, identity)
 │   │       ├── catalog.py          # ToolDefinition, _TOOL_CATALOG, build_tool_list, execute_tool
@@ -1935,7 +2007,7 @@ agentic-primitives-gateway/
 │   │   └── api/                    # client.ts (REST + SSE streaming), types.ts
 │   └── vite.config.ts              # Dev proxy to :8000, prod build to static/
 ├── client/                         # Standalone Python client (separate package: agentic-primitives-gateway-client)
-├── tests/                          # Server tests: 893+ unit/system + integration
+├── tests/                          # Server tests: 1350+ unit/system + integration
 ├── client/tests/                   # Client tests: 100 tests
 ├── configs/                        # YAML presets (local, agentcore, kitchen-sink, agents-*, milvus-langfuse)
 ├── examples/                       # Example agents (langchain, strands)

@@ -196,6 +196,28 @@ The tasks provider (for team task boards) is configured separately as a standard
 | `InMemoryTasksProvider` | In-process task board with asyncio.Lock (dev) |
 | `RedisTasksProvider` | Redis-backed with atomic Lua scripts (multi-replica) |
 
+## Checkpoint Configuration
+
+Checkpointing makes agent and team runs durable across server restarts. When enabled, run state is saved to Redis before each LLM call, allowing another replica to resume on crash.
+
+```yaml
+agents:
+  checkpointing:
+    enabled: true
+    redis_url: "redis://localhost:6379/0"
+```
+
+The same configuration applies to teams:
+
+```yaml
+teams:
+  checkpointing:
+    enabled: true
+    redis_url: "redis://localhost:6379/0"
+```
+
+Checkpointing requires a Redis store backend (`store.backend: redis`) and a `RedisEventStore` for event persistence. When the store backend is already `redis`, the checkpoint store reuses the same connection.
+
 ## Agent Configuration
 
 ```yaml

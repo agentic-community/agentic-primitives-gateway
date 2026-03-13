@@ -147,6 +147,24 @@ Available backends:
 
 Custom backends: use a dotted class path instead of an alias.
 
+## Checkpoint System
+
+The checkpoint system enables durable agent and team runs that survive server crashes. When checkpointing is enabled, the runner saves state to Redis before each LLM call. On recovery, another replica loads the checkpoint and resumes.
+
+Key components:
+
+- **`agents/checkpoint.py`** -- `Checkpoint` model and `CheckpointStore` ABC with Redis implementation. Stores run state (messages, tool results, turn count) as JSON in Redis with TTL expiry.
+- **`agents/checkpoint_utils.py`** -- Shared helpers for checkpoint save/load/delete used by both `AgentRunner` and `TeamRunner`.
+- **`agents/base_store.py`** -- Generic base classes for agent and team stores, providing shared factory methods (`create_background_run_manager()`, `create_session_registry()`) and common CRUD patterns.
+
+## Shared Route Helpers
+
+Route modules share common utilities from `routes/_helpers.py`:
+
+- **`require_principal()`** -- extracts and validates the `AuthenticatedPrincipal` from the request context, returning 401 if missing.
+- **`reconnect_event_generator()`** -- builds an async generator that replays stored events from the event store and polls for new events, used by both agent and team SSE reconnection endpoints.
+- **`@handle_provider_errors`** -- decorator that converts `NotImplementedError` to 501 and `KeyError` to 404.
+
 ## File Organization
 
 ```
@@ -162,6 +180,9 @@ src/agentic_primitives_gateway/
 │   ├── runner.py         # AgentRunner + _RunContext
 │   ├── namespace.py      # Knowledge namespace resolution
 │   ├── store.py          # AgentStore ABC + FileAgentStore
+│   ├── base_store.py     # Generic store base classes
+│   ├── checkpoint.py     # Checkpoint model + CheckpointStore
+│   ├── checkpoint_utils.py # Shared checkpoint save/load/delete helpers
 │   ├── redis_store.py    # RedisAgentStore + RedisTeamStore
 │   ├── session_registry.py # SessionRegistry ABC + InMemory/Redis
 │   ├── team_runner.py    # TeamRunner
@@ -178,8 +199,8 @@ src/agentic_primitives_gateway/
 │   └── ...               # Other provider implementations
 └── routes/
     ├── _background.py    # BackgroundRunManager, EventStore, RedisEventStore
-    ├── _helpers.py       # @handle_provider_errors decorator
-    ├── agents.py         # Agent CRUD, chat, sessions
-    ├── teams.py          # Team CRUD, runs, events
+    ├── _helpers.py       # @handle_provider_errors, require_principal, reconnect_event_generator
+    ├── agents.py         # Agent CRUD, chat, sessions, reconnect, cancel
+    ├── teams.py          # Team CRUD, runs, events, reconnect, cancel
     └── ...               # Other routers
 ```

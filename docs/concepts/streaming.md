@@ -93,6 +93,15 @@ For teams, all events are recorded in an event log (in-memory, optionally persis
 
 For agents, conversation history is reconstructed from the memory provider via `GET /agents/{name}/sessions/{id}`.
 
+### SSE Reconnection
+
+When a stream drops (server restart, network error), clients can reconnect to dedicated replay endpoints:
+
+- **Agents:** `GET /api/v1/agents/{name}/sessions/{session_id}/stream`
+- **Teams:** `GET /api/v1/teams/{name}/runs/{run_id}/stream`
+
+These endpoints replay all stored events from the event store and then poll for new events if the run is still active. Token events are throttled with 5ms delays during replay to provide smooth visual playback rather than dumping all content at once. The endpoint stays open for up to 3 minutes waiting for a resumed run to start producing events, which covers the window for checkpoint-based recovery on another replica.
+
 ## Client Usage
 
 ### JavaScript/TypeScript

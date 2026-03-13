@@ -79,7 +79,31 @@ Multiple runs can exist per team. Each run has a `team_run_id` generated when th
 | `GET` | `/{name}/runs/{id}` | Get task board state (tasks with status/result) |
 | `GET` | `/{name}/runs/{id}/status` | Check if run is active (`"running"` or `"idle"`) |
 | `GET` | `/{name}/runs/{id}/events` | Get all recorded SSE events (for UI replay) |
+| `GET` | `/{name}/runs/{id}/stream` | SSE reconnect stream |
+| `DELETE` | `/{name}/runs/{id}/cancel` | Cancel active run |
 | `DELETE` | `/{name}/runs/{id}` | Delete run data (tasks, events) |
+
+### SSE Reconnect Stream
+
+```bash
+curl -N http://localhost:8000/api/v1/teams/research-team/runs/abc123/stream
+```
+
+Reconnects to a running or recently-completed team run. Replays all stored events from the event store with token throttling for smooth playback, then polls for new events if the run is still active. Returns `text/event-stream`.
+
+### Cancel Active Run
+
+```bash
+curl -X DELETE http://localhost:8000/api/v1/teams/research-team/runs/abc123/cancel
+```
+
+Cancels the active team run using cooperative cancellation. The runner checks an `asyncio.Event` at every worker checkpoint; when triggered, all in-progress tasks are marked as failed and the run terminates. Works for both local runs and runs recovered from a checkpoint on another replica.
+
+```json
+{"status": "cancelled", "team_run_id": "abc123"}
+```
+
+Returns 404 if no active run exists for the given ID.
 
 ### List Runs
 

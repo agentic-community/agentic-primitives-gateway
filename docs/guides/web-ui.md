@@ -6,12 +6,12 @@ The gateway includes a React SPA served at `/ui/` with dashboard, agent manageme
 
 ### Dashboard (`/ui/`)
 
-Shows system health, readiness checks, and available providers per primitive.
+Shows system health, readiness checks, and available providers per primitive. A **connection status indicator** (green/yellow/red dot) appears under the APG title in the sidebar, reflecting the current health check state.
 
 ### Agent List (`/ui/agents`)
 
 - View all configured agents with their models and enabled primitives
-- **Create** new agents with the form (model, system prompt, primitives selector)
+- **Create** new agents with the form (model, system prompt, primitives selector, **per-primitive provider dropdown** when multiple providers are available)
 - **Edit** existing agents inline (click "Edit" to expand the form)
 - **Delete** agents
 - **Chat** with any agent (click "Chat" to navigate)
@@ -30,6 +30,7 @@ Interactive streaming chat with an agent. Features:
 - **Multi-session support** -- header shows all sessions for the agent, switch between them, create new, delete old
 - **Background run resume** -- if you navigate away or refresh mid-stream, the run continues server-side. On return, the UI polls for completion and restores the conversation.
 - **Background indicator** -- "Agent is working in the background..." with pulsing dot when a run is active
+- **SSE reconnection** -- if the stream drops (server restart, network error), the UI automatically reconnects with a retry loop, replaying missed events for a seamless experience
 
 ### Team List (`/ui/teams`)
 

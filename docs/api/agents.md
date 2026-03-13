@@ -78,7 +78,31 @@ Each chat uses a `session_id` to track conversation history. Multiple sessions c
 | `GET` | `/{name}/sessions` | List all sessions for this agent |
 | `GET` | `/{name}/sessions/{session_id}` | Get conversation history |
 | `GET` | `/{name}/sessions/{session_id}/status` | Check if a background run is active (`"running"` or `"idle"`) |
+| `GET` | `/{name}/sessions/{session_id}/stream` | SSE reconnect stream |
+| `DELETE` | `/{name}/sessions/{session_id}/run` | Cancel active run |
 | `DELETE` | `/{name}/sessions/{session_id}` | Delete session history |
+
+### SSE Reconnect Stream
+
+```bash
+curl -N http://localhost:8000/api/v1/agents/my-agent/sessions/my-session/stream
+```
+
+Reconnects to a running or recently-completed session. Replays all stored events from the event store with token throttling for smooth playback, then polls for new events if the run is still active. Stays open for up to 3 minutes waiting for a resumed run. Returns `text/event-stream`.
+
+### Cancel Active Run
+
+```bash
+curl -X DELETE http://localhost:8000/api/v1/agents/my-agent/sessions/my-session/run
+```
+
+Cancels the background task for this session. The checkpoint is deleted, the event store status is set to `"cancelled"`, and conversation history up to the cancellation point is preserved.
+
+```json
+{"status": "cancelled", "session_id": "my-session"}
+```
+
+Returns 404 if no active run exists for the session.
 
 ### List Sessions
 
