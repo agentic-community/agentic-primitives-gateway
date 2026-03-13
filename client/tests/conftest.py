@@ -21,6 +21,16 @@ def _mock_handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"status": "ok"})
     if path == "/readyz":
         return httpx.Response(200, json={"status": "ok", "checks": {"memory": True}})
+    if path == "/auth/config":
+        return httpx.Response(200, json={"backend": "noop", "oidc": None})
+
+    # Providers
+    if path == "/api/v1/providers" and method == "GET":
+        return httpx.Response(200, json={"memory": {"default": "in_memory", "available": ["in_memory"]}})
+
+    # A2A endpoints
+    if path == "/.well-known/agent.json" or path.startswith("/a2a/"):
+        return _handle_a2a(method, path, request)
 
     # Agent endpoints
     if path.startswith("/api/v1/agents"):
@@ -62,9 +72,114 @@ def _mock_handler(request: httpx.Request) -> httpx.Response:
         if path.startswith(prefix):
             return httpx.Response(501, json={"detail": "Not implemented"})
 
+    # Memory namespaces (before the general memory handler)
+    if path == "/api/v1/memory/namespaces" and method == "GET":
+        return httpx.Response(200, json={"namespaces": list(_store.keys())})
+
     # Memory endpoints
     if path.startswith("/api/v1/memory/"):
         return _handle_memory(method, path, request)
+
+    return httpx.Response(404, json={"detail": "Not found"})
+
+
+def _handle_a2a(method: str, path: str, request: httpx.Request) -> httpx.Response:
+    """Mock handler for A2A protocol endpoints."""
+    # Gateway-level agent card
+    if path == "/.well-known/agent.json" and method == "GET":
+        return httpx.Response(
+            200,
+            json={
+                "name": "Test Gateway",
+                "description": "Mock gateway",
+                "version": "0.1.0",
+                "supported_interfaces": [
+                    {"url": "http://test/a2a", "protocol_binding": "http+json", "protocol_version": "0.2"}
+                ],
+                "capabilities": {"streaming": True},
+                "skills": [
+                    {"id": "test-agent", "name": "test-agent", "description": "A test agent", "tags": ["memory"]}
+                ],
+                "default_input_modes": ["text/plain"],
+                "default_output_modes": ["text/plain"],
+            },
+        )
+
+    # Per-agent card
+    if path.endswith("/.well-known/agent.json") and method == "GET":
+        # Extract agent name from /a2a/agents/{name}/.well-known/agent.json
+        name = path.removeprefix("/a2a/agents/").removesuffix("/.well-known/agent.json")
+        return httpx.Response(
+            200,
+            json={
+                "name": name,
+                "description": f"Agent: {name}",
+                "version": "0.1.0",
+                "supported_interfaces": [
+                    {
+                        "url": f"http://test/a2a/agents/{name}",
+                        "protocol_binding": "http+json",
+                        "protocol_version": "0.2",
+                    }
+                ],
+                "capabilities": {"streaming": True},
+                "skills": [{"id": name, "name": name, "description": f"Agent: {name}", "tags": []}],
+                "default_input_modes": ["text/plain"],
+                "default_output_modes": ["text/plain"],
+            },
+        )
+
+    # POST /a2a/agents/{name}/message:send
+    if path.endswith("/message:send") and method == "POST":
+        body = json.loads(request.content)
+        task_id = body.get("message", {}).get("task_id") or "task-mock"
+        return httpx.Response(
+            200,
+            json={
+                "id": task_id,
+                "context_id": task_id,
+                "status": {"state": "completed", "timestamp": "2025-01-01T00:00:00Z"},
+                "artifacts": [{"artifact_id": "art-1", "name": "response", "parts": [{"text": "Mock A2A response"}]}],
+                "metadata": {"agent_name": "test"},
+            },
+        )
+
+    # POST /a2a/agents/{name}/message:stream
+    if path.endswith("/message:stream") and method == "POST":
+        sse = 'data: {"type":"status_update","task_id":"t1","context_id":"t1","status":{"state":"working"}}\n\n'
+        sse += 'data: {"type":"message","message_id":"m1","role":"agent","parts":[{"text":"Hello"}]}\n\n'
+        sse += 'data: {"type":"task","id":"t1","status":{"state":"completed"}}\n\n'
+        return httpx.Response(200, content=sse.encode(), headers={"content-type": "text/event-stream"})
+
+    # GET /a2a/agents/{name}/tasks/{task_id}
+    if "/tasks/" in path and method == "GET" and ":subscribe" not in path:
+        task_id = path.split("/tasks/")[-1]
+        return httpx.Response(
+            200,
+            json={
+                "id": task_id,
+                "context_id": task_id,
+                "status": {"state": "completed", "timestamp": "2025-01-01T00:00:00Z"},
+                "metadata": {},
+            },
+        )
+
+    # POST /a2a/agents/{name}/tasks/{task_id}:cancel
+    if ":cancel" in path and method == "POST":
+        task_id = path.split("/tasks/")[-1].removesuffix(":cancel")
+        return httpx.Response(
+            200,
+            json={
+                "id": task_id,
+                "context_id": task_id,
+                "status": {"state": "canceled", "timestamp": "2025-01-01T00:00:00Z"},
+            },
+        )
+
+    # GET /a2a/agents/{name}/tasks/{task_id}:subscribe
+    if ":subscribe" in path and method == "GET":
+        sse = 'data: {"type":"task","id":"t1","status":{"state":"completed"}}\n\n'
+        return httpx.Response(200, content=sse.encode(), headers={"content-type": "text/event-stream"})
 
     return httpx.Response(404, json={"detail": "Not found"})
 
@@ -88,6 +203,10 @@ _evaluator_counter = 0
 def _handle_agents(method: str, path: str, request: httpx.Request) -> httpx.Response:
     """Mock handler for agent CRUD and chat endpoints."""
     rest = path.removeprefix("/api/v1/agents")
+
+    # GET /tool-catalog
+    if rest == "/tool-catalog" and method == "GET":
+        return httpx.Response(200, json={"primitives": {"memory": [{"name": "remember", "description": "store"}]}})
 
     # POST "" (create agent)
     if rest == "" and method == "POST":
@@ -172,7 +291,16 @@ def _handle_agents(method: str, path: str, request: httpx.Request) -> httpx.Resp
                 return httpx.Response(404, json={"detail": f"Agent '{name}' not found"})
             return httpx.Response(200, json={"agent_name": name, "sessions": []})
 
-        # /{name}/sessions/{session_id}[/status]
+        # POST /{name}/sessions/cleanup
+        if len(parts) == 2 and parts[1] == "sessions" and method == "POST":
+            # This is the cleanup endpoint (rest is /{name}/sessions with POST)
+            # Actually the cleanup is at /{name}/sessions/cleanup
+            pass
+
+        if rest == f"/{name}/sessions/cleanup" and method == "POST":
+            return httpx.Response(200, json={"deleted_count": 0})
+
+        # /{name}/sessions/{session_id}[/status|/run|/stream]
         if len(parts) >= 3 and parts[1] == "sessions":
             agent = _agents_store.get(name)
             if agent is None:
@@ -180,6 +308,12 @@ def _handle_agents(method: str, path: str, request: httpx.Request) -> httpx.Resp
             session_id = parts[2]
             if len(parts) == 4 and parts[3] == "status" and method == "GET":
                 return httpx.Response(200, json={"status": "idle"})
+            if len(parts) == 4 and parts[3] == "run" and method == "DELETE":
+                return httpx.Response(200, json={"status": "cancelled"})
+            if len(parts) == 4 and parts[3] == "stream" and method == "GET":
+                return httpx.Response(
+                    200, content=b'data: {"type":"done"}\n\n', headers={"content-type": "text/event-stream"}
+                )
             if len(parts) == 3 and method == "GET":
                 return httpx.Response(200, json={"agent_name": name, "session_id": session_id, "messages": []})
             if len(parts) == 3 and method == "DELETE":
@@ -248,13 +382,19 @@ def _handle_teams(method: str, path: str, request: httpx.Request) -> httpx.Respo
                 return httpx.Response(404, json={"detail": f"Team '{name}' not found"})
             return httpx.Response(200, json={"team_name": name, "runs": []})
 
-        # /{name}/runs/{run_id}[/status|/events]
+        # /{name}/runs/{run_id}[/status|/events|/cancel|/stream]
         if len(parts) >= 3 and parts[1] == "runs":
             run_id = parts[2]
             if len(parts) == 4 and parts[3] == "status" and method == "GET":
                 return httpx.Response(200, json={"status": "idle"})
             if len(parts) == 4 and parts[3] == "events" and method == "GET":
                 return httpx.Response(200, json={"team_run_id": run_id, "status": "unknown", "events": []})
+            if len(parts) == 4 and parts[3] == "cancel" and method == "DELETE":
+                return httpx.Response(200, json={"status": "cancelled"})
+            if len(parts) == 4 and parts[3] == "stream" and method == "GET":
+                return httpx.Response(
+                    200, content=b'data: {"type":"done"}\n\n', headers={"content-type": "text/event-stream"}
+                )
             if len(parts) == 3 and method == "GET":
                 return httpx.Response(
                     200,

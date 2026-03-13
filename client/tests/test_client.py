@@ -1172,6 +1172,142 @@ class TestAuth:
         assert headers["authorization"] == "Bearer jwt-token"
         assert headers["x-aws-access-key-id"] == "AKIA"
 
+
+class TestMissingMethods:
+    """Tests for client methods added after the initial release."""
+
+    @pytest.mark.asyncio
+    async def test_get_auth_config(self, make_client) -> None:
+        async with make_client() as client:
+            result = await client.get_auth_config()
+            assert result["backend"] == "noop"
+
+    @pytest.mark.asyncio
+    async def test_list_providers(self, make_client) -> None:
+        async with make_client() as client:
+            result = await client.list_providers()
+            assert "memory" in result
+
+    @pytest.mark.asyncio
+    async def test_list_memory_namespaces(self, make_client) -> None:
+        async with make_client() as client:
+            await client.store_memory("ns1", "k1", "content")
+            result = await client.list_memory_namespaces()
+            assert "namespaces" in result
+
+    @pytest.mark.asyncio
+    async def test_get_tool_catalog(self, make_client) -> None:
+        async with make_client() as client:
+            result = await client.get_tool_catalog()
+            assert "primitives" in result
+            assert "memory" in result["primitives"]
+
+    @pytest.mark.asyncio
+    async def test_cancel_session_run(self, make_client) -> None:
+        async with make_client() as client:
+            await client.create_agent({"name": "a1", "model": "test"})
+            result = await client.cancel_session_run("a1", "session-1")
+            assert result["status"] == "cancelled"
+
+    @pytest.mark.asyncio
+    async def test_cleanup_sessions(self, make_client) -> None:
+        async with make_client() as client:
+            await client.create_agent({"name": "a1", "model": "test"})
+            result = await client.cleanup_sessions("a1", keep=3)
+            assert "deleted_count" in result
+
+    @pytest.mark.asyncio
+    async def test_cancel_team_run(self, make_client) -> None:
+        async with make_client() as client:
+            await client.create_team({"name": "t1", "planner": "p", "synthesizer": "s", "workers": ["w"]})
+            result = await client.cancel_team_run("t1", "run-1")
+            assert result["status"] == "cancelled"
+
+    @pytest.mark.asyncio
+    async def test_reconnect_session_stream(self, make_client) -> None:
+        async with make_client() as client:
+            await client.create_agent({"name": "a1", "model": "test"})
+            resp = await client.reconnect_session_stream("a1", "session-1")
+            assert resp.status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_reconnect_team_stream(self, make_client) -> None:
+        async with make_client() as client:
+            await client.create_team({"name": "t1", "planner": "p", "synthesizer": "s", "workers": ["w"]})
+            resp = await client.reconnect_team_stream("t1", "run-1")
+            assert resp.status_code == 200
+
+
+class TestA2AClient:
+    """Tests for A2A protocol client methods."""
+
+    @pytest.mark.asyncio
+    async def test_get_agent_card(self, make_client) -> None:
+        async with make_client() as client:
+            card = await client.a2a_get_agent_card()
+            assert card["name"] == "Test Gateway"
+            assert len(card["skills"]) == 1
+            assert card["skills"][0]["id"] == "test-agent"
+            assert card["capabilities"]["streaming"] is True
+
+    @pytest.mark.asyncio
+    async def test_get_per_agent_card(self, make_client) -> None:
+        async with make_client() as client:
+            card = await client.a2a_get_per_agent_card("researcher")
+            assert card["name"] == "researcher"
+            assert card["skills"][0]["id"] == "researcher"
+
+    @pytest.mark.asyncio
+    async def test_send_message(self, make_client) -> None:
+        async with make_client() as client:
+            task = await client.a2a_send_message("test-agent", "Hello, what can you do?")
+            assert task["status"]["state"] == "completed"
+            assert task["artifacts"][0]["parts"][0]["text"] == "Mock A2A response"
+
+    @pytest.mark.asyncio
+    async def test_send_message_with_task_id(self, make_client) -> None:
+        async with make_client() as client:
+            task = await client.a2a_send_message("test-agent", "Hello", task_id="custom-task-id")
+            assert task["id"] == "custom-task-id"
+
+    @pytest.mark.asyncio
+    async def test_send_message_stream(self, make_client) -> None:
+        async with make_client() as client:
+            resp = await client.a2a_send_message_stream("test-agent", "Hello")
+            assert resp.status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_get_task(self, make_client) -> None:
+        async with make_client() as client:
+            task = await client.a2a_get_task("test-agent", "task-123")
+            assert task["id"] == "task-123"
+            assert task["status"]["state"] == "completed"
+
+    @pytest.mark.asyncio
+    async def test_cancel_task(self, make_client) -> None:
+        async with make_client() as client:
+            task = await client.a2a_cancel_task("test-agent", "task-123")
+            assert task["id"] == "task-123"
+            assert task["status"]["state"] == "canceled"
+
+    @pytest.mark.asyncio
+    async def test_subscribe_task(self, make_client) -> None:
+        async with make_client() as client:
+            resp = await client.a2a_subscribe_task("test-agent", "task-123")
+            assert resp.status_code == 200
+
+
+class TestAuthConstructor:
+    def _make_client(self) -> AgenticPlatformClient:
+        client = AgenticPlatformClient.__new__(AgenticPlatformClient)
+        client._auth_headers = {}
+        client._aws_headers = {}
+        client._aws_from_environment = False
+        client._provider_headers = {}
+        client._service_cred_headers = {}
+        client._agent_id_header = {}
+        return client
+
     def test_auth_token_in_constructor(self) -> None:
         client = AgenticPlatformClient(
             "http://localhost:8000",

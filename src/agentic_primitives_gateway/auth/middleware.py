@@ -26,7 +26,11 @@ AUTH_EXEMPT_PREFIXES = (
     "/api/v1/openapi",
     "/auth/config",
     "/ui",
+    "/.well-known/agent.json",
 )
+
+# Additional patterns checked via suffix match (for paths with variables).
+AUTH_EXEMPT_SUFFIXES = ("/.well-known/agent.json",)
 
 
 class AuthenticationMiddleware(BaseHTTPMiddleware):
@@ -54,6 +58,10 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
         path = request.url.path
         for prefix in AUTH_EXEMPT_PREFIXES:
             if path.startswith(prefix):
+                set_authenticated_principal(ANONYMOUS_PRINCIPAL)
+                return await call_next(request)
+        for suffix in AUTH_EXEMPT_SUFFIXES:
+            if path.endswith(suffix):
                 set_authenticated_principal(ANONYMOUS_PRINCIPAL)
                 return await call_next(request)
 

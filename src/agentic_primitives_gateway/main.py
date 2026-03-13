@@ -29,6 +29,7 @@ from agentic_primitives_gateway.enforcement.middleware import PolicyEnforcementM
 from agentic_primitives_gateway.middleware import RequestContextMiddleware
 from agentic_primitives_gateway.registry import _load_class, registry
 from agentic_primitives_gateway.routes import (
+    a2a,
     agents,
     browser,
     code_interpreter,
@@ -103,8 +104,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         agent_store.seed(settings.agents.specs)
     set_agent_store(agent_store)
 
-    # Wire up background run manager + session registry from the store backend
+    # Wire A2A dependencies (shares the same store and runner as agents)
     from agentic_primitives_gateway.routes.agents import _runner as agent_runner
+
+    a2a.set_a2a_dependencies(agent_store, agent_runner)
+
+    # Wire up background run manager + session registry from the store backend
     from agentic_primitives_gateway.routes.agents import set_agent_bg
 
     agent_bg = agent_store.create_background_run_manager(stale_seconds=600)
@@ -285,6 +290,7 @@ app.include_router(policy.router)
 app.include_router(evaluations.router)
 app.include_router(agents.router)
 app.include_router(teams.router)
+app.include_router(a2a.router)
 
 
 # ── Provider discovery ──────────────────────────────────────────────

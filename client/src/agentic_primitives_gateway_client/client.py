@@ -391,7 +391,19 @@ class AgenticPlatformClient:
         self._raise_for_status(resp)
         return self._json_dict(resp)
 
+    async def get_auth_config(self) -> dict[str, Any]:
+        """Get auth configuration (OIDC settings for UI). Auth-exempt."""
+        resp = await self._get("/auth/config")
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
     # ── Memory ──────────────────────────────────────────────────────────
+
+    async def list_memory_namespaces(self) -> dict[str, Any]:
+        """List all known memory namespaces."""
+        resp = await self._get("/api/v1/memory/namespaces")
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
 
     async def store_memory(
         self,
@@ -1460,6 +1472,50 @@ class AgenticPlatformClient:
         self._raise_for_status(resp)
         return self._json_dict(resp)
 
+    async def get_tool_catalog(self) -> dict[str, Any]:
+        """List all available primitives and their tools for the agent builder UI."""
+        resp = await self._get("/api/v1/agents/tool-catalog")
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def chat_with_agent_stream(
+        self,
+        name: str,
+        message: str,
+        session_id: str | None = None,
+    ) -> httpx.Response:
+        """Start a streaming chat with an agent. Returns the raw SSE response.
+
+        The caller should iterate over the response stream::
+
+            resp = await client.chat_with_agent_stream("assistant", "Hello")
+            async for line in resp.aiter_lines():
+                if line.startswith("data: "):
+                    event = json.loads(line[6:])
+                    ...
+
+        Args:
+            name: The agent name.
+            message: The user message.
+            session_id: Optional session ID for conversation continuity.
+        """
+        body: dict[str, Any] = {"message": message}
+        if session_id is not None:
+            body["session_id"] = session_id
+        resp = await self._post(f"/api/v1/agents/{name}/chat/stream", json=body)
+        self._raise_for_status(resp)
+        return resp
+
+    async def reconnect_session_stream(self, name: str, session_id: str) -> httpx.Response:
+        """Reconnect to a session's SSE event stream for replay.
+
+        Returns the raw SSE response. Events are replayed from the event
+        store with token throttling for smooth replay.
+        """
+        resp = await self._get(f"/api/v1/agents/{name}/sessions/{session_id}/stream")
+        self._raise_for_status(resp)
+        return resp
+
     # ── Teams ─────────────────────────────────────────────────────────
 
     async def create_team(self, spec: dict[str, Any]) -> dict[str, Any]:
@@ -1538,3 +1594,126 @@ class AgenticPlatformClient:
         resp = await self._delete(f"/api/v1/teams/{name}/runs/{run_id}")
         self._raise_for_status(resp)
         return self._json_dict(resp)
+
+    async def run_team_stream(self, name: str, message: str) -> httpx.Response:
+        """Run a team with streaming SSE events. Returns the raw SSE response.
+
+        The caller should iterate over the response stream::
+
+            resp = await client.run_team_stream("research-team", "Research AI trends")
+            async for line in resp.aiter_lines():
+                if line.startswith("data: "):
+                    event = json.loads(line[6:])
+                    ...
+        """
+        resp = await self._post(f"/api/v1/teams/{name}/run/stream", json={"message": message})
+        self._raise_for_status(resp)
+        return resp
+
+    async def reconnect_team_stream(self, name: str, run_id: str) -> httpx.Response:
+        """Reconnect to a team run's SSE event stream for replay.
+
+        Returns the raw SSE response. Events are replayed from the event
+        store with token throttling for smooth replay.
+        """
+        resp = await self._get(f"/api/v1/teams/{name}/runs/{run_id}/stream")
+        self._raise_for_status(resp)
+        return resp
+
+    # ── A2A (Agent-to-Agent Protocol) ──────────────────────────────────
+
+    async def a2a_get_agent_card(self) -> dict[str, Any]:
+        """Get the gateway-level A2A agent card (discovery). Auth-exempt."""
+        resp = await self._get("/.well-known/agent.json")
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def a2a_get_per_agent_card(self, name: str) -> dict[str, Any]:
+        """Get an individual agent's A2A card. Auth-exempt for public agents."""
+        resp = await self._get(f"/a2a/agents/{name}/.well-known/agent.json")
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def a2a_send_message(
+        self,
+        name: str,
+        text: str,
+        *,
+        task_id: str | None = None,
+        context_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Send a synchronous A2A message to an agent. Returns a completed Task.
+
+        Args:
+            name: The agent name.
+            text: The message text.
+            task_id: Optional task ID (becomes the session_id).
+            context_id: Optional context ID for grouping tasks.
+            metadata: Optional metadata.
+        """
+        import uuid as _uuid
+
+        message: dict[str, Any] = {
+            "message_id": _uuid.uuid4().hex[:12],
+            "role": "user",
+            "parts": [{"text": text}],
+        }
+        if task_id:
+            message["task_id"] = task_id
+        if context_id:
+            message["context_id"] = context_id
+
+        body: dict[str, Any] = {"message": message}
+        if metadata:
+            body["metadata"] = metadata
+
+        resp = await self._post(f"/a2a/agents/{name}/message:send", json=body)
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def a2a_send_message_stream(
+        self,
+        name: str,
+        text: str,
+        *,
+        task_id: str | None = None,
+        context_id: str | None = None,
+    ) -> httpx.Response:
+        """Send a streaming A2A message. Returns raw SSE response with A2A events.
+
+        Event types: ``status_update``, ``message``, ``artifact_update``, ``task``.
+        """
+        import uuid as _uuid
+
+        message: dict[str, Any] = {
+            "message_id": _uuid.uuid4().hex[:12],
+            "role": "user",
+            "parts": [{"text": text}],
+        }
+        if task_id:
+            message["task_id"] = task_id
+        if context_id:
+            message["context_id"] = context_id
+
+        resp = await self._post(f"/a2a/agents/{name}/message:stream", json={"message": message})
+        self._raise_for_status(resp)
+        return resp
+
+    async def a2a_get_task(self, name: str, task_id: str) -> dict[str, Any]:
+        """Get the current state of an A2A task."""
+        resp = await self._get(f"/a2a/agents/{name}/tasks/{task_id}")
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def a2a_cancel_task(self, name: str, task_id: str) -> dict[str, Any]:
+        """Cancel a running A2A task."""
+        resp = await self._post(f"/a2a/agents/{name}/tasks/{task_id}:cancel")
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def a2a_subscribe_task(self, name: str, task_id: str) -> httpx.Response:
+        """Subscribe to A2A task updates via SSE. Returns raw SSE response."""
+        resp = await self._get(f"/a2a/agents/{name}/tasks/{task_id}:subscribe")
+        self._raise_for_status(resp)
+        return resp
