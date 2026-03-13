@@ -252,9 +252,7 @@ class BackgroundRunManager:
                         await store.append_event(current_key, event, ttl=ttl)
                     await queue.put(event)
             except asyncio.CancelledError:
-                logger.info("Background task %s received CancelledError — closing generator", current_key)
-                # Explicitly close the generator to trigger cleanup of child tasks
-                await coro.aclose()
+                logger.info("Background task %s cancelled", current_key)
                 cancelled_evt = {"type": "cancelled"}
                 if record_events:
                     event_log.append(cancelled_evt)
@@ -283,15 +281,9 @@ class BackgroundRunManager:
     async def cancel(self, key: str) -> bool:
         """Cancel a running background task. Returns True if cancelled."""
         entry = self._runs.get(key)
-        if entry is None:
-            logger.info("cancel(%s): no entry found in _runs (keys: %s)", key, list(self._runs.keys()))
+        if entry is None or entry[0].done():
             return False
-        if entry[0].done():
-            logger.info("cancel(%s): task already done", key)
-            return False
-        task = entry[0]
-        task.cancel()
-        logger.info("cancel(%s): task.cancel() called", key)
+        entry[0].cancel()
         if self._event_store:
             await self._event_store.set_status(key, "cancelled")
         return True

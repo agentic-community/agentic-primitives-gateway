@@ -233,6 +233,10 @@ class TeamRunner:
         message = data.get("message", "")
         phase = data.get("phase", "planning")
 
+        # Register cancel event so cancel_run() works for recovered runs
+        cancel_event = asyncio.Event()
+        self._cancel_events[team_run_id] = cancel_event
+
         assert self._agent_store is not None
         assert self._agent_runner is not None
 
@@ -353,6 +357,7 @@ class TeamRunner:
             await event_store.set_status(team_run_id, "idle")
 
         await self._delete_team_checkpoint(team_run_id, team_spec=team_spec)
+        self._cancel_events.pop(team_run_id, None)
         logger.info("Team[%s] run=%s resumed and completed", spec_name, team_run_id)
 
     # ── Public entry points ──────────────────────────────────────────
@@ -644,15 +649,11 @@ class TeamRunner:
                         continue
                     yield event
             finally:
-                # Cancel any lingering worker tasks (e.g. on generator close / cancellation)
-                active = [wt for wt in worker_tasks if not wt.done()]
-                logger.info("Cancelling %d/%d worker tasks", len(active), len(worker_tasks))
-                for wt in active:
-                    wt.cancel()
+                # Cancel any lingering worker tasks (fire-and-forget —
+                # the cancel event handles cooperative stopping)
                 for wt in worker_tasks:
-                    with contextlib.suppress(asyncio.CancelledError, Exception):
-                        await wt
-                logger.info("All worker tasks finished after cancel")
+                    if not wt.done():
+                        wt.cancel()
 
             # Re-plan based on newly completed tasks
             logger.info("All workers finished, checking for re-planning...")
