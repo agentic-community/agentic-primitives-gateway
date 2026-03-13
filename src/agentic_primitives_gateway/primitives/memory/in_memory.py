@@ -178,7 +178,7 @@ class InMemoryProvider(MemoryProvider):
 
     async def list_sessions(self, actor_id: str) -> list[dict[str, Any]]:
         sessions = self._events.get(actor_id, {})
-        result = []
+        result: list[dict[str, Any]] = []
         for sid, events in sessions.items():
             message_count = sum(len(e.get("messages", [])) for e in events)
             last_activity = events[-1].get("timestamp", "") if events else ""
