@@ -14,10 +14,10 @@ FastAPI service providing pluggable primitives (memory, observability, gateway, 
   - `watcher.py` — Config file hot-reload watcher
   - `models/` — Pydantic request/response models and StrEnum definitions (`enums.py`)
   - `primitives/` — Abstract base classes + backend implementations per primitive; `_sync.py` provides `SyncRunnerMixin` for executor-based async wrappers
-  - `routes/` — FastAPI routers, one per primitive plus health and agents; `_helpers.py` provides `@handle_provider_errors` decorator
+  - `routes/` — FastAPI routers, one per primitive plus health and agents; `_helpers.py` provides `@handle_provider_errors` decorator and `require_principal()`
   - `enforcement/` — Policy enforcement layer: `base.py` (PolicyEnforcer ABC), `noop.py` (default allow-all), `cedar.py` (local Cedar evaluation via cedarpy), `middleware.py` (Starlette middleware mapping requests to Cedar principals/actions/resources)
   - `auth/` — Authentication subsystem: `base.py` (AuthBackend ABC), `models.py` (AuthenticatedPrincipal), `noop.py`, `api_key.py`, `jwt.py` (OIDC/JWKS), `middleware.py` (AuthenticationMiddleware), `access.py` (check_access, require_access)
-  - `routes/_background.py` — `BackgroundRunManager` (asyncio.Task + Queue decoupling), `EventStore` ABC, `RedisEventStore`, `sse_response()` helper
+  - `routes/_background.py` — `BackgroundRunManager` (asyncio.Task + Queue decoupling), `EventStore` ABC, `RedisEventStore`, `sse_response()` helper, `reconnect_event_generator()` for SSE reconnection
   - `agents/` — Declarative agent orchestration
     - `runner.py` — `AgentRunner` with `_RunContext` dataclass; `run()` (non-streaming) and `run_stream()` (SSE) share init/request/finalize via helpers
     - `store.py` — `AgentStore` ABC + `FileAgentStore` (JSON persistence, YAML seed with overwrite)
@@ -26,6 +26,10 @@ FastAPI service providing pluggable primitives (memory, observability, gateway, 
     - `namespace.py` — Shared namespace resolution for agent memory (knowledge vs session scoping)
     - `team_runner.py` — `TeamRunner` orchestrates multi-agent team execution (plan → execute → synthesize)
     - `team_store.py` — `TeamStore` ABC + `FileTeamStore`
+    - `team_agent_loop.py` — `run_agent_with_tools()` and `run_agent_with_tools_stream()` with `invocation_id` tracking for per-invocation token attribution
+    - `base_store.py` — Generic `SpecStore[T]`, `FileSpecStore[T]`, `RedisSpecStore[T]` base classes; agent/team stores inherit from these
+    - `checkpoint.py` — `CheckpointStore` ABC, `RedisCheckpointStore`, `ReplicaHeartbeat` (heartbeat + orphan scanning), `recover_orphaned_runs()`, `_recovery_tasks` tracking
+    - `checkpoint_utils.py` — `serialize_auth_context()`, `restore_auth_context()`, `apply_provider_overrides()`, `restore_provider_overrides()` — shared between AgentRunner and TeamRunner
     - `tools/` — Tool system package
       - `handlers.py` — Handler functions per primitive (memory, browser, code_interpreter, tools, identity)
       - `catalog.py` — `ToolDefinition`, `_TOOL_CATALOG`, `build_tool_list`, `to_gateway_tools`, `execute_tool`
@@ -39,7 +43,7 @@ FastAPI service providing pluggable primitives (memory, observability, gateway, 
   - Production build outputs to `src/agentic_primitives_gateway/static/`
   - FastAPI serves the built SPA at `/ui/` with client-side routing fallback
 - `client/` — Separate `agentic-primitives-gateway-client` package (httpx-based, no server dependency)
-- `tests/` — Server unit/system tests (pytest, async); 1087+ tests
+- `tests/` — Server unit/system tests (pytest, async); 1350+ tests
 - `client/tests/` — Client unit tests (100 tests)
 - `configs/` — YAML presets (local, local-jwt, agentcore, agentcore-redis, kitchen-sink, milvus-langfuse, agents-agentcore, agents-mem0-langfuse, agents-mixed)
 - `examples/` — Example agents (langchain, strands)
@@ -74,7 +78,7 @@ python -m pytest tests/ -v
 ## Test Commands
 
 ```bash
-# All server tests (1087+ unit/system + integration)
+# All server tests (1350+ unit/system + integration)
 python -m pytest tests/ -v
 
 # All client tests (100 tests)
@@ -114,17 +118,24 @@ pre-commit run --all-files # Run all hooks on entire repo
 - **Streaming** — `run_stream()` yields SSE events (`token`, `tool_call_start`, `tool_call_result`, `sub_agent_token`, `sub_agent_tool`, `done`). Bedrock streaming uses `converse_stream()` with an `asyncio.Queue` bridge for async iteration. Sub-agent events are forwarded to the parent stream in real-time.
 - **Provider overrides in runner** — `_apply_overrides`/`_restore_overrides` save and restore the parent's provider overrides around sub-agent execution so each agent uses its own configured providers.
 - **Knowledge vs session namespace** — `agents/namespace.py` provides `resolve_knowledge_namespace()` which strips `{session_id}` from the template. Memory tools use the agent-scoped namespace; conversation history uses `(actor_id, session_id)` directly.
-- **Route error handling** — `routes/_helpers.py` provides `@handle_provider_errors(detail, not_found=)` decorator to convert `NotImplementedError` → 501 and `KeyError` → 404. Used on ~31 endpoints; endpoints with Pydantic request bodies use manual try/except (FastAPI signature inspection limitation).
+- **Route error handling** — `routes/_helpers.py` provides `@handle_provider_errors(detail, not_found=)` decorator to convert `NotImplementedError` → 501 and `KeyError` → 404. Used on ~31 endpoints; endpoints with Pydantic request bodies use manual try/except (FastAPI signature inspection limitation). Also provides `require_principal()` extracted from duplicated `_principal()` functions in agents/teams routes.
 - **BedrockConverseProvider** — `primitives/gateway/bedrock.py` translates between internal message format and Bedrock Converse API. Supports tool_use and streaming via `converse_stream()`. Uses `SyncRunnerMixin` + `get_boto3_session()`.
 - **SeleniumGridBrowserProvider** — `primitives/browser/selenium_grid.py` provides self-hosted browser automation via Selenium WebDriver.
 - **JupyterCodeInterpreterProvider** — `primitives/code_interpreter/jupyter.py` provides code execution via Jupyter Server or Enterprise Gateway. Uses WebSocket for execution and kernel-based file I/O (works without the Contents REST API).
 - **AgentCorePolicyProvider** — `primitives/policy/agentcore.py` provides Cedar-based policy management via `bedrock-agentcore-control`. Supports engine CRUD, policy CRUD, and policy generation. Uses `SyncRunnerMixin` + `get_boto3_session()`.
 - **AgentCoreEvaluationsProvider** — `primitives/evaluations/agentcore.py` provides LLM-as-a-judge evaluations via dual clients: `bedrock-agentcore-control` for evaluator CRUD and `bedrock-agentcore` for runtime evaluation. Uses `SyncRunnerMixin`.
-- **Background run manager** — `routes/_background.py` provides `BackgroundRunManager` which decouples streaming runs from HTTP connections via `asyncio.Task` + `Queue`. Runs complete even if the client disconnects. Optional `EventStore` (e.g. `RedisEventStore`) persists events/status to Redis for cross-replica visibility. `sse_response()` helper creates `StreamingResponse` from a queue.
-- **Redis stores** — `agents/redis_store.py` provides `RedisAgentStore` and `RedisTeamStore` implementing the `AgentStore`/`TeamStore` ABCs with Redis hash storage. `primitives/tasks/redis.py` provides `RedisTasksProvider` with atomic Lua-scripted `claim_task`, `update_task`, and `add_note`. All Redis is optional — enabled via `store.backend: redis` in config.
+- **Background run manager** — `routes/_background.py` provides `BackgroundRunManager` which decouples streaming runs from HTTP connections via `asyncio.Task` + `Queue`. Runs complete even if the client disconnects. Optional `EventStore` (e.g. `RedisEventStore`) persists events/status to Redis for cross-replica visibility. `sse_response()` helper creates `StreamingResponse` from a queue. `reconnect_event_generator()` replays stored events for SSE reconnection.
+- **Redis stores** — `agents/redis_store.py` provides `RedisAgentStore` and `RedisTeamStore` (inheriting from generic `RedisSpecStore[T]` in `base_store.py`) with Redis hash storage. `primitives/tasks/redis.py` provides `RedisTasksProvider` with atomic Lua-scripted `claim_task`, `update_task`, and `add_note`. All Redis is optional — enabled via `store.backend: redis` in config.
 - **Session registry** — `agents/session_registry.py` provides `SessionRegistry` ABC with `InMemorySessionRegistry` (default) and `RedisSessionRegistry`. Tracks active browser/code_interpreter sessions for observability and orphan cleanup. Injected into `AgentRunner` and `TeamRunner` via `set_session_registry()`.
 - **Multi-session/run support** — Agents support multiple conversation sessions per agent; teams support multiple runs per team. `GET /agents/{name}/sessions` lists sessions, `GET /teams/{name}/runs` lists runs. Sessions/runs can be deleted via `DELETE` endpoints.
 - **Pluggable store backends** — `AgentsConfig` and `TeamsConfig` have a `store` field with `backend` (alias or dotted path) and `config` (kwargs). Aliases: `file` → `FileAgentStore`, `redis` → `RedisAgentStore`. Custom backends can also be specified by dotted path. Stores implement factory methods `create_background_run_manager()` and `create_session_registry()` so `main.py` doesn't need backend-specific logic. `AGENT_STORE_ALIASES` and `TEAM_STORE_ALIASES` in `config.py` map short names to classes.
+- **Generic store base classes** — `agents/base_store.py` provides `SpecStore[T]` ABC, `FileSpecStore[T]`, and `RedisSpecStore[T]` generic implementations. `AgentStore`/`TeamStore` and their File/Redis variants inherit from these, eliminating duplicated CRUD, seed, and list_for_user logic. TypeVar `T` is bound to Pydantic `BaseModel`.
+- **Checkpointing** — `agents/checkpoint.py` provides `CheckpointStore` ABC and `RedisCheckpointStore` for durable run persistence. `ReplicaHeartbeat` refreshes a TTL key every 15s and scans for orphaned checkpoints every 60s. `recover_orphaned_runs()` uses distributed locking (`SET NX`) with shuffled order so multiple replicas don't all claim the same checkpoints. Checkpoints store full `_RunContext` + credentials (via `serialize_auth_context()`). `checkpointing_enabled: bool` on specs controls opt-in.
+- **Shared checkpoint utilities** — `agents/checkpoint_utils.py` provides `serialize_auth_context()` and `restore_auth_context()` to capture/restore the authenticated principal + AWS credentials + service credentials during checkpoint save/resume. Also provides `apply_provider_overrides()` and `restore_provider_overrides()` used by both runners.
+- **Cooperative cancellation** — Team runs use `asyncio.Event` per run (`_cancel_events` dict) checked at every turn boundary and before each tool execution in `team_agent_loop.py`. Agent runs use `BackgroundRunManager.cancel()` + `cancel_recovery_task()` for both local and recovered runs. Cancel endpoints also soft-cancel via Redis: mark tasks as failed, delete checkpoint, set status to cancelled.
+- **SSE reconnection** — `routes/_background.py` provides `reconnect_event_generator()` used by both agent and team reconnect endpoints. Replays stored events from `EventStore`, polls every 0.2s for new events, throttles token-type events with 5ms delays for smooth replay. Closes on `done`/`cancelled` events or after seeing running→idle transition.
+- **Partial token recovery on resume** — On checkpoint resume, `AgentRunner._recover_partial_tokens()` reads token events from the Redis event store and injects them as a `[RESUME CONTEXT]` system prompt hint so the model continues from where it left off. For teams, `run_agent_with_tools_stream()` emits `invocation_id` per call and `invocation_start` events, allowing `TeamRunner._recover_partial_tokens()` to filter tokens by specific agent invocation.
+- **Shared route helpers** — `routes/_helpers.py` provides `require_principal()` (extracted from duplicated `_principal()` functions in agents/teams routes) and `@handle_provider_errors` decorator. `routes/_background.py` provides `reconnect_event_generator()` shared by both SSE reconnect endpoints.
 
 ## Style
 
