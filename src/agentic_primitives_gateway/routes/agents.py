@@ -403,10 +403,13 @@ async def stream_session_events(name: str, session_id: str) -> StreamingResponse
         raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
     require_access(_principal(), spec.owner_id, spec.shared_with)
 
+    # Event types that represent individual tokens — throttle so batches feel streamed
+    _TOKEN_TYPES = frozenset({"token", "sub_agent_token"})
+
     async def _generate():
         sent = 0
         idle_count = 0
-        max_idle = 180
+        max_idle = 900  # 900 x 0.2s = 3 min
         seen_running = False
 
         while idle_count < max_idle:
@@ -419,6 +422,9 @@ async def stream_session_events(name: str, session_id: str) -> StreamingResponse
             if len(events) > sent:
                 for event in events[sent:]:
                     yield f"data: {_json.dumps(event, default=str)}\n\n"
+                    # Small delay between token events so batches feel streamed
+                    if isinstance(event, dict) and event.get("type") in _TOKEN_TYPES:
+                        await _asyncio.sleep(0.005)
                 sent = len(events)
                 idle_count = 0
 
@@ -428,10 +434,11 @@ async def stream_session_events(name: str, session_id: str) -> StreamingResponse
             else:
                 idle_count += 1
 
-            if seen_running and status == "idle" and idle_count > 5:
+            if seen_running and status == "idle" and idle_count > 25:
                 break
 
-            await _asyncio.sleep(1)
+            # Poll frequently for smoother token delivery (0.2s x 900 = 3 min)
+            await _asyncio.sleep(0.2)
 
     return StreamingResponse(
         _generate(),

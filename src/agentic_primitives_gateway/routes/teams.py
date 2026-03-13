@@ -253,10 +253,13 @@ async def stream_team_run_events(name: str, team_run_id: str) -> StreamingRespon
     require_access(_principal(), spec.owner_id, spec.shared_with)
     await _require_run_owner(team_run_id)
 
+    # Event types that represent individual tokens — throttle so batches feel streamed
+    _TOKEN_TYPES = frozenset({"token", "sub_agent_token"})
+
     async def _generate():
         sent = 0
         idle_count = 0
-        max_idle = 180  # Keep stream open for up to 3 min waiting for resume
+        max_idle = 900  # Keep stream open for up to 3 min waiting (900 x 0.2s)
         seen_running = False
 
         while idle_count < max_idle:
@@ -270,6 +273,9 @@ async def stream_team_run_events(name: str, team_run_id: str) -> StreamingRespon
             if len(events) > sent:
                 for event in events[sent:]:
                     yield f"data: {_json.dumps(event, default=str)}\n\n"
+                    # Small delay between token events so batches feel streamed
+                    if isinstance(event, dict) and event.get("type") in _TOKEN_TYPES:
+                        await _asyncio.sleep(0.005)
                 sent = len(events)
                 idle_count = 0
 
@@ -286,10 +292,11 @@ async def stream_team_run_events(name: str, team_run_id: str) -> StreamingRespon
 
             # Only close on idle if we've seen it running then go idle
             # (not on initial connect when status might be stale)
-            if seen_running and status == "idle" and idle_count > 5:
+            if seen_running and status == "idle" and idle_count > 25:
                 break
 
-            await _asyncio.sleep(1)
+            # Poll frequently for smoother token delivery (0.2s x 900 = 3 min)
+            await _asyncio.sleep(0.2)
 
     return StreamingResponse(
         _generate(),
