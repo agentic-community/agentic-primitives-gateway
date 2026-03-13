@@ -750,10 +750,28 @@ class AgentRunner:
         except Exception:
             logger.debug("Could not record run_resumed event", exc_info=True)
 
+        # Recover partial tokens from the event store so the model can
+        # continue from where it left off instead of restarting the turn.
+        partial_content = await self._recover_partial_tokens(ctx.session_id)
+
         # Continue the LLM loop
+        resumed_first_turn = True
         while ctx.turns_used < spec.max_turns:
             ctx.turns_used += 1
             request_dict = self._build_request(ctx)
+
+            # On the first turn after resume, inject a continuation hint so
+            # the model picks up where it left off rather than regenerating.
+            if resumed_first_turn and partial_content:
+                hint = (
+                    "\n\n[RESUME CONTEXT: Your previous response was interrupted mid-generation. "
+                    "Below is the text you had already produced. Continue seamlessly from exactly "
+                    "where you left off — do not repeat any of this text:\n"
+                    f"{partial_content}]"
+                )
+                request_dict["system"] = (request_dict.get("system") or "") + hint
+                resumed_first_turn = False
+
             await self._checkpoint(ctx, original_message)
 
             response = await registry.gateway.route_request(request_dict)
@@ -776,6 +794,54 @@ class AgentRunner:
             ctx.messages.append({"role": "assistant", "content": ctx.content})
 
         await self._finalize(ctx, original_message)
+
+    # ── Partial token recovery ────────────────────────────────────────
+
+    @staticmethod
+    async def _recover_partial_tokens(session_id: str) -> str:
+        """Read token events from the event store and reconstruct partial content.
+
+        When resuming from a checkpoint, the LLM turn that was interrupted
+        may have already streamed tokens to the event store.  This method
+        recovers those tokens so the model can continue from where it
+        left off (via a system-prompt hint) instead of regenerating.
+        """
+        try:
+            from agentic_primitives_gateway.routes.agents import _bg as agent_bg
+
+            if not agent_bg or not agent_bg._event_store:
+                return ""
+            events = await agent_bg._event_store.get_events(session_id)
+            if not events:
+                return ""
+            # Walk events in reverse to find the last incomplete turn's tokens.
+            # Tokens after the last tool_call_result (or from the start if no
+            # tools were called) belong to the interrupted turn.
+            partial_parts: list[str] = []
+            for ev in reversed(events):
+                if not isinstance(ev, dict):
+                    continue
+                etype = ev.get("type", "")
+                if etype in ("token", "sub_agent_token"):
+                    partial_parts.append(ev.get("content", ""))
+                elif etype in ("tool_call_result", "done", "stream_start", "run_resumed"):
+                    # We've reached the boundary before the interrupted turn
+                    break
+            if not partial_parts:
+                return ""
+            # Reverse because we walked backwards
+            partial_parts.reverse()
+            partial = "".join(partial_parts)
+            if partial:
+                logger.info(
+                    "Recovered %d chars of partial tokens for session %s",
+                    len(partial),
+                    session_id,
+                )
+            return partial
+        except Exception:
+            logger.debug("Failed to recover partial tokens for %s", session_id, exc_info=True)
+            return ""
 
     # ── Provider overrides ───────────────────────────────────────────
 

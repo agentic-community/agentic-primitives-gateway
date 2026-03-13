@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import uuid
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -23,6 +24,7 @@ def _process_stream_chunk(
     chunk: dict[str, Any],
     tool_calls: list[dict[str, Any]],
     role_label: str,
+    invocation_id: str,
 ) -> dict[str, Any] | None:
     """Process a single stream chunk, updating tool_calls in place.
 
@@ -32,10 +34,16 @@ def _process_stream_chunk(
     event_type = chunk.get("type", "")
     if event_type == "content_delta":
         delta = chunk.get("delta", "")
-        return {"type": "agent_token", "agent": role_label, "content": delta, "_content_delta": delta}
+        return {
+            "type": "agent_token",
+            "agent": role_label,
+            "invocation_id": invocation_id,
+            "content": delta,
+            "_content_delta": delta,
+        }
     if event_type == "tool_use_start":
         tool_calls.append({"id": chunk["id"], "name": chunk["name"], "input": {}})
-        return {"type": "agent_tool", "agent": role_label, "name": chunk["name"]}
+        return {"type": "agent_tool", "agent": role_label, "invocation_id": invocation_id, "name": chunk["name"]}
     if event_type == "tool_use_complete":
         if tool_calls:
             tool_calls[-1]["input"] = chunk.get("input", {})
@@ -114,16 +122,26 @@ async def run_agent_with_tools_stream(
     role_label: str,
     max_turns: int = 20,
     cancel_event: asyncio.Event | None = None,
+    resume_hint: str | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
     """Streaming version of run_agent_with_tools.
 
     Yields SSE-friendly event dicts:
       - ``agent_token``: streamed text content
       - ``agent_tool``: tool call started
+
+    Args:
+        resume_hint: If provided, partial text from the previous interrupted
+            run.  Injected into the system prompt on the first turn only so
+            the model continues from where it left off.
     """
+    invocation_id = uuid.uuid4().hex[:12]
     gateway_tools = to_gateway_tools(tools) if tools else None
     messages: list[dict[str, Any]] = [{"role": "user", "content": message}]
     content = ""
+
+    # Emit an invocation_start event so the event store can track this agent call
+    yield {"type": "invocation_start", "agent": role_label, "invocation_id": invocation_id}
 
     for _turn in range(max_turns):
         # Check for cancellation before starting a new turn
@@ -131,10 +149,21 @@ async def run_agent_with_tools_stream(
             logger.info("Agent[%s] cancelled before turn %d", spec.name, _turn + 1)
             return
 
+        system = spec.system_prompt
+        # On the very first turn, inject the continuation hint (if any)
+        if _turn == 0 and resume_hint:
+            hint = (
+                "\n\n[RESUME CONTEXT: Your previous response was interrupted mid-generation. "
+                "Below is the text you had already produced. Continue seamlessly from exactly "
+                "where you left off — do not repeat any of this text:\n"
+                f"{resume_hint}]"
+            )
+            system = (system or "") + hint
+
         request_dict: dict[str, Any] = {
             "model": spec.model,
             "messages": messages,
-            "system": spec.system_prompt,
+            "system": system,
             "temperature": spec.temperature,
         }
         if spec.max_tokens is not None:
@@ -156,7 +185,7 @@ async def run_agent_with_tools_stream(
         stop_reason = "end_turn"
 
         async for chunk in registry.gateway.route_request_stream(request_dict):
-            parsed = _process_stream_chunk(chunk, tool_calls, role_label)
+            parsed = _process_stream_chunk(chunk, tool_calls, role_label, invocation_id)
             if parsed is None:
                 continue
             if "_content_delta" in parsed:

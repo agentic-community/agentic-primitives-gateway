@@ -111,6 +111,63 @@ class TeamRunner:
         except Exception:
             return None
 
+    async def _recover_partial_tokens(self, team_run_id: str, role_label: str) -> str:
+        """Recover partial tokens for a specific agent from the event store.
+
+        Walks events in reverse to find the last ``invocation_start`` for the
+        given role, then collects ``agent_token`` events with the matching
+        ``invocation_id``.  This ensures we never feed one agent's tokens to
+        a different agent on resume.
+        """
+        event_store = self._get_event_store()
+        if not event_store:
+            return ""
+        try:
+            events = await event_store.get_events(team_run_id)
+            if not events:
+                return ""
+
+            # Find the last invocation_id for this role
+            target_invocation: str | None = None
+            for ev in reversed(events):
+                if not isinstance(ev, dict):
+                    continue
+                if ev.get("type") == "invocation_start" and ev.get("agent") == role_label:
+                    target_invocation = ev.get("invocation_id")
+                    break
+            if not target_invocation:
+                return ""
+
+            # Collect tokens for that invocation (walk reverse, stop at boundary)
+            parts: list[str] = []
+            for ev in reversed(events):
+                if not isinstance(ev, dict):
+                    continue
+                if ev.get("invocation_id") != target_invocation:
+                    if parts:
+                        break  # Passed through all events for this invocation
+                    continue
+                if ev.get("type") == "agent_token":
+                    parts.append(ev.get("content", ""))
+                elif ev.get("type") == "invocation_start":
+                    break
+
+            if not parts:
+                return ""
+            parts.reverse()
+            partial = "".join(parts)
+            if partial:
+                logger.info(
+                    "Recovered %d chars of partial tokens for team run %s (role=%s)",
+                    len(partial),
+                    team_run_id,
+                    role_label,
+                )
+            return partial
+        except Exception:
+            logger.debug("Failed to recover partial tokens for %s", team_run_id, exc_info=True)
+            return ""
+
     async def _team_checkpoint(self, team_spec: TeamSpec, team_run_id: str, message: str, phase: str) -> None:
         """Persist team run state for crash recovery. Task board is already durable."""
         if not team_spec.checkpointing_enabled:
@@ -279,11 +336,19 @@ class TeamRunner:
         except Exception:
             logger.debug("Failed to reset stuck tasks for %s", team_run_id, exc_info=True)
 
+        # Recover partial tokens from the interrupted phase so the model
+        # can continue where it left off instead of regenerating.
+        phase_role_map = {"planning": "planner", "synthesis": "synthesizer"}
+        phase_role = phase_role_map.get(phase)
+        phase_hint: str | None = None
+        if phase_role:
+            phase_hint = await self._recover_partial_tokens(team_run_id, phase_role) or None
+
         try:
             if phase == "planning":
                 await _emit({"type": "phase_change", "phase": "planning"})
                 seen_task_ids: set[str] = set()
-                async for event in self._run_planner_stream(team_spec, team_run_id, message):
+                async for event in self._run_planner_stream(team_spec, team_run_id, message, resume_hint=phase_hint):
                     await _emit(event)
                     # Poll for newly created tasks after every event
                     new_tasks = await registry.tasks.list_tasks(team_run_id)
@@ -330,8 +395,12 @@ class TeamRunner:
             if phase == "synthesis":
                 await self._team_checkpoint(team_spec, team_run_id, message, "synthesis")
                 await _emit({"type": "phase_change", "phase": "synthesis"})
+                # Re-recover hint for synthesis (may be a direct resume into this phase)
+                synth_hint = await self._recover_partial_tokens(team_run_id, "synthesizer") or None
                 response = ""
-                async for event in self._run_synthesizer_stream(team_spec, team_run_id, message):
+                async for event in self._run_synthesizer_stream(
+                    team_spec, team_run_id, message, resume_hint=synth_hint
+                ):
                     if event.get("type") == "agent_token":
                         response += event.get("content", "")
                     await _emit(event)
@@ -488,14 +557,14 @@ class TeamRunner:
         await run_agent_with_tools(planner_spec, prompt, tools, max_turns=planner_spec.max_turns)
 
     async def _run_planner_stream(
-        self, team_spec: TeamSpec, team_run_id: str, message: str
+        self, team_spec: TeamSpec, team_run_id: str, message: str, resume_hint: str | None = None
     ) -> AsyncIterator[dict[str, Any]]:
         planner_spec = await self._get_agent(team_spec.planner, "Planner")
         prompt = await build_planner_prompt(team_spec, message, self._agent_store)  # type: ignore[arg-type]
         tools = self._planner_tools(team_run_id, team_spec.planner)
         logger.info("Planner prompt:\n%s", prompt)
         async for event in run_agent_with_tools_stream(
-            planner_spec, prompt, tools, "planner", max_turns=planner_spec.max_turns
+            planner_spec, prompt, tools, "planner", max_turns=planner_spec.max_turns, resume_hint=resume_hint
         ):
             yield event
 
@@ -902,13 +971,13 @@ class TeamRunner:
         return await run_agent_with_tools(synth_spec, prompt, tools, max_turns=synth_spec.max_turns)
 
     async def _run_synthesizer_stream(
-        self, team_spec: TeamSpec, team_run_id: str, message: str
+        self, team_spec: TeamSpec, team_run_id: str, message: str, resume_hint: str | None = None
     ) -> AsyncIterator[dict[str, Any]]:
         synth_spec = await self._get_agent(team_spec.synthesizer, "Synthesizer")
         prompt = await build_synthesis_prompt(team_run_id, message)
         tools = self._synthesizer_tools(team_run_id, team_spec.synthesizer)
         async for event in run_agent_with_tools_stream(
-            synth_spec, prompt, tools, "synthesizer", max_turns=synth_spec.max_turns
+            synth_spec, prompt, tools, "synthesizer", max_turns=synth_spec.max_turns, resume_hint=resume_hint
         ):
             yield event
 
