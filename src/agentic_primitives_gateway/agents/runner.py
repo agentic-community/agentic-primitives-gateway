@@ -9,6 +9,12 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from agentic_primitives_gateway.agents.checkpoint import CheckpointStore
+from agentic_primitives_gateway.agents.checkpoint_utils import (
+    apply_provider_overrides,
+    restore_auth_context,
+    restore_provider_overrides,
+    serialize_auth_context,
+)
 from agentic_primitives_gateway.agents.namespace import resolve_actor_id, resolve_knowledge_namespace
 from agentic_primitives_gateway.agents.store import AgentStore
 from agentic_primitives_gateway.agents.tools import (
@@ -18,20 +24,8 @@ from agentic_primitives_gateway.agents.tools import (
     execute_tool,
     to_gateway_tools,
 )
-from agentic_primitives_gateway.auth.models import AuthenticatedPrincipal
-from agentic_primitives_gateway.context import (
-    AWSCredentials,
-    _service_credentials,
-    get_authenticated_principal,
-    get_aws_credentials,
-    get_provider_override,
-    set_authenticated_principal,
-    set_aws_credentials,
-    set_provider_overrides,
-    set_service_credentials,
-)
+from agentic_primitives_gateway.context import get_authenticated_principal
 from agentic_primitives_gateway.models.agents import AgentSpec, ChatResponse, ToolArtifact
-from agentic_primitives_gateway.models.enums import Primitive
 from agentic_primitives_gateway.registry import registry
 
 logger = logging.getLogger(__name__)
@@ -577,7 +571,7 @@ class AgentRunner:
         principal = get_authenticated_principal()
         if principal is None:
             raise RuntimeError("Cannot checkpoint without an authenticated principal")
-        data = {
+        data: dict[str, Any] = {
             "spec_name": ctx.spec.name,
             "session_id": ctx.session_id,
             "actor_id": ctx.actor_id,
@@ -592,24 +586,8 @@ class AgentRunner:
             "content": ctx.content,
             "original_message": original_message,
             "replica_id": self._replica_id,
-            "principal": {
-                "id": principal.id,
-                "type": principal.type,
-                "groups": list(principal.groups),
-                "scopes": list(principal.scopes),
-            },
         }
-        aws_creds = get_aws_credentials()
-        if aws_creds:
-            data["aws_credentials"] = {
-                "access_key_id": aws_creds.access_key_id,
-                "secret_access_key": aws_creds.secret_access_key,
-                "session_token": aws_creds.session_token,
-                "region": aws_creds.region,
-            }
-        svc_creds = _service_credentials.get()
-        if svc_creds:
-            data["service_credentials"] = svc_creds
+        data.update(serialize_auth_context())
         try:
             await self._checkpoint_store.save(self._checkpoint_key(ctx), data, ttl=86400)
         except Exception:
@@ -658,32 +636,8 @@ class AgentRunner:
 
     async def _resume_from_data(self, data: dict[str, Any]) -> None:
         """Internal resume logic — separated for testability."""
-        # Reconstruct principal and set in contextvar
-        p = data.get("principal")
-        if not p or "id" not in p:
-            raise ValueError("Checkpoint is missing principal data — cannot resume")
-        principal = AuthenticatedPrincipal(
-            id=p["id"],
-            type=p.get("type", "user"),
-            groups=frozenset(p.get("groups", [])),
-            scopes=frozenset(p.get("scopes", [])),
-        )
-        set_authenticated_principal(principal)
-
-        # Restore credentials from checkpoint
-        aws_data = data.get("aws_credentials")
-        if aws_data:
-            set_aws_credentials(
-                AWSCredentials(
-                    access_key_id=aws_data["access_key_id"],
-                    secret_access_key=aws_data["secret_access_key"],
-                    session_token=aws_data.get("session_token"),
-                    region=aws_data.get("region"),
-                )
-            )
-        svc_data = data.get("service_credentials")
-        if svc_data:
-            set_service_credentials(svc_data)
+        # Reconstruct principal and credentials from checkpoint
+        principal = restore_auth_context(data)
 
         # Load spec (current version from store)
         spec_name = data["spec_name"]
@@ -847,28 +801,11 @@ class AgentRunner:
 
     @staticmethod
     def _apply_overrides(spec: AgentSpec) -> dict[str, str]:
-        """Apply this agent's provider overrides, returning the previous ones.
-
-        Provider overrides are stored in a request-scoped contextvar. When a
-        coordinator delegates to a sub-agent, the sub-agent may have different
-        overrides (e.g. memory: mem0 vs in_memory). We save the current state,
-        merge the agent's overrides on top (agent wins on conflict), and return
-        the saved state so _restore_overrides can put it back after the sub-agent
-        finishes. This ensures the coordinator resumes with its own providers.
-        """
-        prev: dict[str, str] = {}
-        for prim in Primitive:
-            val = get_provider_override(prim)
-            if val:
-                prev[prim] = val
-        if spec.provider_overrides:
-            set_provider_overrides({**prev, **spec.provider_overrides})
-        return prev
+        return apply_provider_overrides(spec)
 
     @staticmethod
     def _restore_overrides(prev: dict[str, str]) -> None:
-        """Restore previous provider overrides."""
-        set_provider_overrides(prev)
+        restore_provider_overrides(prev)
 
     # ── Memory helpers ───────────────────────────────────────────────
 

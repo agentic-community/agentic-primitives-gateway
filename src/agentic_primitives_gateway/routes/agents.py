@@ -10,9 +10,7 @@ from agentic_primitives_gateway.agents.runner import AgentRunner
 from agentic_primitives_gateway.agents.store import AgentStore
 from agentic_primitives_gateway.agents.tools import _TOOL_CATALOG, build_tool_list
 from agentic_primitives_gateway.auth.access import require_access, require_owner_or_admin
-from agentic_primitives_gateway.auth.models import AuthenticatedPrincipal
 from agentic_primitives_gateway.context import (
-    get_authenticated_principal,
     get_provider_override,
     set_provider_overrides,
 )
@@ -30,7 +28,8 @@ from agentic_primitives_gateway.models.agents import (
     UpdateAgentRequest,
 )
 from agentic_primitives_gateway.registry import registry
-from agentic_primitives_gateway.routes._background import BackgroundRunManager, sse_response
+from agentic_primitives_gateway.routes._background import BackgroundRunManager, reconnect_event_generator, sse_response
+from agentic_primitives_gateway.routes._helpers import require_principal
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/agents", tags=["agents"])
@@ -61,18 +60,10 @@ def _get_store() -> AgentStore:
     return _store
 
 
-def _principal() -> AuthenticatedPrincipal:
-    """Return the authenticated principal. Raises if not set."""
-    principal = get_authenticated_principal()
-    if principal is None:
-        raise RuntimeError("No authenticated principal — auth middleware did not run")
-    return principal
-
-
 @router.post("", response_model=AgentSpec, status_code=201)
 async def create_agent(request: CreateAgentRequest) -> AgentSpec:
     store = _get_store()
-    principal = _principal()
+    principal = require_principal()
     data = request.model_dump()
     data["owner_id"] = principal.id
     spec = AgentSpec(**data)
@@ -85,7 +76,7 @@ async def create_agent(request: CreateAgentRequest) -> AgentSpec:
 @router.get("", response_model=AgentListResponse)
 async def list_agents() -> AgentListResponse:
     store = _get_store()
-    principal = _principal()
+    principal = require_principal()
     agents = await store.list_for_user(principal)
     return AgentListResponse(agents=agents)
 
@@ -107,7 +98,7 @@ async def get_agent(name: str) -> AgentSpec:
     spec = await store.get(name)
     if spec is None:
         raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
-    require_access(_principal(), spec.owner_id, spec.shared_with)
+    require_access(require_principal(), spec.owner_id, spec.shared_with)
     return spec
 
 
@@ -117,7 +108,7 @@ async def update_agent(name: str, request: UpdateAgentRequest) -> AgentSpec:
     existing = await store.get(name)
     if existing is None:
         raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
-    require_owner_or_admin(_principal(), existing.owner_id)
+    require_owner_or_admin(require_principal(), existing.owner_id)
     updates = {k: v for k, v in request.model_dump().items() if v is not None}
     return await store.update(name, updates)
 
@@ -128,7 +119,7 @@ async def delete_agent(name: str) -> dict[str, str]:
     spec = await store.get(name)
     if spec is None:
         raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
-    require_owner_or_admin(_principal(), spec.owner_id)
+    require_owner_or_admin(require_principal(), spec.owner_id)
     await store.delete(name)
     return {"status": "deleted"}
 
@@ -140,7 +131,7 @@ async def get_agent_tools(name: str) -> AgentToolsResponse:
     spec = await store.get(name)
     if spec is None:
         raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
-    require_access(_principal(), spec.owner_id, spec.shared_with)
+    require_access(require_principal(), spec.owner_id, spec.shared_with)
 
     # Apply agent-level provider overrides so we resolve the correct providers
     if spec.provider_overrides:
@@ -187,7 +178,7 @@ async def get_agent_memory(name: str, session_id: str | None = None) -> AgentMem
     spec = await store.get(name)
     if spec is None:
         raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
-    require_access(_principal(), spec.owner_id, spec.shared_with)
+    require_access(require_principal(), spec.owner_id, spec.shared_with)
 
     # Apply agent-level provider overrides so we read from the same provider the agent writes to
     if spec.provider_overrides:
@@ -203,7 +194,7 @@ async def get_agent_memory(name: str, session_id: str | None = None) -> AgentMem
         )
 
     # Resolve knowledge namespace (user-scoped — same as runner)
-    namespace = resolve_knowledge_namespace_for_name(name, mem_config.namespace, _principal())
+    namespace = resolve_knowledge_namespace_for_name(name, mem_config.namespace, require_principal())
 
     # Get all known namespaces from the provider
     stores: list[MemoryStoreInfo] = []
@@ -271,7 +262,7 @@ async def chat_with_agent(name: str, request: ChatRequest) -> ChatResponse:
     spec = await store.get(name)
     if spec is None:
         raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
-    require_access(_principal(), spec.owner_id, spec.shared_with)
+    require_access(require_principal(), spec.owner_id, spec.shared_with)
 
     # Apply agent-level provider overrides to the current request context
     if spec.provider_overrides:
@@ -296,7 +287,7 @@ async def chat_with_agent_stream(name: str, request: ChatRequest) -> StreamingRe
     spec = await store.get(name)
     if spec is None:
         raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
-    require_access(_principal(), spec.owner_id, spec.shared_with)
+    require_access(require_principal(), spec.owner_id, spec.shared_with)
 
     if spec.provider_overrides:
         set_provider_overrides(spec.provider_overrides)
@@ -305,7 +296,7 @@ async def chat_with_agent_stream(name: str, request: ChatRequest) -> StreamingRe
     queue, _ = _bg.start(
         session_id,
         _runner.run_stream(spec=spec, message=request.message, session_id=request.session_id),
-        owner_id=_principal().id,
+        owner_id=require_principal().id,
     )
     return sse_response(queue, strip_fields=frozenset({"full_result", "tool_input"}))
 
@@ -317,12 +308,12 @@ async def list_sessions(name: str) -> dict:
     spec = await store.get(name)
     if spec is None:
         raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
-    require_access(_principal(), spec.owner_id, spec.shared_with)
+    require_access(require_principal(), spec.owner_id, spec.shared_with)
 
     if spec.provider_overrides:
         set_provider_overrides(spec.provider_overrides)
 
-    actor_id = resolve_actor_id(name, _principal())
+    actor_id = resolve_actor_id(name, require_principal())
     sessions: list[dict[str, Any]] = []
     try:
         sessions = await registry.memory.list_sessions(actor_id)
@@ -343,12 +334,12 @@ async def cleanup_sessions(name: str, keep: int = 5) -> dict:
     spec = await store.get(name)
     if spec is None:
         raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
-    require_access(_principal(), spec.owner_id, spec.shared_with)
+    require_access(require_principal(), spec.owner_id, spec.shared_with)
 
     if spec.provider_overrides:
         set_provider_overrides(spec.provider_overrides)
 
-    actor_id = resolve_actor_id(name, _principal())
+    actor_id = resolve_actor_id(name, require_principal())
     deleted_count = 0
     try:
         sessions = await registry.memory.list_sessions(actor_id)
@@ -373,12 +364,12 @@ async def delete_session(name: str, session_id: str) -> dict:
     spec = await store.get(name)
     if spec is None:
         raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
-    require_access(_principal(), spec.owner_id, spec.shared_with)
+    require_access(require_principal(), spec.owner_id, spec.shared_with)
 
     if spec.provider_overrides:
         set_provider_overrides(spec.provider_overrides)
 
-    actor_id = resolve_actor_id(name, _principal())
+    actor_id = resolve_actor_id(name, require_principal())
     try:
         await registry.memory.delete_session(actor_id=actor_id, session_id=session_id)
     except (NotImplementedError, Exception):
@@ -394,54 +385,14 @@ async def stream_session_events(name: str, session_id: str) -> StreamingResponse
     Replays existing events, then polls for new events every second.
     Used by the UI to reconnect after a stream drop.
     """
-    import asyncio as _asyncio
-    import json as _json
-
     store = _get_store()
     spec = await store.get(name)
     if spec is None:
         raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
-    require_access(_principal(), spec.owner_id, spec.shared_with)
-
-    # Event types that represent individual tokens — throttle so batches feel streamed
-    _TOKEN_TYPES = frozenset({"token", "sub_agent_token"})
-
-    async def _generate():
-        sent = 0
-        idle_count = 0
-        max_idle = 900  # 900 x 0.2s = 3 min
-        seen_running = False
-
-        while idle_count < max_idle:
-            events = await _bg.get_events_async(session_id)
-            status = await _bg.get_status_async(session_id)
-
-            if status == "running":
-                seen_running = True
-
-            if len(events) > sent:
-                for event in events[sent:]:
-                    yield f"data: {_json.dumps(event, default=str)}\n\n"
-                    # Small delay between token events so batches feel streamed
-                    if isinstance(event, dict) and event.get("type") in _TOKEN_TYPES:
-                        await _asyncio.sleep(0.005)
-                sent = len(events)
-                idle_count = 0
-
-                last_evt = events[-1] if events else {}
-                if isinstance(last_evt, dict) and last_evt.get("type") == "done":
-                    break
-            else:
-                idle_count += 1
-
-            if seen_running and status == "idle" and idle_count > 25:
-                break
-
-            # Poll frequently for smoother token delivery (0.2s x 900 = 3 min)
-            await _asyncio.sleep(0.2)
+    require_access(require_principal(), spec.owner_id, spec.shared_with)
 
     return StreamingResponse(
-        _generate(),
+        reconnect_event_generator(_bg, session_id, done_event_types=frozenset({"done"})),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
@@ -461,11 +412,11 @@ async def cancel_session_run(name: str, session_id: str) -> dict:
     spec = await store.get(name)
     if spec is None:
         raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
-    require_access(_principal(), spec.owner_id, spec.shared_with)
+    require_access(require_principal(), spec.owner_id, spec.shared_with)
 
     # Verify run ownership via event store
     owner = await _bg.get_owner_async(session_id)
-    if owner and owner != _principal().id and not _principal().is_admin:
+    if owner and owner != require_principal().id and not require_principal().is_admin:
         raise HTTPException(status_code=403, detail="Forbidden")
 
     # Try to cancel the local background task (works for non-recovered runs)
@@ -484,7 +435,7 @@ async def cancel_session_run(name: str, session_id: str) -> dict:
 
     # Delete checkpoint so orphan recovery doesn't resume this run
     if _runner._checkpoint_store:
-        principal = _principal()
+        principal = require_principal()
         with contextlib.suppress(Exception):
             await _runner._checkpoint_store.delete(f"{principal.id}:{session_id}")
 
@@ -498,12 +449,12 @@ async def get_session_history(name: str, session_id: str) -> SessionHistoryRespo
     spec = await store.get(name)
     if spec is None:
         raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
-    require_access(_principal(), spec.owner_id, spec.shared_with)
+    require_access(require_principal(), spec.owner_id, spec.shared_with)
 
     if spec.provider_overrides:
         set_provider_overrides(spec.provider_overrides)
 
-    actor_id = resolve_actor_id(name, _principal())
+    actor_id = resolve_actor_id(name, require_principal())
     messages: list[dict[str, str]] = []
     try:
         turns = await registry.memory.get_last_turns(actor_id=actor_id, session_id=session_id, k=50)

@@ -6,6 +6,17 @@ from typing import Any
 
 from fastapi import HTTPException
 
+from agentic_primitives_gateway.auth.models import AuthenticatedPrincipal
+from agentic_primitives_gateway.context import get_authenticated_principal
+
+
+def require_principal() -> AuthenticatedPrincipal:
+    """Return the authenticated principal. Raises if not set."""
+    principal = get_authenticated_principal()
+    if principal is None:
+        raise RuntimeError("No authenticated principal — auth middleware did not run")
+    return principal
+
 
 def handle_provider_errors(
     not_implemented: str = "Not supported by this provider",

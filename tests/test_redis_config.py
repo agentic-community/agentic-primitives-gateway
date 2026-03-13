@@ -25,7 +25,7 @@ from agentic_primitives_gateway.config import (
 from agentic_primitives_gateway.models.agents import AgentSpec
 from agentic_primitives_gateway.models.teams import TeamSpec
 
-_REDIS_MOD = "agentic_primitives_gateway.agents.redis_store"
+_REDIS_MOD = "agentic_primitives_gateway.agents.base_store"
 
 
 def _mock_redis() -> AsyncMock:

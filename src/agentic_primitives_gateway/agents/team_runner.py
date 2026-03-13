@@ -20,6 +20,12 @@ import uuid
 from collections.abc import AsyncIterator
 from typing import Any
 
+from agentic_primitives_gateway.agents.checkpoint_utils import (
+    apply_provider_overrides,
+    restore_auth_context,
+    restore_provider_overrides,
+    serialize_auth_context,
+)
 from agentic_primitives_gateway.agents.runner import AgentRunner
 from agentic_primitives_gateway.agents.store import AgentStore
 from agentic_primitives_gateway.agents.team_agent_loop import run_agent_with_tools, run_agent_with_tools_stream
@@ -31,20 +37,8 @@ from agentic_primitives_gateway.agents.team_prompts import (
 )
 from agentic_primitives_gateway.agents.team_store import TeamStore
 from agentic_primitives_gateway.agents.tools import ToolDefinition, build_tool_list
-from agentic_primitives_gateway.auth.models import AuthenticatedPrincipal
-from agentic_primitives_gateway.context import (
-    AWSCredentials,
-    _service_credentials,
-    get_authenticated_principal,
-    get_aws_credentials,
-    get_provider_override,
-    set_authenticated_principal,
-    set_aws_credentials,
-    set_provider_overrides,
-    set_service_credentials,
-)
+from agentic_primitives_gateway.context import get_authenticated_principal
 from agentic_primitives_gateway.models.agents import AgentSpec, PrimitiveConfig
-from agentic_primitives_gateway.models.enums import Primitive
 from agentic_primitives_gateway.models.tasks import TaskStatus
 from agentic_primitives_gateway.models.teams import TeamRunPhase, TeamRunResponse, TeamSpec
 from agentic_primitives_gateway.registry import registry
@@ -184,24 +178,8 @@ class TeamRunner:
             "message": message,
             "phase": phase,
             "replica_id": self._replica_id,
-            "principal": {
-                "id": principal.id,
-                "type": principal.type,
-                "groups": list(principal.groups),
-                "scopes": list(principal.scopes),
-            },
         }
-        aws_creds = get_aws_credentials()
-        if aws_creds:
-            data["aws_credentials"] = {
-                "access_key_id": aws_creds.access_key_id,
-                "secret_access_key": aws_creds.secret_access_key,
-                "session_token": aws_creds.session_token,
-                "region": aws_creds.region,
-            }
-        svc_creds = _service_credentials.get()
-        if svc_creds:
-            data["service_credentials"] = svc_creds
+        data.update(serialize_auth_context())
         try:
             key = f"{principal.id}:{team_run_id}"
             await self._checkpoint_store.save(key, data, ttl=86400)
@@ -254,31 +232,8 @@ class TeamRunner:
             await self._checkpoint_store.release_lock(checkpoint_key)
 
     async def _resume_team_from_data(self, data: dict[str, Any]) -> None:
-        p = data.get("principal")
-        if not p or "id" not in p:
-            raise ValueError("Team checkpoint is missing principal data")
-        principal = AuthenticatedPrincipal(
-            id=p["id"],
-            type=p.get("type", "user"),
-            groups=frozenset(p.get("groups", [])),
-            scopes=frozenset(p.get("scopes", [])),
-        )
-        set_authenticated_principal(principal)
-
-        # Restore credentials from checkpoint
-        aws_data = data.get("aws_credentials")
-        if aws_data:
-            set_aws_credentials(
-                AWSCredentials(
-                    access_key_id=aws_data["access_key_id"],
-                    secret_access_key=aws_data["secret_access_key"],
-                    session_token=aws_data.get("session_token"),
-                    region=aws_data.get("region"),
-                )
-            )
-        svc_data = data.get("service_credentials")
-        if svc_data:
-            set_service_credentials(svc_data)
+        # Reconstruct principal and credentials from checkpoint
+        principal = restore_auth_context(data)
 
         spec_name = data["spec_name"]
         team_spec = await self._team_store.get(spec_name)  # type: ignore[union-attr]
@@ -1016,20 +971,11 @@ class TeamRunner:
 
     @staticmethod
     def _apply_overrides(spec: AgentSpec) -> dict[str, str]:
-        """Save current provider overrides and apply the agent's overrides."""
-        prev: dict[str, str] = {}
-        for prim in Primitive:
-            val = get_provider_override(prim)
-            if val:
-                prev[prim] = val
-        if spec.provider_overrides:
-            merged = {**prev, **spec.provider_overrides}
-            set_provider_overrides(merged)
-        return prev
+        return apply_provider_overrides(spec)
 
     @staticmethod
     def _restore_overrides(prev: dict[str, str]) -> None:
-        set_provider_overrides(prev)
+        restore_provider_overrides(prev)
 
     async def _start_sessions(self, worker_spec: AgentSpec) -> dict[str, str]:
         """Start browser/code_interpreter sessions if the worker uses them."""

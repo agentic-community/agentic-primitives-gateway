@@ -8,8 +8,6 @@ from starlette.responses import StreamingResponse
 from agentic_primitives_gateway.agents.team_runner import TeamRunner
 from agentic_primitives_gateway.agents.team_store import TeamStore
 from agentic_primitives_gateway.auth.access import require_access, require_owner_or_admin
-from agentic_primitives_gateway.auth.models import AuthenticatedPrincipal
-from agentic_primitives_gateway.context import get_authenticated_principal
 from agentic_primitives_gateway.models.teams import (
     CreateTeamRequest,
     TeamListResponse,
@@ -19,7 +17,8 @@ from agentic_primitives_gateway.models.teams import (
     UpdateTeamRequest,
 )
 from agentic_primitives_gateway.registry import registry
-from agentic_primitives_gateway.routes._background import BackgroundRunManager, sse_response
+from agentic_primitives_gateway.routes._background import BackgroundRunManager, reconnect_event_generator, sse_response
+from agentic_primitives_gateway.routes._helpers import require_principal
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/teams", tags=["teams"])
@@ -53,18 +52,10 @@ def _get_store() -> TeamStore:
     return _store
 
 
-def _principal() -> AuthenticatedPrincipal:
-    """Return the authenticated principal. Raises if not set."""
-    principal = get_authenticated_principal()
-    if principal is None:
-        raise RuntimeError("No authenticated principal — auth middleware did not run")
-    return principal
-
-
 @router.post("", response_model=TeamSpec, status_code=201)
 async def create_team(request: CreateTeamRequest) -> TeamSpec:
     store = _get_store()
-    principal = _principal()
+    principal = require_principal()
     data = request.model_dump()
     data["owner_id"] = principal.id
     spec = TeamSpec(**data)
@@ -77,7 +68,7 @@ async def create_team(request: CreateTeamRequest) -> TeamSpec:
 @router.get("", response_model=TeamListResponse)
 async def list_teams() -> TeamListResponse:
     store = _get_store()
-    principal = _principal()
+    principal = require_principal()
     teams = await store.list_for_user(principal)
     return TeamListResponse(teams=teams)
 
@@ -88,7 +79,7 @@ async def get_team(name: str) -> TeamSpec:
     spec = await store.get(name)
     if spec is None:
         raise HTTPException(status_code=404, detail=f"Team '{name}' not found")
-    require_access(_principal(), spec.owner_id, spec.shared_with)
+    require_access(require_principal(), spec.owner_id, spec.shared_with)
     return spec
 
 
@@ -98,7 +89,7 @@ async def update_team(name: str, request: UpdateTeamRequest) -> TeamSpec:
     existing = await store.get(name)
     if existing is None:
         raise HTTPException(status_code=404, detail=f"Team '{name}' not found")
-    require_owner_or_admin(_principal(), existing.owner_id)
+    require_owner_or_admin(require_principal(), existing.owner_id)
     updates = {k: v for k, v in request.model_dump().items() if v is not None}
     return await store.update(name, updates)
 
@@ -109,7 +100,7 @@ async def delete_team(name: str) -> dict[str, str]:
     spec = await store.get(name)
     if spec is None:
         raise HTTPException(status_code=404, detail=f"Team '{name}' not found")
-    require_owner_or_admin(_principal(), spec.owner_id)
+    require_owner_or_admin(require_principal(), spec.owner_id)
     await store.delete(name)
     return {"status": "deleted"}
 
@@ -120,7 +111,7 @@ async def run_team(name: str, request: TeamRunRequest) -> TeamRunResponse:
     spec = await store.get(name)
     if spec is None:
         raise HTTPException(status_code=404, detail=f"Team '{name}' not found")
-    require_access(_principal(), spec.owner_id, spec.shared_with)
+    require_access(require_principal(), spec.owner_id, spec.shared_with)
 
     return await _runner.run(team_spec=spec, message=request.message)
 
@@ -136,7 +127,7 @@ async def run_team_stream(name: str, request: TeamRunRequest) -> StreamingRespon
     spec = await store.get(name)
     if spec is None:
         raise HTTPException(status_code=404, detail=f"Team '{name}' not found")
-    require_access(_principal(), spec.owner_id, spec.shared_with)
+    require_access(require_principal(), spec.owner_id, spec.shared_with)
 
     # Use a placeholder key since team_run_id is generated inside the runner.
     # The background task re-keys automatically when it sees team_run_id.
@@ -144,7 +135,7 @@ async def run_team_stream(name: str, request: TeamRunRequest) -> StreamingRespon
     queue, _ = _bg.start(
         placeholder,
         _runner.run_stream(team_spec=spec, message=request.message),
-        owner_id=_principal().id,
+        owner_id=require_principal().id,
         record_events=True,
         rekey_field="team_run_id",
     )
@@ -162,7 +153,7 @@ async def list_team_runs(name: str) -> dict:
     spec = await store.get(name)
     if spec is None:
         raise HTTPException(status_code=404, detail=f"Team '{name}' not found")
-    require_access(_principal(), spec.owner_id, spec.shared_with)
+    require_access(require_principal(), spec.owner_id, spec.shared_with)
 
     runs: list[dict[str, Any]] = []
 
@@ -202,7 +193,7 @@ async def list_team_runs(name: str) -> dict:
 async def _require_run_owner(team_run_id: str) -> None:
     """Raise 403 if the current principal does not own the run."""
     owner = await _bg.get_owner_async(team_run_id)
-    if owner and owner != _principal().id and not _principal().is_admin:
+    if owner and owner != require_principal().id and not require_principal().is_admin:
         raise HTTPException(status_code=403, detail="Forbidden")
 
 
@@ -213,7 +204,7 @@ async def delete_team_run(name: str, team_run_id: str) -> dict:
     spec = await store.get(name)
     if spec is None:
         raise HTTPException(status_code=404, detail=f"Team '{name}' not found")
-    require_access(_principal(), spec.owner_id, spec.shared_with)
+    require_access(require_principal(), spec.owner_id, spec.shared_with)
     await _require_run_owner(team_run_id)
 
     # Clean up task board
@@ -243,63 +234,15 @@ async def stream_team_run_events(name: str, team_run_id: str) -> StreamingRespon
     until the run completes. Used by the UI to reconnect after a stream
     drop (e.g. server restart with checkpoint recovery).
     """
-    import asyncio as _asyncio
-    import json as _json
-
     store = _get_store()
     spec = await store.get(name)
     if spec is None:
         raise HTTPException(status_code=404, detail=f"Team '{name}' not found")
-    require_access(_principal(), spec.owner_id, spec.shared_with)
+    require_access(require_principal(), spec.owner_id, spec.shared_with)
     await _require_run_owner(team_run_id)
 
-    # Event types that represent individual tokens — throttle so batches feel streamed
-    _TOKEN_TYPES = frozenset({"token", "sub_agent_token"})
-
-    async def _generate():
-        sent = 0
-        idle_count = 0
-        max_idle = 900  # Keep stream open for up to 3 min waiting (900 x 0.2s)
-        seen_running = False
-
-        while idle_count < max_idle:
-            events = await _bg.get_events_async(team_run_id)
-            status = await _bg.get_status_async(team_run_id)
-
-            if status == "running":
-                seen_running = True
-
-            # Send any new events since last check
-            if len(events) > sent:
-                for event in events[sent:]:
-                    yield f"data: {_json.dumps(event, default=str)}\n\n"
-                    # Small delay between token events so batches feel streamed
-                    if isinstance(event, dict) and event.get("type") in _TOKEN_TYPES:
-                        await _asyncio.sleep(0.005)
-                sent = len(events)
-                idle_count = 0
-
-                # Check if the last event is "done" — run completed
-                last_evt = events[-1] if events else {}
-                if isinstance(last_evt, dict) and last_evt.get("type") in ("done", "cancelled"):
-                    break
-            else:
-                idle_count += 1
-
-            # Close on cancelled status immediately
-            if status == "cancelled":
-                break
-
-            # Only close on idle if we've seen it running then go idle
-            # (not on initial connect when status might be stale)
-            if seen_running and status == "idle" and idle_count > 25:
-                break
-
-            # Poll frequently for smoother token delivery (0.2s x 900 = 3 min)
-            await _asyncio.sleep(0.2)
-
     return StreamingResponse(
-        _generate(),
+        reconnect_event_generator(_bg, team_run_id, done_event_types=frozenset({"done", "cancelled"})),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
@@ -312,7 +255,7 @@ async def get_team_run_status(name: str, team_run_id: str) -> dict:
     spec = await store.get(name)
     if spec is None:
         raise HTTPException(status_code=404, detail=f"Team '{name}' not found")
-    require_access(_principal(), spec.owner_id, spec.shared_with)
+    require_access(require_principal(), spec.owner_id, spec.shared_with)
     await _require_run_owner(team_run_id)
 
     _bg.cleanup()
@@ -332,7 +275,7 @@ async def cancel_team_run(name: str, team_run_id: str) -> dict:
     spec = await store.get(name)
     if spec is None:
         raise HTTPException(status_code=404, detail=f"Team '{name}' not found")
-    require_access(_principal(), spec.owner_id, spec.shared_with)
+    require_access(require_principal(), spec.owner_id, spec.shared_with)
     await _require_run_owner(team_run_id)
 
     # Signal the team runner to stop workers at the next checkpoint
@@ -365,7 +308,7 @@ async def cancel_team_run(name: str, team_run_id: str) -> dict:
     from agentic_primitives_gateway.routes.agents import _runner as agent_runner
 
     if agent_runner._checkpoint_store:
-        principal = _principal()
+        principal = require_principal()
         with contextlib.suppress(Exception):
             await agent_runner._checkpoint_store.delete(f"{principal.id}:{team_run_id}")
 
@@ -379,7 +322,7 @@ async def get_team_run_events(name: str, team_run_id: str) -> dict:
     spec = await store.get(name)
     if spec is None:
         raise HTTPException(status_code=404, detail=f"Team '{name}' not found")
-    require_access(_principal(), spec.owner_id, spec.shared_with)
+    require_access(require_principal(), spec.owner_id, spec.shared_with)
     await _require_run_owner(team_run_id)
 
     _bg.cleanup()
@@ -401,7 +344,7 @@ async def get_team_run(name: str, team_run_id: str) -> dict:
     spec = await store.get(name)
     if spec is None:
         raise HTTPException(status_code=404, detail=f"Team '{name}' not found")
-    require_access(_principal(), spec.owner_id, spec.shared_with)
+    require_access(require_principal(), spec.owner_id, spec.shared_with)
     await _require_run_owner(team_run_id)
 
     try:

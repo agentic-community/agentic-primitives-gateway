@@ -295,6 +295,53 @@ class BackgroundRunManager:
             self._runs[new_key] = entry
 
 
+async def reconnect_event_generator(
+    bg: BackgroundRunManager,
+    run_id: str,
+    *,
+    done_event_types: frozenset[str] = frozenset({"done", "cancelled"}),
+) -> AsyncIterator[str]:
+    """Reusable SSE generator for reconnect streams.
+
+    Replays stored events, then polls for new ones until the run completes.
+    Token events are throttled with a small delay so replayed batches feel streamed.
+    """
+    _TOKEN_TYPES = frozenset({"token", "sub_agent_token"})
+    sent = 0
+    idle_count = 0
+    max_idle = 900  # 900 x 0.2s = 3 min
+    seen_running = False
+
+    while idle_count < max_idle:
+        events = await bg.get_events_async(run_id)
+        status = await bg.get_status_async(run_id)
+
+        if status == "running":
+            seen_running = True
+
+        if len(events) > sent:
+            for event in events[sent:]:
+                yield f"data: {json.dumps(event, default=str)}\n\n"
+                if isinstance(event, dict) and event.get("type") in _TOKEN_TYPES:
+                    await asyncio.sleep(0.005)
+            sent = len(events)
+            idle_count = 0
+
+            last_evt = events[-1] if events else {}
+            if isinstance(last_evt, dict) and last_evt.get("type") in done_event_types:
+                break
+        else:
+            idle_count += 1
+
+        if status == "cancelled":
+            break
+
+        if seen_running and status == "idle" and idle_count > 25:
+            break
+
+        await asyncio.sleep(0.2)
+
+
 def sse_response(
     queue: asyncio.Queue[dict | None],
     *,

@@ -14,7 +14,7 @@ from agentic_primitives_gateway.models.agents import AgentSpec
 from agentic_primitives_gateway.models.tasks import TaskNote, TaskStatus
 from agentic_primitives_gateway.models.teams import TeamSpec
 
-_REDIS_MOD = "agentic_primitives_gateway.agents.redis_store"
+_REDIS_MOD = "agentic_primitives_gateway.agents.base_store"
 _TASKS_MOD = "agentic_primitives_gateway.primitives.tasks.redis"
 
 

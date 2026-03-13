@@ -212,7 +212,7 @@ class TestRedisStoreSeeding:
         mock_r.hget = AsyncMock(side_effect=hget)
         mock_r.hset = AsyncMock(side_effect=hset)
 
-        with patch("agentic_primitives_gateway.agents.redis_store._get_redis", return_value=mock_r):
+        with patch("agentic_primitives_gateway.agents.base_store._get_redis", return_value=mock_r):
             RedisAgentStore(redis_url="redis://test:6379/0")
 
         # Manually call the async seed logic
