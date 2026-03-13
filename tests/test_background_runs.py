@@ -41,13 +41,24 @@ SAMPLE_TEAM = {
 
 @pytest.fixture(autouse=True)
 def _setup(tmp_path: Any) -> None:
+    # Import modules to access current _active_runs refs
+    from agentic_primitives_gateway.routes import agents as agents_mod
+    from agentic_primitives_gateway.routes import teams as teams_mod
+    from agentic_primitives_gateway.routes._background import BackgroundRunManager
+
     agent_store = FileAgentStore(path=str(tmp_path / "agents.json"))
     set_agent_store(agent_store)
     team_store = FileTeamStore(path=str(tmp_path / "teams.json"))
     set_team_store(team_store)
-    # Clear active runs between tests
-    _active_runs.clear()
-    _active_team_runs.clear()
+    # Reset bg managers so module-level refs are fresh
+    agents_mod.set_agent_bg(BackgroundRunManager(stale_seconds=600))
+    teams_mod.set_team_bg(BackgroundRunManager(stale_seconds=600, grace_seconds=60))
+    # Update our module-level refs to match the new bg managers
+    global _active_runs, _active_team_runs, agent_bg, team_bg
+    _active_runs = agents_mod._active_runs
+    _active_team_runs = teams_mod._active_team_runs
+    agent_bg = agents_mod._bg
+    team_bg = teams_mod._bg
 
 
 @pytest.fixture

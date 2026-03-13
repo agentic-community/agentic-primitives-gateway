@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -7,6 +9,22 @@ from agentic_primitives_gateway import watcher as _watcher_module
 from agentic_primitives_gateway.config import Settings
 from agentic_primitives_gateway.main import app
 from agentic_primitives_gateway.registry import registry
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _suppress_asyncio_teardown_noise():
+    """Suppress asyncio event loop teardown logging noise.
+
+    When tests use streaming endpoints via TestClient, pending asyncio tasks
+    (e.g. sleep coroutines in reconnect_event_generator) may not be fully
+    cancelled before the event loop shuts down.  This causes harmless
+    "Task was destroyed but it is pending" messages that write to stderr
+    after pytest has already closed it.  Silence the asyncio logger and
+    suppress the coroutine RuntimeWarning to prevent spurious errors.
+    """
+
+    yield
+    logging.getLogger("asyncio").setLevel(logging.CRITICAL)
 
 
 @pytest.fixture(autouse=True)

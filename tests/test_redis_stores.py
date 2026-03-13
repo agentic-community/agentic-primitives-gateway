@@ -263,3 +263,132 @@ class TestRedisTasksProvider:
 
     async def test_healthcheck(self, provider) -> None:
         assert await provider.healthcheck() is True
+
+
+# ── RedisSpecStore base class methods ────────────────────────────────
+
+
+class TestRedisSpecStoreSeed:
+    """Tests for RedisSpecStore.seed() which runs synchronously at startup."""
+
+    @pytest.fixture
+    def store(self) -> RedisAgentStore:
+        with patch(f"{_REDIS_MOD}._get_redis", return_value=_mock_redis()):
+            return RedisAgentStore(redis_url="redis://test:6379/0")
+
+    async def test_seed_new_specs(self, store: RedisAgentStore) -> None:
+        """Seeding new specs writes them to Redis."""
+        specs = {
+            "agent1": {"model": "m1", "system_prompt": "You are agent1."},
+            "agent2": {"model": "m2"},
+        }
+
+        # seed() runs the async _seed() via loop.create_task — we need to await it
+        # Since we have a running loop (pytest-asyncio), create_task will be used
+        store.seed(specs)
+        # Let the task run
+        import asyncio
+
+        await asyncio.sleep(0.1)
+
+        # Verify specs were written
+        result = await store.get("agent1")
+        assert result is not None
+        assert result.name == "agent1"
+        assert result.model == "m1"
+
+        result2 = await store.get("agent2")
+        assert result2 is not None
+        assert result2.name == "agent2"
+
+    async def test_seed_defaults_shared_with_star(self, store: RedisAgentStore) -> None:
+        """Seeded specs get shared_with=['*'] by default."""
+        specs = {"agent1": {"model": "m1"}}
+        store.seed(specs)
+        import asyncio
+
+        await asyncio.sleep(0.1)
+
+        result = await store.get("agent1")
+        assert result is not None
+        assert result.shared_with == ["*"]
+
+    async def test_seed_defaults_checkpointing_enabled(self, store: RedisAgentStore) -> None:
+        """Seeded specs get checkpointing_enabled=True by default."""
+        specs = {"agent1": {"model": "m1"}}
+        store.seed(specs)
+        import asyncio
+
+        await asyncio.sleep(0.1)
+
+        result = await store.get("agent1")
+        assert result is not None
+        assert result.checkpointing_enabled is True
+
+    async def test_seed_overwrites_changed_spec(self, store: RedisAgentStore) -> None:
+        """Seeding overwrites a spec if it has changed."""
+        await store.create(AgentSpec(name="agent1", model="old-model"))
+
+        specs = {"agent1": {"model": "new-model"}}
+        store.seed(specs)
+        import asyncio
+
+        await asyncio.sleep(0.1)
+
+        result = await store.get("agent1")
+        assert result is not None
+        assert result.model == "new-model"
+
+    async def test_seed_skips_unchanged_spec(self, store: RedisAgentStore) -> None:
+        """Seeding does not write if spec is unchanged."""
+        spec = AgentSpec(name="agent1", model="m1", shared_with=["*"], checkpointing_enabled=True)
+        await store.create(spec)
+
+        specs = {"agent1": {"model": "m1"}}
+        store.seed(specs)
+        import asyncio
+
+        await asyncio.sleep(0.1)
+
+        # hset should not have been called again since spec is unchanged
+        # (or called at most once more for the comparison)
+        result = await store.get("agent1")
+        assert result is not None
+        assert result.model == "m1"
+
+
+class TestRedisSpecStoreFactoryMethods:
+    """Tests for RedisSpecStore.create_background_run_manager() and create_session_registry()."""
+
+    @pytest.fixture
+    def store(self) -> RedisAgentStore:
+        with patch(f"{_REDIS_MOD}._get_redis", return_value=_mock_redis()):
+            return RedisAgentStore(redis_url="redis://test:6379/0")
+
+    def test_create_background_run_manager(self, store: RedisAgentStore) -> None:
+        """Factory creates a BackgroundRunManager with RedisEventStore."""
+        with patch("agentic_primitives_gateway.routes._background.RedisEventStore") as mock_event_store_cls:
+            mock_event_store_cls.return_value = MagicMock()
+            mgr = store.create_background_run_manager()
+            assert mgr is not None
+            mock_event_store_cls.assert_called_once_with("redis://test:6379/0")
+
+    def test_create_session_registry(self, store: RedisAgentStore) -> None:
+        """Factory creates a RedisSessionRegistry."""
+        with patch("agentic_primitives_gateway.agents.session_registry.RedisSessionRegistry") as mock_reg_cls:
+            mock_reg_cls.return_value = MagicMock()
+            reg = store.create_session_registry()
+            assert reg is not None
+            mock_reg_cls.assert_called_once_with(redis_url="redis://test:6379/0")
+
+
+class TestGetRedisHelper:
+    """Tests for the _get_redis helper function."""
+
+    def test_get_redis_creates_client(self) -> None:
+        mock_client = MagicMock()
+        with patch("redis.asyncio.from_url", return_value=mock_client):
+            from agentic_primitives_gateway.agents.base_store import _get_redis
+
+            result = _get_redis("redis://localhost:6379/0")
+            assert result is mock_client

@@ -84,6 +84,10 @@ markers = [
     "integration: real AWS integration tests (require credentials)",
     "browser: browser automation tests (require playwright)",
 ]
+filterwarnings = [
+    "ignore::RuntimeWarning:asyncio",
+    "ignore:coroutine.*was never awaited:RuntimeWarning",
+]
 
 [tool.ruff]
 target-version = "py311"

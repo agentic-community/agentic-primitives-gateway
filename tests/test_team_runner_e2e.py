@@ -6,9 +6,10 @@ so the full plan → execute → synthesize cycle runs against a real task board
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -356,3 +357,237 @@ class TestHelpers:
         available = await registry.tasks.get_available(run_id, worker_name="w1")
         claimed = await TeamRunner._claim_batch(run_id, available, "w1")
         assert len(claimed) == len(available)
+
+
+# ── Cancel run tests ─────────────────────────────────────────────────
+
+
+class TestCancelRun:
+    """Tests for cancel_run() setting the cancel event."""
+
+    def test_cancel_run_with_active_event(self) -> None:
+        tr = TeamRunner()
+        event = asyncio.Event()
+        tr._cancel_events["run-1"] = event
+        assert not event.is_set()
+
+        tr.cancel_run("run-1")
+        assert event.is_set()
+
+    def test_cancel_run_no_event(self) -> None:
+        tr = TeamRunner()
+        # Should not raise when event doesn't exist
+        tr.cancel_run("nonexistent")
+
+    def test_cancel_run_idempotent(self) -> None:
+        tr = TeamRunner()
+        event = asyncio.Event()
+        tr._cancel_events["run-1"] = event
+
+        tr.cancel_run("run-1")
+        tr.cancel_run("run-1")  # Second call is fine
+        assert event.is_set()
+
+
+# ── Recover partial tokens tests ─────────────────────────────────────
+
+
+class TestRecoverPartialTokens:
+    """Tests for _recover_partial_tokens with and without event store."""
+
+    async def test_no_event_store(self) -> None:
+        tr = TeamRunner()
+        result = await tr._recover_partial_tokens("run-1", "planner")
+        assert result == ""
+
+    async def test_empty_events(self) -> None:
+        tr = TeamRunner()
+        mock_event_store = AsyncMock()
+        mock_event_store.get_events = AsyncMock(return_value=[])
+
+        with patch.object(tr, "_get_event_store", return_value=mock_event_store):
+            result = await tr._recover_partial_tokens("run-1", "planner")
+        assert result == ""
+
+    async def test_no_matching_invocation(self) -> None:
+        tr = TeamRunner()
+        mock_event_store = AsyncMock()
+        mock_event_store.get_events = AsyncMock(
+            return_value=[
+                {"type": "agent_token", "content": "hello", "invocation_id": "inv-1"},
+                {"type": "invocation_start", "agent": "worker1", "invocation_id": "inv-1"},
+            ]
+        )
+
+        with patch.object(tr, "_get_event_store", return_value=mock_event_store):
+            result = await tr._recover_partial_tokens("run-1", "planner")
+        assert result == ""
+
+    async def test_recovers_tokens_for_matching_role(self) -> None:
+        tr = TeamRunner()
+        mock_event_store = AsyncMock()
+        mock_event_store.get_events = AsyncMock(
+            return_value=[
+                {"type": "invocation_start", "agent": "planner", "invocation_id": "inv-1"},
+                {"type": "agent_token", "content": "Hello ", "invocation_id": "inv-1"},
+                {"type": "agent_token", "content": "world", "invocation_id": "inv-1"},
+            ]
+        )
+
+        with patch.object(tr, "_get_event_store", return_value=mock_event_store):
+            result = await tr._recover_partial_tokens("run-1", "planner")
+        assert result == "Hello world"
+
+    async def test_only_recovers_last_invocation(self) -> None:
+        tr = TeamRunner()
+        mock_event_store = AsyncMock()
+        mock_event_store.get_events = AsyncMock(
+            return_value=[
+                {"type": "invocation_start", "agent": "planner", "invocation_id": "inv-1"},
+                {"type": "agent_token", "content": "old ", "invocation_id": "inv-1"},
+                {"type": "invocation_start", "agent": "planner", "invocation_id": "inv-2"},
+                {"type": "agent_token", "content": "new ", "invocation_id": "inv-2"},
+                {"type": "agent_token", "content": "tokens", "invocation_id": "inv-2"},
+            ]
+        )
+
+        with patch.object(tr, "_get_event_store", return_value=mock_event_store):
+            result = await tr._recover_partial_tokens("run-1", "planner")
+        assert result == "new tokens"
+
+    async def test_exception_returns_empty(self) -> None:
+        tr = TeamRunner()
+        mock_event_store = AsyncMock()
+        mock_event_store.get_events = AsyncMock(side_effect=RuntimeError("Redis down"))
+
+        with patch.object(tr, "_get_event_store", return_value=mock_event_store):
+            result = await tr._recover_partial_tokens("run-1", "planner")
+        assert result == ""
+
+    async def test_non_dict_events_skipped(self) -> None:
+        tr = TeamRunner()
+        mock_event_store = AsyncMock()
+        mock_event_store.get_events = AsyncMock(
+            return_value=[
+                "not-a-dict",
+                {"type": "invocation_start", "agent": "planner", "invocation_id": "inv-1"},
+                "another-string",
+                {"type": "agent_token", "content": "token", "invocation_id": "inv-1"},
+            ]
+        )
+
+        with patch.object(tr, "_get_event_store", return_value=mock_event_store):
+            result = await tr._recover_partial_tokens("run-1", "planner")
+        assert result == "token"
+
+
+# ── Worker tool building tests ───────────────────────────────────────
+
+
+class TestBuildWorkerTools:
+    """Tests for _build_worker_tools."""
+
+    def test_builds_tools_with_task_board(self) -> None:
+        tr = TeamRunner()
+        worker_spec = _make_worker("w1")
+        team_spec = _make_team(workers=["w1"])
+        tools = tr._build_worker_tools(worker_spec, team_spec, "run-1", {})
+        tool_names = [t.name for t in tools]
+        # Should include task board tools
+        assert "list_tasks" in tool_names
+        assert "complete_task" in tool_names
+
+    def test_builds_tools_with_session_context(self) -> None:
+        tr = TeamRunner()
+        worker_spec = _make_worker("w1", with_code_interpreter=True)
+        team_spec = _make_team(workers=["w1"])
+        tools = tr._build_worker_tools(worker_spec, team_spec, "run-1", {"code_interpreter": "sid-1"})
+        tool_names = [t.name for t in tools]
+        assert "execute_code" in tool_names
+
+
+# ── Team checkpoint tests ────────────────────────────────────────────
+
+
+class TestTeamCheckpoint:
+    """Tests for _team_checkpoint and _delete_team_checkpoint."""
+
+    async def test_checkpoint_saves_data(self) -> None:
+        from agentic_primitives_gateway.auth.models import AuthenticatedPrincipal
+        from agentic_primitives_gateway.context import set_authenticated_principal
+
+        tr = TeamRunner()
+        mock_store = AsyncMock()
+        tr._checkpoint_store = mock_store
+        tr._replica_id = "replica-1"
+
+        principal = AuthenticatedPrincipal(id="alice", type="user", groups=frozenset(), scopes=frozenset())
+        set_authenticated_principal(principal)
+
+        team_spec = _make_team()
+        team_spec.checkpointing_enabled = True
+        await tr._team_checkpoint(team_spec, "run-1", "do something", "planning")
+
+        mock_store.save.assert_called_once()
+        call_args = mock_store.save.call_args
+        data = call_args[0][1]
+        assert data["type"] == "team"
+        assert data["spec_name"] == "test-team"
+        assert data["phase"] == "planning"
+        assert data["replica_id"] == "replica-1"
+
+    async def test_checkpoint_skips_without_store(self) -> None:
+        tr = TeamRunner()
+        team_spec = _make_team()
+        # Should not raise
+        await tr._team_checkpoint(team_spec, "run-1", "msg", "planning")
+
+    async def test_checkpoint_skips_when_disabled(self) -> None:
+        tr = TeamRunner()
+        tr._checkpoint_store = AsyncMock()
+        team_spec = _make_team()
+        team_spec.checkpointing_enabled = False
+        await tr._team_checkpoint(team_spec, "run-1", "msg", "planning")
+        tr._checkpoint_store.save.assert_not_called()
+
+    async def test_delete_checkpoint(self) -> None:
+        from agentic_primitives_gateway.auth.models import AuthenticatedPrincipal
+        from agentic_primitives_gateway.context import set_authenticated_principal
+
+        tr = TeamRunner()
+        mock_store = AsyncMock()
+        tr._checkpoint_store = mock_store
+
+        principal = AuthenticatedPrincipal(id="alice", type="user", groups=frozenset(), scopes=frozenset())
+        set_authenticated_principal(principal)
+
+        await tr._delete_team_checkpoint("run-1")
+        mock_store.delete.assert_called_once_with("alice:run-1")
+
+
+# ── Set stores / set methods tests ───────────────────────────────────
+
+
+class TestSetters:
+    def test_set_stores(self) -> None:
+        tr = TeamRunner()
+        agent_store = MagicMock()
+        team_store = MagicMock()
+        agent_runner = MagicMock()
+        tr.set_stores(agent_store, team_store, agent_runner)
+        assert tr._agent_store is agent_store
+        assert tr._team_store is team_store
+        assert tr._agent_runner is agent_runner
+
+    def test_set_session_registry(self) -> None:
+        tr = TeamRunner()
+        reg = MagicMock()
+        tr.set_session_registry(reg)
+        assert tr._session_registry is reg
+
+    def test_set_checkpoint_store(self) -> None:
+        tr = TeamRunner()
+        store = MagicMock()
+        tr.set_checkpoint_store(store, replica_id="r1")
+        assert tr._checkpoint_store is store
+        assert tr._replica_id == "r1"
