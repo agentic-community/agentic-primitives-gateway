@@ -25,6 +25,9 @@ function AgentForm({ initial, onDone, onCancel }: AgentFormProps) {
   const [primitives, setPrimitives] = useState<Record<string, PrimitiveConfig>>(
     initial?.primitives ?? {},
   );
+  const [providerOverrides, setProviderOverrides] = useState<Record<string, string>>(
+    initial?.provider_overrides ?? {},
+  );
   const [sharedWith, setSharedWith] = useState<string[]>(initial?.shared_with ?? []);
   const [checkpointingEnabled, setCheckpointingEnabled] = useState(initial?.checkpointing_enabled ?? false);
   const [submitting, setSubmitting] = useState(false);
@@ -44,6 +47,7 @@ function AgentForm({ initial, onDone, onCancel }: AgentFormProps) {
             max_turns: maxTurns,
             temperature,
             primitives,
+            provider_overrides: providerOverrides,
             shared_with: sharedWith,
             checkpointing_enabled: checkpointingEnabled,
           };
@@ -57,6 +61,7 @@ function AgentForm({ initial, onDone, onCancel }: AgentFormProps) {
             max_turns: maxTurns,
             temperature,
             primitives,
+            provider_overrides: Object.keys(providerOverrides).length > 0 ? providerOverrides : undefined,
             shared_with: sharedWith,
             checkpointing_enabled: checkpointingEnabled,
           });
@@ -68,7 +73,7 @@ function AgentForm({ initial, onDone, onCancel }: AgentFormProps) {
         setSubmitting(false);
       }
     },
-    [name, model, description, systemPrompt, maxTurns, temperature, primitives, sharedWith, checkpointingEnabled, isEdit, onDone],
+    [name, model, description, systemPrompt, maxTurns, temperature, primitives, providerOverrides, sharedWith, checkpointingEnabled, isEdit, onDone],
   );
 
   return (
@@ -137,7 +142,13 @@ function AgentForm({ initial, onDone, onCancel }: AgentFormProps) {
           />
         </div>
       </div>
-      <PrimitivesSelector value={primitives} onChange={setPrimitives} excludeAgent={isEdit ? name : undefined} />
+      <PrimitivesSelector
+        value={primitives}
+        onChange={setPrimitives}
+        providerOverrides={providerOverrides}
+        onProviderOverridesChange={setProviderOverrides}
+        excludeAgent={isEdit ? name : undefined}
+      />
       <SharedWithInput value={sharedWith} onChange={setSharedWith} ownerId={isEdit ? initial?.owner_id : undefined} />
       <label className="flex items-center gap-2 cursor-pointer">
         <input

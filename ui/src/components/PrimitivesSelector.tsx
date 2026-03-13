@@ -1,10 +1,13 @@
 import { useEffect, useState } from "react";
 import { api } from "../api/client";
-import type { AgentSpec, CatalogToolInfo, PrimitiveConfig } from "../api/types";
+import type { AgentSpec, CatalogToolInfo, PrimitiveConfig, ProviderInfo } from "../api/types";
 
 interface PrimitivesSelectorProps {
   value: Record<string, PrimitiveConfig>;
   onChange: (value: Record<string, PrimitiveConfig>) => void;
+  /** Provider overrides: primitive name → selected provider name. */
+  providerOverrides?: Record<string, string>;
+  onProviderOverridesChange?: (overrides: Record<string, string>) => void;
   /** Agent name to exclude from the agents sub-agent list (prevents self-delegation). */
   excludeAgent?: string;
 }
@@ -12,9 +15,12 @@ interface PrimitivesSelectorProps {
 export default function PrimitivesSelector({
   value,
   onChange,
+  providerOverrides = {},
+  onProviderOverridesChange,
   excludeAgent,
 }: PrimitivesSelectorProps) {
   const [catalog, setCatalog] = useState<Record<string, CatalogToolInfo[]>>({});
+  const [providers, setProviders] = useState<Record<string, ProviderInfo>>({});
   const [agents, setAgents] = useState<AgentSpec[]>([]);
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -22,6 +28,7 @@ export default function PrimitivesSelector({
   useEffect(() => {
     Promise.all([
       api.getToolCatalog().then((r) => setCatalog(r.primitives)),
+      api.providers().then(setProviders),
       api.listAgents().then(setAgents),
     ])
       .catch(() => {})
@@ -170,6 +177,29 @@ export default function PrimitivesSelector({
                 )}
                 {isAgentsPrimitive && enabled && availableAgents.length === 0 && (
                   <span className="text-[10px] text-gray-400">no other agents</span>
+                )}
+                {/* Provider selector — only shown when multiple providers are available */}
+                {enabled && !isAgentsPrimitive && providers[name] && providers[name].available.length > 1 && (
+                  <select
+                    value={providerOverrides[name] ?? providers[name].default}
+                    onChange={(e) => {
+                      const selected = e.target.value;
+                      const next = { ...providerOverrides };
+                      if (selected === providers[name].default) {
+                        delete next[name];
+                      } else {
+                        next[name] = selected;
+                      }
+                      onProviderOverridesChange?.(next);
+                    }}
+                    className="rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 px-1.5 py-0.5 text-[10px] font-mono text-gray-500 dark:text-gray-400"
+                  >
+                    {providers[name].available.map((p) => (
+                      <option key={p} value={p}>
+                        {p}{p === providers[name].default ? " (default)" : ""}
+                      </option>
+                    ))}
+                  </select>
                 )}
               </div>
 
