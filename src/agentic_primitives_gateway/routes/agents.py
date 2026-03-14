@@ -83,10 +83,16 @@ async def list_agents() -> AgentListResponse:
 
 @router.get("/tool-catalog")
 async def get_tool_catalog() -> dict:
-    """Return all available primitives and their tools for the agent builder UI."""
-    catalog: dict[str, list[dict[str, str]]] = {}
+    """Return all available primitives and their tools.
+
+    Each tool includes its name, description, and input_schema (JSON Schema)
+    so clients can dynamically build framework-specific tool wrappers.
+    """
+    catalog: dict[str, list[dict]] = {}
     for primitive_name, tools in _TOOL_CATALOG.items():
-        catalog[primitive_name] = [{"name": t.name, "description": t.description} for t in tools]
+        catalog[primitive_name] = [
+            {"name": t.name, "description": t.description, "input_schema": t.input_schema} for t in tools
+        ]
     # Add agents as a special primitive (tools are dynamic, so no static list)
     catalog["agents"] = []
     return {"primitives": catalog}

@@ -1199,8 +1199,7 @@ class TestMissingMethods:
     async def test_get_tool_catalog(self, make_client) -> None:
         async with make_client() as client:
             result = await client.get_tool_catalog()
-            assert "primitives" in result
-            assert "memory" in result["primitives"]
+            assert "memory" in result
 
     @pytest.mark.asyncio
     async def test_cancel_session_run(self, make_client) -> None:

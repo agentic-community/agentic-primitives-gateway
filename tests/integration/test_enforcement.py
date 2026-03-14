@@ -234,17 +234,17 @@ class TestCedarEnforcerIntegration:
         """CedarPolicyEnforcer loads policies from the NoopPolicyProvider."""
         reg = _init_noop_registry
 
-        # Create an engine and policy via the policy provider
+        app = _build_app()
+        enforcer = CedarPolicyEnforcer()
+        engine_id = await enforcer.ensure_engine()
+
+        # Create a policy in the enforcer's engine
         policy_provider = reg.policy
-        engine = await policy_provider.create_policy_engine(name="test-engine")
-        engine_id = engine["policy_engine_id"]
         await policy_provider.create_policy(
             engine_id=engine_id,
             policy_body="permit(principal, action, resource);",
         )
 
-        app = _build_app()
-        enforcer = CedarPolicyEnforcer()
         await enforcer.load_policies()
         app.state.enforcer = enforcer
 

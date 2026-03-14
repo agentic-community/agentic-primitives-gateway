@@ -97,21 +97,24 @@ class TestCedarPolicyEnforcer:
         assert result is True
 
     @pytest.mark.asyncio
-    async def test_load_policies_all_engines(self):
-        """load_policies fetches from all engines when engine_id is not set."""
+    async def test_load_policies_skips_without_engine_id(self):
+        """load_policies is a no-op when engine_id has not been set yet."""
         enforcer = CedarPolicyEnforcer()
+        await enforcer.load_policies()
+        assert len(enforcer._policies) == 0
+
+    @pytest.mark.asyncio
+    async def test_load_policies_from_scoped_engine(self):
+        """load_policies fetches only from the enforcer's scoped engine."""
+        enforcer = CedarPolicyEnforcer(engine_id="eng-1")
 
         mock_policy_provider = AsyncMock()
-        mock_policy_provider.list_policy_engines.return_value = {
-            "policy_engines": [
-                {"policy_engine_id": "eng-1"},
-                {"policy_engine_id": "eng-2"},
+        mock_policy_provider.list_policies.return_value = {
+            "policies": [
+                {"definition": "permit(principal, action, resource);"},
+                {"definition": 'forbid(principal == Agent::"bad", action, resource);'},
             ],
         }
-        mock_policy_provider.list_policies.side_effect = [
-            {"policies": [{"definition": "permit(principal, action, resource);"}]},
-            {"policies": [{"definition": 'forbid(principal == Agent::"bad", action, resource);'}]},
-        ]
 
         mock_registry = MagicMock()
         type(mock_registry).policy = property(lambda self: mock_policy_provider)
@@ -121,6 +124,7 @@ class TestCedarPolicyEnforcer:
 
         assert len(enforcer._policies) == 2
         assert "permit(principal, action, resource);" in enforcer._policies
+        mock_policy_provider.list_policies.assert_called_once_with("eng-1")
 
     @pytest.mark.asyncio
     async def test_load_policies_single_engine(self):

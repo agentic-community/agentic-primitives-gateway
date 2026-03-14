@@ -1,6 +1,6 @@
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query, Response
+from fastapi import APIRouter, HTTPException, Query, Request, Response
 
 from agentic_primitives_gateway.models.enums import Primitive
 from agentic_primitives_gateway.models.policy import (
@@ -21,6 +21,20 @@ from agentic_primitives_gateway.registry import registry
 from agentic_primitives_gateway.routes._helpers import handle_provider_errors
 
 router = APIRouter(prefix="/api/v1/policy", tags=[Primitive.POLICY])
+
+
+# ── Enforcement info ─────────────────────────────────────────────────
+
+
+@router.get("/enforcement")
+async def get_enforcement_info(request: Request) -> dict[str, Any]:
+    """Return the active enforcement engine ID so clients can add policies to it."""
+    enforcer = getattr(request.app.state, "enforcer", None)
+    engine_id = getattr(enforcer, "engine_id", None) if enforcer else None
+    return {
+        "active": enforcer is not None,
+        "engine_id": engine_id,
+    }
 
 
 # ── Policy engines ────────────────────────────────────────────────────

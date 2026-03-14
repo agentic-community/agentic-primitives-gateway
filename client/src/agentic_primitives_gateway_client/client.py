@@ -1357,6 +1357,83 @@ class AgenticPlatformClient:
 
     # ── Agents ─────────────────────────────────────────────────────────
 
+    async def get_tool_catalog(self) -> dict[str, list[dict[str, Any]]]:
+        """Fetch the tool catalog from the gateway.
+
+        Returns a dict mapping primitive names to lists of tool definitions.
+        Each tool has ``name``, ``description``, and ``input_schema`` (JSON Schema).
+
+        Example::
+
+            catalog = await client.get_tool_catalog()
+            for tool in catalog["memory"]:
+                print(f"{tool['name']}: {tool['description']}")
+                # tool['input_schema'] has the JSON Schema for parameters
+        """
+        resp = await self._get("/api/v1/agents/tool-catalog")
+        self._raise_for_status(resp)
+        return self._json_dict(resp).get("primitives", {})
+
+    async def get_tools(
+        self,
+        primitives: list[str],
+        *,
+        namespace: str = "",
+        session_id: str | None = None,
+    ) -> list[Any]:
+        """Get async tool functions for the requested primitives.
+
+        Fetches the tool catalog from the gateway and returns plain async
+        callables with ``__name__``, ``__doc__``, and ``__annotations__``
+        set from the catalog. Pass them directly to any agent framework.
+
+        Example::
+
+            tools = await client.get_tools(
+                ["memory", "browser", "code_interpreter"],
+                namespace="agent:my-agent",
+            )
+            # tools is a list of async callables
+            agent = create_agent(model, tools=tools)
+
+        Args:
+            primitives: Primitive names (e.g. ``["memory", "browser"]``).
+            namespace: Memory namespace (required if ``"memory"`` is included).
+            session_id: Optional session ID for browser/code_interpreter.
+        """
+        from agentic_primitives_gateway_client.tool_builder import build_tools_async
+
+        return await build_tools_async(self, primitives, namespace=namespace, session_id=session_id)
+
+    def get_tools_sync(
+        self,
+        primitives: list[str],
+        *,
+        namespace: str = "",
+        session_id: str | None = None,
+    ) -> list[Any]:
+        """Get sync tool functions for the requested primitives.
+
+        Same as :meth:`get_tools` but returns synchronous callables.
+
+        Example::
+
+            tools = client.get_tools_sync(
+                ["memory", "browser", "code_interpreter"],
+                namespace="agent:my-agent",
+            )
+            # tools is a list of sync callables
+            agent = Agent(model=model, tools=tools)
+
+        Args:
+            primitives: Primitive names (e.g. ``["memory", "browser"]``).
+            namespace: Memory namespace (required if ``"memory"`` is included).
+            session_id: Optional session ID for browser/code_interpreter.
+        """
+        from agentic_primitives_gateway_client.tool_builder import build_tools_sync
+
+        return build_tools_sync(self, primitives, namespace=namespace, session_id=session_id)
+
     async def create_agent(self, spec: dict[str, Any]) -> dict[str, Any]:
         """Create a new agent.
 
@@ -1469,12 +1546,6 @@ class AgenticPlatformClient:
     async def cancel_session_run(self, name: str, session_id: str) -> dict[str, Any]:
         """Cancel an active agent run for a session."""
         resp = await self._delete(f"/api/v1/agents/{name}/sessions/{session_id}/run")
-        self._raise_for_status(resp)
-        return self._json_dict(resp)
-
-    async def get_tool_catalog(self) -> dict[str, Any]:
-        """List all available primitives and their tools for the agent builder UI."""
-        resp = await self._get("/api/v1/agents/tool-catalog")
         self._raise_for_status(resp)
         return self._json_dict(resp)
 

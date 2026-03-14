@@ -62,23 +62,17 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-async def _seed_policies() -> None:
-    """Seed Cedar policies from config into the policy provider.
+async def _seed_policies(engine_id: str) -> None:
+    """Seed Cedar policies from config into the enforcer's policy engine.
 
-    Creates a 'seed' engine and populates it with policies defined in
-    ``enforcement.seed_policies``.  Runs once at startup so that the
-    noop (in-memory) provider always has a baseline policy set.
+    Populates the engine with policies defined in ``enforcement.seed_policies``.
+    Runs once at startup so the gateway always has a baseline policy set.
     """
     seed = settings.enforcement.seed_policies
     if not seed:
         return
 
     policy_provider = registry.policy
-    engine = await policy_provider.create_policy_engine(
-        name="seed",
-        description="Auto-seeded from config",
-    )
-    engine_id = engine["policy_engine_id"]
 
     for sp in seed:
         await policy_provider.create_policy(
@@ -165,13 +159,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.auth_backend = auth_backend
     logger.info("Auth backend: %s", auth_cfg.backend)
 
-    # Seed policies from config into the policy provider
-    await _seed_policies()
-
     # Initialize policy enforcer
     enforcer_cfg = settings.enforcement
     enforcer_cls = _load_class(enforcer_cfg.backend)
     enforcer: PolicyEnforcer = enforcer_cls(**enforcer_cfg.config)
+
+    # Auto-provision a scoped engine if supported (Cedar enforcer)
+    if hasattr(enforcer, "ensure_engine"):
+        engine_id = await enforcer.ensure_engine()
+        await _seed_policies(engine_id)
+
     await enforcer.load_policies()
     if hasattr(enforcer, "start_refresh"):
         enforcer.start_refresh()
