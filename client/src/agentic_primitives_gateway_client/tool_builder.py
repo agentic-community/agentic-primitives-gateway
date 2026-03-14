@@ -94,7 +94,8 @@ def _set_tool_metadata(
     wrapped.__qualname__ = name
     wrapped.__doc__ = description
     wrapped.__annotations__ = _make_annotations(input_schema)
-    return wrapped
+    result: Callable = wrapped
+    return result
 
 
 # ── Async tool builders per primitive ─────────────────────────────────
@@ -205,14 +206,16 @@ def _identity_tool_async(
 
         async def _get_token(credential_provider: str, scopes: str = "") -> str:
             scope_list = [s.strip() for s in scopes.split(",") if s.strip()] if scopes else None
-            return await identity.get_token(credential_provider, scopes=scope_list)
+            wt = await identity.get_workload_token("default")
+            return await identity.get_token(credential_provider, wt, scopes=scope_list)
 
         return _get_token
 
     if tool_name == "get_api_key":
 
         async def _get_api_key(credential_provider: str) -> str:
-            return await identity.get_api_key(credential_provider)
+            wt = await identity.get_workload_token("default")
+            return await identity.get_api_key(credential_provider, wt)
 
         return _get_api_key
 
@@ -227,7 +230,8 @@ def _tools_tool_async(
     if tool_name == "search_tools":
 
         async def _search(query: str, max_results: int = 10) -> str:
-            return await tools_client.search(query, max_results)
+            result = await tools_client.search(query, max_results)
+            return json.dumps(result, default=str)
 
         return _search
 
@@ -351,14 +355,16 @@ def _identity_tool_sync(
 
         def _get_token(credential_provider: str, scopes: str = "") -> str:
             scope_list = [s.strip() for s in scopes.split(",") if s.strip()] if scopes else None
-            return identity.get_token_sync(credential_provider, scopes=scope_list)
+            wt = identity.get_workload_token_sync("default")
+            return identity.get_token_sync(credential_provider, wt, scopes=scope_list)
 
         return _get_token
 
     if tool_name == "get_api_key":
 
         def _get_api_key(credential_provider: str) -> str:
-            return identity.get_api_key_sync(credential_provider)
+            wt = identity.get_workload_token_sync("default")
+            return identity.get_api_key_sync(credential_provider, wt)
 
         return _get_api_key
 
@@ -373,7 +379,8 @@ def _tools_tool_sync(
     if tool_name == "search_tools":
 
         def _search(query: str, max_results: int = 10) -> str:
-            return tools_client.search_sync(query, max_results)
+            result = tools_client.search_sync(query, max_results)
+            return json.dumps(result, default=str)
 
         return _search
 

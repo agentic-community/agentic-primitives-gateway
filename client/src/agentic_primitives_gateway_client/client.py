@@ -1372,7 +1372,8 @@ class AgenticPlatformClient:
         """
         resp = await self._get("/api/v1/agents/tool-catalog")
         self._raise_for_status(resp)
-        return self._json_dict(resp).get("primitives", {})
+        catalog: dict[str, list[dict[str, Any]]] = self._json_dict(resp).get("primitives", {})
+        return catalog
 
     async def get_tools(
         self,

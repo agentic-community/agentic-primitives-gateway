@@ -78,7 +78,8 @@ def fetch_oidc_token(
         timeout=timeout,
     )
     resp.raise_for_status()
-    return resp.json()["access_token"]
+    token: str = resp.json()["access_token"]
+    return token
 
 
 def fetch_client_credentials_token(
@@ -122,7 +123,8 @@ def fetch_client_credentials_token(
         timeout=timeout,
     )
     resp.raise_for_status()
-    return resp.json()["access_token"]
+    token: str = resp.json()["access_token"]
+    return token
 
 
 def fetch_token_from_env(

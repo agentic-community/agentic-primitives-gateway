@@ -87,13 +87,14 @@ class CedarPolicyEnforcer(SyncRunnerMixin, PolicyEnforcer):
             engines_result = await policy_provider.list_policy_engines()
             for eng in engines_result.get("policy_engines", []):
                 if eng.get("name") == self.AUTO_ENGINE_NAME:
-                    self._engine_id = eng["policy_engine_id"]
+                    eid: str = eng["policy_engine_id"]
+                    self._engine_id = eid
                     logger.info(
                         "Found existing enforcement engine: %s (%s)",
                         self.AUTO_ENGINE_NAME,
-                        self._engine_id,
+                        eid,
                     )
-                    return self._engine_id
+                    return eid
         except Exception:
             logger.debug("Could not list engines, will try to create one")
 
@@ -103,13 +104,14 @@ class CedarPolicyEnforcer(SyncRunnerMixin, PolicyEnforcer):
                 name=self.AUTO_ENGINE_NAME,
                 description="Auto-provisioned by the gateway for Cedar enforcement",
             )
-            self._engine_id = result["policy_engine_id"]
+            eid = str(result["policy_engine_id"])
+            self._engine_id = eid
             logger.info(
                 "Created enforcement engine: %s (%s)",
                 self.AUTO_ENGINE_NAME,
-                self._engine_id,
+                eid,
             )
-            return self._engine_id
+            return eid
         except Exception:
             logger.exception("Failed to auto-provision enforcement engine")
             raise
