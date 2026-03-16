@@ -222,12 +222,15 @@ _TOOL_CATALOG: dict[str, list[ToolDefinition]] = {
         ),
         ToolDefinition(
             name="invoke_tool",
-            description="Invoke an external tool by name.",
+            description="Invoke an external tool by name. The tool_name must use the format 'ServerTitle/tool_name' (e.g. 'AI Registry tools/list_services'). Use search_tools first to discover available tools and their full names.",
             primitive="tools",
             input_schema={
                 "type": "object",
                 "properties": {
-                    "tool_name": {"type": "string", "description": "Name of the tool to invoke."},
+                    "tool_name": {
+                        "type": "string",
+                        "description": "Full tool name in 'ServerTitle/tool_name' format (e.g. 'AI Registry tools/list_services').",
+                    },
                     "params": {"type": "string", "description": "JSON string of parameters.", "default": "{}"},
                 },
                 "required": ["tool_name"],

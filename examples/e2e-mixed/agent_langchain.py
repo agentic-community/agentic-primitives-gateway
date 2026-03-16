@@ -171,7 +171,7 @@ async def main():
         sys.stdout.write("\nAssistant: ")
         sys.stdout.flush()
         reply_chunks: list[str] = []
-        async for event in agent.astream_events({"messages": messages}, version="v2"):
+        async for event in agent.astream_events({"messages": messages}, version="v2", config={"recursion_limit": 100}):
             if event["event"] == "on_chat_model_stream":
                 chunk = event["data"].get("chunk")
                 if chunk and hasattr(chunk, "content"):

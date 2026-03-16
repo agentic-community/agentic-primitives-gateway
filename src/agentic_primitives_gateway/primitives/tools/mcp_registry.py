@@ -11,19 +11,25 @@ from agentic_primitives_gateway.primitives.tools.base import ToolsProvider
 
 logger = logging.getLogger(__name__)
 
+# MCP protocol constants
+_MCP_PROTOCOL_VERSION = "2025-03-26"
+_MCP_CLIENT_INFO = {"name": "agentic-primitives-gateway", "version": "1.0"}
+
 
 class MCPRegistryProvider(SyncRunnerMixin, ToolsProvider):
     """Tools provider backed by MCP Gateway Registry.
 
     Connects to a self-hosted MCP Gateway Registry instance for centralized
-    MCP tool discovery and invocation. Supports semantic search, server
-    registration, and MCP JSON-RPC tool calls.
+    MCP tool discovery and invocation. Uses the MCP streamable-http transport
+    protocol: ``initialize`` to obtain a session, then ``tools/list`` and
+    ``tools/call`` with the session ID header.
 
     See: https://github.com/agentic-community/mcp-gateway-registry
 
     Credentials (JWT token) can come from:
     1. Client headers: X-Cred-Mcp-Registry-Token, X-Cred-Mcp-Registry-Url
     2. Provider config: base_url, token
+    3. Environment: MCP_REGISTRY_URL, MCP_REGISTRY_TOKEN
 
     Provider config example::
 
@@ -46,24 +52,21 @@ class MCPRegistryProvider(SyncRunnerMixin, ToolsProvider):
         logger.info("MCP Registry tools provider initialized (base_url=%s)", self._default_base_url)
 
     def _resolve_config(self) -> tuple[str, str | None]:
-        """Resolve base URL and token from context or defaults.
-
-        Headers: X-Cred-Mcp-Registry-Url and X-Cred-Mcp-Registry-Token
-        are parsed by the middleware as service='mcp', keys='registry_url'
-        and 'registry_token' (the first dash splits the service name).
-        """
+        """Resolve base URL and token from context or defaults."""
         creds = get_service_credentials("mcp_registry") or {}
         base_url = (creds.get("url") or self._default_base_url).rstrip("/")
         token = creds.get("token") or self._default_token
         return base_url, token
 
-    def _headers(self, token: str | None) -> dict[str, str]:
+    def _headers(self, token: str | None, session_id: str | None = None) -> dict[str, str]:
         headers: dict[str, str] = {
             "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream",
         }
         if token:
             headers["Authorization"] = f"Bearer {token}"
+        if session_id:
+            headers["Mcp-Session-Id"] = session_id
         return headers
 
     @staticmethod
@@ -77,6 +80,154 @@ class MCPRegistryProvider(SyncRunnerMixin, ToolsProvider):
         fallback: dict[str, Any] = json.loads(text)
         return fallback
 
+    # ── MCP streamable-http session management ───────────────────────
+
+    # Cache: (base_url, path) -> session_id
+    _sessions: ClassVar[dict[tuple[str, str], str]] = {}
+
+    # Cache: server_path -> resolved MCP endpoint URL
+    _mcp_endpoints: ClassVar[dict[str, str]] = {}
+
+    def _discover_mcp_endpoint(self, base_url: str, server_path: str, token: str | None) -> str:
+        """Discover the MCP streamable-http endpoint for a server.
+
+        Different MCP servers expose their endpoint at different paths.
+        We try the path directly first, then with ``/mcp`` suffix.
+        The result is cached.
+        """
+        if server_path in self._mcp_endpoints:
+            return self._mcp_endpoints[server_path]
+
+        import httpx
+
+        path = server_path.rstrip("/")
+        candidates = [f"{base_url}{path}", f"{base_url}{path}/mcp"]
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": _MCP_PROTOCOL_VERSION,
+                "capabilities": {},
+                "clientInfo": _MCP_CLIENT_INFO,
+            },
+        }
+
+        for endpoint in candidates:
+            try:
+                with httpx.Client(timeout=15, verify=self._verify_ssl) as client:
+                    resp = client.post(endpoint, json=payload, headers=self._headers(token))
+                    if resp.status_code == 200:
+                        self._mcp_endpoints[server_path] = endpoint
+                        # Also cache the session from this init
+                        session_id = resp.headers.get("mcp-session-id", "")
+                        if session_id:
+                            cache_key = (base_url, server_path)
+                            self._sessions[cache_key] = session_id
+                        logger.info("MCP endpoint discovered: %s -> %s", server_path, endpoint)
+                        return endpoint
+            except Exception:
+                continue
+
+        # Default to path/mcp
+        fallback = f"{base_url}{path}/mcp"
+        self._mcp_endpoints[server_path] = fallback
+        return fallback
+
+    def _init_mcp_session(
+        self,
+        base_url: str,
+        server_path: str,
+        token: str | None,
+    ) -> str:
+        """Initialize an MCP session via the streamable-http transport.
+
+        Returns the session ID from the ``Mcp-Session-Id`` response header.
+        Sessions are cached per (base_url, path).
+        """
+        cache_key = (base_url, server_path)
+        if cache_key in self._sessions:
+            return self._sessions[cache_key]
+
+        import httpx
+
+        endpoint = self._discover_mcp_endpoint(base_url, server_path, token)
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": _MCP_PROTOCOL_VERSION,
+                "capabilities": {},
+                "clientInfo": _MCP_CLIENT_INFO,
+            },
+        }
+
+        with httpx.Client(timeout=30, verify=self._verify_ssl) as client:
+            resp = client.post(endpoint, json=payload, headers=self._headers(token))
+            resp.raise_for_status()
+
+        session_id = resp.headers.get("mcp-session-id", "")
+        if not session_id:
+            data = self._parse_sse_json(resp.text)
+            session_id = data.get("result", {}).get("sessionId", "")
+
+        if session_id:
+            self._sessions[cache_key] = session_id
+            logger.debug("MCP session initialized: %s -> %s", server_path, session_id)
+
+        return session_id
+
+    def _mcp_call(
+        self,
+        base_url: str,
+        server_path: str,
+        token: str | None,
+        method: str,
+        params: dict[str, Any] | None = None,
+        *,
+        timeout: float = 60,
+    ) -> dict[str, Any]:
+        """Make an MCP JSON-RPC call over streamable-http.
+
+        Handles session initialization, retries on session expiry, and SSE parsing.
+        """
+        import httpx
+
+        session_id = self._init_mcp_session(base_url, server_path, token)
+        endpoint = self._discover_mcp_endpoint(base_url, server_path, token)
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": method,
+            "params": params or {},
+        }
+
+        with httpx.Client(timeout=timeout, verify=self._verify_ssl) as client:
+            resp = client.post(
+                endpoint,
+                json=payload,
+                headers=self._headers(token, session_id),
+            )
+
+            # Session expired — re-initialize and retry once
+            if resp.status_code in (400, 404):
+                cache_key = (base_url, server_path)
+                self._sessions.pop(cache_key, None)
+                session_id = self._init_mcp_session(base_url, server_path, token)
+                resp = client.post(
+                    endpoint,
+                    json=payload,
+                    headers=self._headers(token, session_id),
+                )
+
+            resp.raise_for_status()
+
+        result: dict[str, Any] = self._parse_sse_json(resp.text)
+        return result
+
+    # ── Server path resolution ────────────────────────────────────────
+
     # Cache of server title -> path mappings
     _server_paths: ClassVar[dict[str, str]] = {}
 
@@ -85,7 +236,6 @@ class MCPRegistryProvider(SyncRunnerMixin, ToolsProvider):
         if server_title in self._server_paths:
             return self._server_paths[server_title]
 
-        # Fetch servers to build the mapping
         def _fetch() -> None:
             import httpx
 
@@ -110,6 +260,8 @@ class MCPRegistryProvider(SyncRunnerMixin, ToolsProvider):
 
         raise ValueError(f"Server '{server_title}' not found in registry")
 
+    # ── ToolsProvider interface ───────────────────────────────────────
+
     async def list_tools(self, filters: dict[str, Any] | None = None) -> list[dict[str, Any]]:
         base_url, token = self._resolve_config()
 
@@ -117,7 +269,6 @@ class MCPRegistryProvider(SyncRunnerMixin, ToolsProvider):
             import httpx
 
             with httpx.Client(timeout=30, verify=self._verify_ssl) as http:
-                # Get servers
                 resp = http.get(f"{base_url}/v0.1/servers", headers=self._headers(token))
                 resp.raise_for_status()
                 data = resp.json()
@@ -136,16 +287,9 @@ class MCPRegistryProvider(SyncRunnerMixin, ToolsProvider):
                 if not path or health != "healthy":
                     continue
 
-                # Fetch actual tools via MCP proxy
+                # Fetch actual tools via MCP streamable-http
                 try:
-                    with httpx.Client(timeout=15, verify=self._verify_ssl) as http:
-                        mcp_resp = http.post(
-                            f"{base_url}{path}",
-                            json={"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
-                            headers=self._headers(token),
-                        )
-                        mcp_resp.raise_for_status()
-                        mcp_data = self._parse_sse_json(mcp_resp.text)
+                    mcp_data = self._mcp_call(base_url, path, token, "tools/list", timeout=15)
 
                     for t in mcp_data.get("result", {}).get("tools", []):
                         tools.append(
@@ -161,7 +305,6 @@ class MCPRegistryProvider(SyncRunnerMixin, ToolsProvider):
                         )
                 except Exception as e:
                     logger.warning("Failed to fetch tools from %s%s: %s", base_url, path, e)
-                    # Fall back to server-level entry
                     tools.append(
                         {
                             "name": server_title,
@@ -184,38 +327,34 @@ class MCPRegistryProvider(SyncRunnerMixin, ToolsProvider):
         if len(parts) == 2:
             server_title, actual_tool = parts
         else:
-            server_title = tool_name
-            actual_tool = tool_name
+            raise ValueError(
+                f"Invalid tool_name '{tool_name}'. "
+                "Expected format: 'ServerTitle/tool_name' (e.g. 'AI Registry tools/list_services')"
+            )
 
-        # Resolve server path from title
-        server_path = await self._resolve_server_path(server_title, base_url, token)
+        try:
+            server_path = await self._resolve_server_path(server_title, base_url, token)
+        except ValueError:
+            raise
+        except Exception as e:
+            raise ValueError(f"Failed to resolve server '{server_title}': {e}") from e
 
         def _invoke() -> dict[str, Any]:
-            import httpx
-
-            payload = {
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "tools/call",
-                "params": {
-                    "name": actual_tool,
-                    "arguments": params,
-                },
-            }
-
-            with httpx.Client(timeout=60, verify=self._verify_ssl) as client:
-                resp = client.post(
-                    f"{base_url}{server_path}",
-                    json=payload,
-                    headers=self._headers(token),
+            try:
+                mcp_result = self._mcp_call(
+                    base_url,
+                    server_path,
+                    token,
+                    "tools/call",
+                    {"name": actual_tool, "arguments": params},
                 )
-                resp.raise_for_status()
-                result = self._parse_sse_json(resp.text)
+            except Exception as e:
+                return {"error": f"MCP call to '{server_title}/{actual_tool}' failed: {e}"}
 
-            if "error" in result:
-                return {"error": result["error"].get("message", str(result["error"]))}
+            if "error" in mcp_result:
+                return {"error": mcp_result["error"].get("message", str(mcp_result["error"]))}
 
-            content = result.get("result", {}).get("content", [])
+            content = mcp_result.get("result", {}).get("content", [])
             text_parts = []
             for block in content:
                 if isinstance(block, dict) and block.get("text"):
@@ -224,7 +363,7 @@ class MCPRegistryProvider(SyncRunnerMixin, ToolsProvider):
                     text_parts.append(block)
 
             return {
-                "result": "\n".join(text_parts) if text_parts else result.get("result"),
+                "result": "\n".join(text_parts) if text_parts else mcp_result.get("result"),
             }
 
         result: dict[str, Any] = await self._run_sync(_invoke)

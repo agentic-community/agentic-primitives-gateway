@@ -27,7 +27,6 @@ Usage (sync)::
 from __future__ import annotations
 
 import asyncio
-import functools
 import json
 import logging
 from collections.abc import Callable
@@ -68,34 +67,16 @@ def _set_tool_metadata(
     description: str,
     input_schema: dict[str, Any],
 ) -> Callable:
-    """Wrap a callable and set __name__, __doc__, and __annotations__.
+    """Set __name__, __doc__, and __annotations__ on a callable.
 
-    Always wraps in a plain function so metadata can be set even on
-    bound methods (which don't allow __name__ assignment).
+    The closures returned by the tool builders already have proper
+    signatures with typed parameters, so we just set metadata directly.
     """
-    inner = fn
-
-    if asyncio.iscoroutinefunction(inner):
-
-        @functools.wraps(inner)
-        async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
-            return await inner(*args, **kwargs)
-
-        wrapped: Any = async_wrapper
-    else:
-
-        @functools.wraps(inner)
-        def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
-            return inner(*args, **kwargs)
-
-        wrapped = sync_wrapper
-
-    wrapped.__name__ = name
-    wrapped.__qualname__ = name
-    wrapped.__doc__ = description
-    wrapped.__annotations__ = _make_annotations(input_schema)
-    result: Callable = wrapped
-    return result
+    fn.__name__ = name
+    fn.__qualname__ = name
+    fn.__doc__ = description
+    fn.__annotations__ = _make_annotations(input_schema)
+    return fn
 
 
 # ── Async tool builders per primitive ─────────────────────────────────
@@ -143,40 +124,54 @@ def _browser_tool_async(
     tool_name: str,
     browser: Browser,
 ) -> Callable[..., Any] | None:
-    """Return an async callable for a browser tool."""
+    """Return an async callable for a browser tool.
+
+    Auto-starts a browser session on first use if none is active.
+    """
+
+    async def _ensure_session() -> None:
+        if not browser.session_id:
+            await browser.start()
+
     if tool_name == "navigate":
 
         async def _navigate(url: str) -> str:
+            await _ensure_session()
             return await browser.navigate(url)
 
         return _navigate
     if tool_name == "read_page":
 
         async def _read_page() -> str:
+            await _ensure_session()
             return await browser.get_page_content()
 
         return _read_page
     if tool_name == "click":
 
         async def _click(selector: str) -> str:
+            await _ensure_session()
             return await browser.click(selector)
 
         return _click
     if tool_name == "type_text":
 
         async def _type_text(selector: str, text: str) -> str:
+            await _ensure_session()
             return await browser.type_text(selector, text)
 
         return _type_text
     if tool_name == "screenshot":
 
         async def _screenshot() -> str:
+            await _ensure_session()
             return await browser.screenshot()
 
         return _screenshot
     if tool_name == "evaluate_js":
 
         async def _evaluate_js(expression: str) -> str:
+            await _ensure_session()
             return await browser.evaluate(expression)
 
         return _evaluate_js
@@ -238,9 +233,12 @@ def _tools_tool_async(
     if tool_name == "invoke_tool":
 
         async def _invoke(tool_name: str, params: str = "{}") -> str:
-            parsed = json.loads(params) if isinstance(params, str) else params
-            result = await tools_client.invoke(tool_name, parsed)
-            return json.dumps(result, default=str) if not isinstance(result, str) else result
+            try:
+                parsed = json.loads(params) if isinstance(params, str) else params
+                result = await tools_client.invoke(tool_name, parsed)
+                return json.dumps(result, default=str) if not isinstance(result, str) else result
+            except Exception as e:
+                return f"Error invoking tool '{tool_name}': {e}"
 
         return _invoke
 
@@ -292,40 +290,54 @@ def _browser_tool_sync(
     tool_name: str,
     browser: Browser,
 ) -> Callable[..., Any] | None:
-    """Return a sync callable for a browser tool."""
+    """Return a sync callable for a browser tool.
+
+    Auto-starts a browser session on first use if none is active.
+    """
+
+    def _ensure_session() -> None:
+        if not browser.session_id:
+            browser.start_sync()
+
     if tool_name == "navigate":
 
         def _navigate(url: str) -> str:
+            _ensure_session()
             return browser.navigate_sync(url)
 
         return _navigate
     if tool_name == "read_page":
 
         def _read_page() -> str:
+            _ensure_session()
             return browser.get_page_content_sync()
 
         return _read_page
     if tool_name == "click":
 
         def _click(selector: str) -> str:
+            _ensure_session()
             return browser.click_sync(selector)
 
         return _click
     if tool_name == "type_text":
 
         def _type_text(selector: str, text: str) -> str:
+            _ensure_session()
             return browser.type_text_sync(selector, text)
 
         return _type_text
     if tool_name == "screenshot":
 
         def _screenshot() -> str:
+            _ensure_session()
             return browser.screenshot_sync()
 
         return _screenshot
     if tool_name == "evaluate_js":
 
         def _evaluate_js(expression: str) -> str:
+            _ensure_session()
             return browser.evaluate_sync(expression)
 
         return _evaluate_js
@@ -387,9 +399,12 @@ def _tools_tool_sync(
     if tool_name == "invoke_tool":
 
         def _invoke(tool_name: str, params: str = "{}") -> str:
-            parsed = json.loads(params) if isinstance(params, str) else params
-            result = tools_client.invoke_sync(tool_name, parsed)
-            return json.dumps(result, default=str) if not isinstance(result, str) else result
+            try:
+                parsed = json.loads(params) if isinstance(params, str) else params
+                result = tools_client.invoke_sync(tool_name, parsed)
+                return json.dumps(result, default=str) if not isinstance(result, str) else result
+            except Exception as e:
+                return f"Error invoking tool '{tool_name}': {e}"
 
         return _invoke
 

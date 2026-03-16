@@ -72,7 +72,12 @@ async def get_server(server_name: str) -> Any:
 
 @router.post("/{name:path}/invoke", response_model=ToolResult)
 async def invoke_tool(name: str, request: InvokeToolRequest) -> ToolResult:
-    result = await registry.tools.invoke_tool(tool_name=name, params=request.params)
+    try:
+        result = await registry.tools.invoke_tool(tool_name=name, params=request.params)
+    except (ValueError, KeyError) as e:
+        raise HTTPException(status_code=400, detail=str(e)) from None
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Tool invocation failed: {e}") from None
     return ToolResult(tool_name=name, **result)
 
 

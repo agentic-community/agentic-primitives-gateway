@@ -40,8 +40,8 @@ auth:
     client_id: "${JWT_CLIENT_ID:=agentic-gateway}"
     algorithms: ["RS256"]
     claims_mapping:
-      groups: "groups"
-      scopes: "scope"
+      groups: "${JWT_GROUPS_CLAIM:=groups}"
+      scopes: "${JWT_SCOPES_CLAIM:=scope}"
     jwks_cache_seconds: 300
 
 # ── Cedar Policy Enforcement ─────────────────────────────────────────
@@ -88,7 +88,7 @@ providers:
         config:
           public_key: "${LANGFUSE_PUBLIC_KEY:=}"
           secret_key: "${LANGFUSE_SECRET_KEY:=}"
-          base_url: "${LANGFUSE_BASE_URL:=https://cloud.langfuse.com}"
+          base_url: "${LANGFUSE_BASE_URL:=http://localhost:3000}"
 
   # Code interpreter: Jupyter (self-hosted)
   code_interpreter:
