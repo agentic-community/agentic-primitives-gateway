@@ -90,6 +90,19 @@ def get_authenticated_principal() -> AuthenticatedPrincipal | None:
     return _authenticated_principal.get()
 
 
+# ── Access token ───────────────────────────────────────────────────
+
+_access_token: ContextVar[str | None] = ContextVar("_access_token", default=None)
+
+
+def set_access_token(token: str | None) -> None:
+    _access_token.set(token)
+
+
+def get_access_token() -> str | None:
+    return _access_token.get()
+
+
 # ── Provider routing ────────────────────────────────────────────────
 
 _provider_overrides: ContextVar[dict[str, str]] = ContextVar("_provider_overrides", default={})  # noqa: B039
@@ -111,7 +124,13 @@ def _server_credentials_allowed() -> bool:
     """Check if the server is configured to allow its own credentials as fallback."""
     from agentic_primitives_gateway.config import settings
 
-    return settings.allow_server_credentials
+    mode = settings.allow_server_credentials
+    if isinstance(mode, bool):
+        return mode
+    # ServerCredentialMode enum
+    from agentic_primitives_gateway.models.enums import ServerCredentialMode
+
+    return mode in (ServerCredentialMode.FALLBACK, ServerCredentialMode.ALWAYS)
 
 
 def get_boto3_session(default_region: str = "us-east-1") -> Any:

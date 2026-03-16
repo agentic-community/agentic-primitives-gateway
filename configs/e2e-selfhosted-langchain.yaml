@@ -16,17 +16,27 @@
 ##   - MCP Registry at localhost:8080
 ##   - Redis at localhost:6379
 ##   - AWS credentials for Bedrock (LLM + embeddings)
-##   - Optional: Keycloak for JWT auth
+##   - Optional: Keycloak for JWT auth + per-user credentials
+##     (service account with manage-users + manage-realm roles)
 ##
 ## Usage:
 ##   LANGFUSE_PUBLIC_KEY=pk-lf-... LANGFUSE_SECRET_KEY=sk-lf-... \
 ##   ./run.sh e2e-selfhosted-langchain
 ##
-## With JWT auth (Keycloak):
+## With JWT auth + per-user credentials (Keycloak):
 ##   JWT_ISSUER=https://keycloak.example.com/realms/my-realm \
 ##   JWT_CLIENT_ID=agentic-gateway \
-##   LANGFUSE_PUBLIC_KEY=pk-lf-... LANGFUSE_SECRET_KEY=sk-lf-... \
+##   KC_ADMIN_CLIENT_ID=agentic-gateway-admin \
+##   KC_ADMIN_CLIENT_SECRET=<secret> \
 ##   ./run.sh e2e-selfhosted-langchain
+##
+## Per-user credential resolution:
+##   Convention-based: all apg.* attributes in userinfo are auto-mapped
+##   to service credentials by dot-separated naming:
+##     apg.langfuse.public_key  → service_credentials["langfuse"]["public_key"]
+##     apg.mcp_registry.api_key → service_credentials["mcp_registry"]["api_key"]
+##   Set credentials via the UI Settings page or Keycloak Admin API.
+##   Requires a Keycloak service account with manage-users + manage-realm roles.
 
 # ── Authentication ────────────────────────────────────────────────────
 # JWT via Keycloak (or any OIDC provider). Leave JWT_ISSUER empty to
@@ -35,7 +45,7 @@
 auth:
   backend: jwt
   jwt:
-    issuer: "${JWT_ISSUER:=}"
+    issuer: "${JWT_ISSUER:=-}"
     audience: "${JWT_AUDIENCE:-}"
     client_id: "${JWT_CLIENT_ID:=agentic-gateway}"
     algorithms: ["RS256"]
@@ -138,7 +148,7 @@ providers:
       mcp_registry:
         backend: "agentic_primitives_gateway.primitives.tools.mcp_registry.MCPRegistryProvider"
         config:
-          base_url: "${MCP_REGISTRY_URL:=http://localhost:8080}"
+          base_url: "${MCP_REGISTRY_URL:=-}"
           verify_ssl: false
 
   # Policy: AgentCore (Cedar enforcement reads policies from this provider)
@@ -167,7 +177,31 @@ providers:
         config:
           redis_url: "${REDIS_URL:=redis://localhost:6379/0}"
 
-allow_server_credentials: true
+# ── Credential resolution ─────────────────────────────────────────────
+# Per-user credentials from Keycloak user attributes via the userinfo
+# endpoint. Falls back to server ambient / env-var credentials when
+# per-user credentials are not present.
+#
+# Convention-based: all apg.* attributes in userinfo are auto-mapped
+# to service credentials by dot-separated naming. No explicit attribute
+# mapping config is needed. Just store apg.* attributes on users and
+# expose them via userinfo protocol mappers.
+
+allow_server_credentials: fallback
+
+credentials:
+  resolver: oidc
+  oidc:
+    aws:
+      enabled: false
+  writer:
+    backend: keycloak
+    config:
+      admin_client_id: "${KC_ADMIN_CLIENT_ID:-}"
+      admin_client_secret: "${KC_ADMIN_CLIENT_SECRET:-}"
+  cache:
+    ttl_seconds: 300
+    max_entries: 10000
 
 # ── Declarative Agents ────────────────────────────────────────────────
 

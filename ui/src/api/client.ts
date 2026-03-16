@@ -237,6 +237,25 @@ export const api = {
   runTeamStream: (name: string, data: TeamRunRequest, signal?: AbortSignal): ReadableStream<string> =>
     sseStream(`/api/v1/teams/${name}/run/stream`, JSON.stringify(data), signal),
 
+  // Credentials
+  credentialStatus: () =>
+    request<{ source: string; aws_configured: boolean; aws_credential_expiry: string | null }>(
+      "/api/v1/credentials/status",
+    ),
+  readCredentials: () =>
+    request<{ attributes: Record<string, string>; services: Record<string, Record<string, string>> }>(
+      "/api/v1/credentials",
+    ),
+  writeCredentials: (data: { attributes: Record<string, string> }) =>
+    request<{ status: string }>("/api/v1/credentials", {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
+  deleteCredential: (key: string) =>
+    request<{ status: string }>(`/api/v1/credentials/${encodeURIComponent(key)}`, {
+      method: "DELETE",
+    }),
+
   // Policy
   listPolicyEngines: () =>
     request<PolicyEngineListResponse>("/api/v1/policy/engines"),

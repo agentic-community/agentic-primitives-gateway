@@ -19,11 +19,15 @@ from agentic_primitives_gateway.auth.middleware import AuthenticationMiddleware
 from agentic_primitives_gateway.config import (
     AGENT_STORE_ALIASES,
     AUTH_BACKEND_ALIASES,
+    CREDENTIAL_RESOLVER_ALIASES,
+    CREDENTIAL_WRITER_ALIASES,
     TEAM_STORE_ALIASES,
     Settings,
     settings,
 )
 from agentic_primitives_gateway.context import get_request_id
+from agentic_primitives_gateway.credentials.base import CredentialResolver
+from agentic_primitives_gateway.credentials.middleware import CredentialResolutionMiddleware
 from agentic_primitives_gateway.enforcement.base import PolicyEnforcer
 from agentic_primitives_gateway.enforcement.middleware import PolicyEnforcementMiddleware
 from agentic_primitives_gateway.middleware import RequestContextMiddleware
@@ -33,6 +37,7 @@ from agentic_primitives_gateway.routes import (
     agents,
     browser,
     code_interpreter,
+    credentials,
     evaluations,
     gateway,
     health,
@@ -159,6 +164,48 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.auth_backend = auth_backend
     logger.info("Auth backend: %s", auth_cfg.backend)
 
+    # Initialize credential resolver
+    creds_cfg = settings.credentials
+    resolver_cls_path = CREDENTIAL_RESOLVER_ALIASES.get(creds_cfg.resolver, creds_cfg.resolver)
+    resolver_cls = _load_class(resolver_cls_path)
+    resolver_kwargs: dict = {}
+    if creds_cfg.resolver == "oidc":
+        from agentic_primitives_gateway.credentials.cache import CredentialCache
+
+        cache = CredentialCache(
+            ttl_seconds=creds_cfg.cache.ttl_seconds,
+            max_entries=creds_cfg.cache.max_entries,
+        )
+        resolver_kwargs["cache"] = cache
+        # Derive issuer from auth config if available
+        if settings.auth.backend == "jwt" and settings.auth.jwt.get("issuer"):
+            resolver_kwargs["issuer"] = settings.auth.jwt["issuer"]
+        # Share admin credentials with the resolver so it can read user
+        # attributes directly from the Admin API (no protocol mappers needed)
+        writer_cfg = creds_cfg.writer.config
+        if writer_cfg.get("admin_client_id") and writer_cfg.get("admin_client_secret"):
+            resolver_kwargs["admin_client_id"] = writer_cfg["admin_client_id"]
+            resolver_kwargs["admin_client_secret"] = writer_cfg["admin_client_secret"]
+    credential_resolver: CredentialResolver = resolver_cls(**resolver_kwargs)
+    app.state.credential_resolver = credential_resolver
+    logger.info("Credential resolver: %s", creds_cfg.resolver)
+
+    # Initialize credential writer
+    writer_cls_path = CREDENTIAL_WRITER_ALIASES.get(creds_cfg.writer.backend, creds_cfg.writer.backend)
+    writer_cls = _load_class(writer_cls_path)
+    writer_kwargs = dict(creds_cfg.writer.config)
+    if (
+        creds_cfg.writer.backend == "keycloak"
+        and "issuer" not in writer_kwargs
+        and settings.auth.backend == "jwt"
+        and settings.auth.jwt.get("issuer")
+    ):
+        writer_kwargs["issuer"] = settings.auth.jwt["issuer"]
+    credential_writer = writer_cls(**writer_kwargs)
+    app.state.credential_writer = credential_writer
+    credentials.set_credential_writer(credential_writer)
+    logger.info("Credential writer: %s", creds_cfg.writer.backend)
+
     # Initialize policy enforcer
     enforcer_cfg = settings.enforcement
     enforcer_cls = _load_class(enforcer_cfg.backend)
@@ -213,6 +260,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await watcher.stop()
 
     await auth_backend.close()
+    await credential_resolver.close()
+    await credential_writer.close()
     await enforcer.close()
 
 
@@ -224,9 +273,10 @@ app = FastAPI(
 )
 
 # Middleware execution order (outermost first):
-# CORS → RequestContext → Auth → PolicyEnforcement → handler
+# CORS → RequestContext → Auth → CredentialResolution → PolicyEnforcement → handler
 # (Starlette runs last-added middleware outermost.)
 app.add_middleware(PolicyEnforcementMiddleware)
+app.add_middleware(CredentialResolutionMiddleware)
 app.add_middleware(AuthenticationMiddleware)
 app.add_middleware(RequestContextMiddleware)
 app.add_middleware(
@@ -288,6 +338,7 @@ app.include_router(evaluations.router)
 app.include_router(agents.router)
 app.include_router(teams.router)
 app.include_router(a2a.router)
+app.include_router(credentials.router)
 
 
 # ── Provider discovery ──────────────────────────────────────────────

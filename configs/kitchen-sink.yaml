@@ -186,7 +186,15 @@ enforcement:
       policy_body: 'permit(principal, action == Action::"agents:get_agent", resource);'
     - description: "Allow anyone to view anything"
       policy_body: 'permit(principal, action, resource);'
-allow_server_credentials: true
+allow_server_credentials: fallback
+
+credentials:
+  resolver: noop
+  writer:
+    backend: noop
+  cache:
+    ttl_seconds: 300
+    max_entries: 10000
 
 agents:
   store:

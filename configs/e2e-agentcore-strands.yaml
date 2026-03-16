@@ -1,10 +1,12 @@
-## E2E AgentCore + Strands: all AWS-managed providers, JWT auth, Redis stores, Cedar enforcement.
+## E2E AgentCore + Strands: all AWS-managed providers, JWT auth, Redis stores,
+## Cedar enforcement, per-user credential resolution via Keycloak.
 ##
 ## The definitive config for running the gateway with every feature enabled
 ## against AWS-managed backends. Pairs with examples/e2e-agentcore-strands/.
 ##
 ## Features:
 ##   - JWT authentication (Keycloak OIDC)
+##   - Per-user credential resolution from Keycloak user attributes
 ##   - All AgentCore providers (memory, identity, code_interpreter, browser,
 ##     observability, tools, policy, evaluations) + Bedrock Converse gateway
 ##   - Redis-backed stores (agents, teams, tasks) for multi-replica support
@@ -22,6 +24,36 @@
 ##   JWT_ISSUER / JWT_AUDIENCE / JWT_CLIENT_ID — Keycloak or other OIDC provider
 ##   AGENTCORE_MEMORY_ID — AgentCore memory resource ID
 ##
+## Keycloak setup for per-user credentials:
+##
+##   Convention: all credentials are stored as apg.{service}.{key} attributes.
+##   Example: apg.langfuse.public_key, apg.mcp_registry.api_key
+##
+##   Step 1 — Set credentials via the gateway UI:
+##     Open /ui/settings in the browser, click "+ Add", and enter the
+##     service.key_name (the apg. prefix is added automatically).
+##     The gateway writes attributes to Keycloak via the Admin API.
+##
+##   Step 2 — Expose attributes in userinfo via protocol mappers:
+##     For each apg.* attribute you want the resolver to read:
+##     Clients → agentic-gateway → Client scopes →
+##     agentic-gateway-dedicated → Add mapper → By configuration →
+##     User Attribute
+##       Name: "apg.langfuse.public_key"
+##       User Attribute: "apg.langfuse.public_key"
+##       Token Claim Name: "apg.langfuse.public_key"
+##       Add to userinfo: ON
+##
+##   Step 3 — Verify:
+##     curl -H "Authorization: Bearer <access-token>" \
+##       ${JWT_ISSUER}/protocol/openid-connect/userinfo
+##     → should return the apg.* attributes in the JSON response
+##
+##   The resolver auto-maps by convention:
+##     apg.langfuse.public_key  → service_credentials["langfuse"]["public_key"]
+##     apg.langfuse.secret_key  → service_credentials["langfuse"]["secret_key"]
+##     apg.mcp_registry.api_key → service_credentials["mcp_registry"]["api_key"]
+##
 ## Usage:
 ##   ./run.sh e2e-agentcore-strands
 ##
@@ -34,6 +66,8 @@
 ##   JWT_CLIENT_ID       — Public OIDC client ID for UI login (default: agentic-gateway)
 ##   JWT_GROUPS_CLAIM    — Claim name for groups (default: groups)
 ##   JWT_SCOPES_CLAIM    — Claim name for scopes (default: scope)
+##   KC_ADMIN_CLIENT_ID  — Keycloak admin service account client ID
+##   KC_ADMIN_CLIENT_SECRET — Keycloak admin service account client secret
 
 # ── Authentication ────────────────────────────────────────────────────
 # JWT via Keycloak (or any OIDC provider). Leave JWT_ISSUER empty to
@@ -148,7 +182,57 @@ enforcement:
   config:
     policy_refresh_interval: 5
 
-allow_server_credentials: true
+# ── Credential resolution ─────────────────────────────────────────────
+# Per-user credentials from Keycloak user attributes via the userinfo
+# endpoint. Falls back to server ambient credentials when not present.
+#
+# Convention-based: all apg.* attributes in userinfo are auto-mapped
+# to service credentials by dot-separated naming:
+#
+#   apg.langfuse.public_key  → service_credentials["langfuse"]["public_key"]
+#   apg.langfuse.secret_key  → service_credentials["langfuse"]["secret_key"]
+#   apg.mcp_registry.api_key → service_credentials["mcp_registry"]["api_key"]
+#
+# No explicit attribute mapping config is needed. Just store apg.* attributes
+# on Keycloak users and expose them via userinfo protocol mappers.
+#
+# To set a user's credentials:
+#   - Via the UI Settings page (recommended)
+#   - OR Keycloak Admin → Users → set apg.* attributes directly
+#
+# Credential resolution chain (priority order):
+#   1. Explicit headers (X-AWS-*, X-Cred-*) — programmatic API clients
+#   2. OIDC-resolved credentials — fetched from userinfo (cached 5min)
+#   3. Server ambient credentials — AWS env/IRSA (fallback mode)
+
+allow_server_credentials: fallback
+
+credentials:
+  resolver: oidc
+  oidc:
+    aws:
+      enabled: false  # Phase 4 — enable when STS federation is set up
+  writer:
+    backend: keycloak
+    # issuer is derived automatically from auth.jwt.issuer (Keycloak realm URL)
+    # Uses the Keycloak Admin REST API via a service account to reliably
+    # read/write custom user attributes. The Account API doesn't support
+    # custom attributes in modern Keycloak versions.
+    #
+    # To set up the service account:
+    #   1. Keycloak Admin → Clients → Create client
+    #      - Client ID: "agentic-gateway-admin"
+    #      - Client authentication: ON (confidential)
+    #      - Service accounts roles: ON
+    #   2. Service account roles tab → Assign role → Filter by clients →
+    #      realm-management → assign "manage-users"
+    #   3. Copy the client secret from the Credentials tab
+    config:
+      admin_client_id: "${KC_ADMIN_CLIENT_ID:-}"
+      admin_client_secret: "${KC_ADMIN_CLIENT_SECRET:-}"
+  cache:
+    ttl_seconds: 300
+    max_entries: 10000
 
 # ── Declarative agents ────────────────────────────────────────────────
 # These agents run server-side via the /agents API or the web UI.

@@ -10,6 +10,7 @@ const links = [
   { to: "/teams", label: "Teams", end: false },
   { to: "/explorer", label: "Explorer", end: false },
   { to: "/policies", label: "Policies", end: false },
+  { to: "/settings", label: "Settings", end: false },
   { to: "/docs", label: "API Docs", external: true },
 ];
 

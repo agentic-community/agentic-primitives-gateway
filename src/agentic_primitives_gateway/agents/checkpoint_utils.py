@@ -50,6 +50,12 @@ def serialize_auth_context() -> dict[str, Any]:
     svc_creds = _service_credentials.get()
     if svc_creds:
         data["service_credentials"] = svc_creds
+    # Store credential metadata for diagnostics on recovery
+    if aws_creds:
+        data["credential_metadata"] = {
+            "aws_session_token_present": aws_creds.session_token is not None,
+            "aws_region": aws_creds.region,
+        }
     return data
 
 

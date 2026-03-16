@@ -6,6 +6,7 @@ import AgentList from "./pages/AgentList";
 import Dashboard from "./pages/Dashboard";
 import PolicyManager from "./pages/PolicyManager";
 import PrimitiveExplorer from "./pages/PrimitiveExplorer";
+import Settings from "./pages/Settings";
 import TeamList from "./pages/TeamList";
 import TeamRun from "./pages/TeamRun";
 
@@ -44,6 +45,7 @@ export default function App() {
                 <Route path="teams/:name/run" element={<TeamRun />} />
                 <Route path="policies" element={<PolicyManager />} />
                 <Route path="explorer" element={<PrimitiveExplorer />} />
+                <Route path="settings" element={<Settings />} />
               </Route>
               {/* Callback route is handled inside AuthProvider before rendering */}
               <Route path="callback" element={<CallbackPage />} />

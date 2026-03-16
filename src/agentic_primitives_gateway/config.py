@@ -41,10 +41,10 @@ def _expand_vars(text: str) -> str:
     return text
 
 
-from pydantic import BaseModel, Field, model_validator  # noqa: E402
+from pydantic import BaseModel, Field, field_validator, model_validator  # noqa: E402
 from pydantic_settings import BaseSettings, SettingsConfigDict  # noqa: E402
 
-from agentic_primitives_gateway.models.enums import LogLevel, Primitive  # noqa: E402
+from agentic_primitives_gateway.models.enums import LogLevel, Primitive, ServerCredentialMode  # noqa: E402
 
 
 class ProviderConfig(BaseModel):
@@ -267,6 +267,62 @@ TEAM_STORE_ALIASES: dict[str, str] = {
 }
 
 
+class AwsFederationConfig(BaseModel):
+    """AWS OIDC federation configuration (Phase 4)."""
+
+    enabled: bool = False
+    sts_region: str = "us-east-1"
+    session_duration: int = 3600
+    role_arn_attribute: str = "apg.aws_role_arn"
+
+
+class OidcResolverConfig(BaseModel):
+    """OIDC credential resolver configuration.
+
+    No explicit attribute mapping needed — the resolver auto-discovers
+    all ``apg.*`` claims from userinfo and maps them by convention:
+    ``apg.{service}.{key}`` → ``service_credentials[service][key]``.
+    """
+
+    aws: AwsFederationConfig = AwsFederationConfig()
+
+
+class CredentialWriterConfig(BaseModel):
+    """Credential writer backend configuration."""
+
+    backend: str = "noop"
+    config: dict[str, Any] = Field(default_factory=dict)
+
+
+class CredentialCacheConfig(BaseModel):
+    """Credential cache configuration."""
+
+    ttl_seconds: int = 300
+    max_entries: int = 10000
+
+
+class CredentialsConfig(BaseModel):
+    """Configuration for per-user credential resolution."""
+
+    resolver: str = "noop"
+    oidc: OidcResolverConfig = OidcResolverConfig()
+    writer: CredentialWriterConfig = CredentialWriterConfig()
+    cache: CredentialCacheConfig = CredentialCacheConfig()
+
+
+# Well-known credential resolver aliases → dotted class paths
+CREDENTIAL_RESOLVER_ALIASES: dict[str, str] = {
+    "noop": "agentic_primitives_gateway.credentials.noop.NoopCredentialResolver",
+    "oidc": "agentic_primitives_gateway.credentials.oidc.OidcCredentialResolver",
+}
+
+# Well-known credential writer aliases → dotted class paths
+CREDENTIAL_WRITER_ALIASES: dict[str, str] = {
+    "noop": "agentic_primitives_gateway.credentials.writer.noop.NoopCredentialWriter",
+    "keycloak": "agentic_primitives_gateway.credentials.writer.keycloak.KeycloakCredentialWriter",
+}
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="AGENTIC_PRIMITIVES_GATEWAY_",
@@ -277,13 +333,26 @@ class Settings(BaseSettings):
     port: int = 8000
     log_level: str = LogLevel.INFO
     config_file: str | None = None
-    allow_server_credentials: bool = False
+    allow_server_credentials: ServerCredentialMode | bool = ServerCredentialMode.NEVER
     cors_origins: list[str] = ["*"]
     providers: ProvidersConfig = ProvidersConfig()
     auth: AuthConfig = AuthConfig()
     enforcement: EnforcementConfig = EnforcementConfig()
+    credentials: CredentialsConfig = CredentialsConfig()
     agents: AgentsConfig = AgentsConfig()
     teams: TeamsConfig = TeamsConfig()
+
+    @field_validator("allow_server_credentials", mode="before")
+    @classmethod
+    def _normalize_server_credentials(cls, v: object) -> ServerCredentialMode:
+        """Backward compat: ``true`` → FALLBACK, ``false`` → NEVER."""
+        if isinstance(v, bool):
+            return ServerCredentialMode.FALLBACK if v else ServerCredentialMode.NEVER
+        if isinstance(v, str):
+            return ServerCredentialMode(v)
+        if isinstance(v, ServerCredentialMode):
+            return v
+        return ServerCredentialMode.NEVER
 
     @staticmethod
     def config_file_path() -> str | None:

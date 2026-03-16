@@ -44,6 +44,12 @@ class CodeLanguage(StrEnum):
     PYTHON = "python"
 
 
+class ServerCredentialMode(StrEnum):
+    NEVER = "never"
+    FALLBACK = "fallback"
+    ALWAYS = "always"
+
+
 class HealthStatus(StrEnum):
     OK = "ok"
     ERROR = "error"
