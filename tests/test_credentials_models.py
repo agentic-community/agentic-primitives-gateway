@@ -19,7 +19,7 @@ class TestMaskValue:
         assert mask_value("abcd") == "****"
 
     def test_longer_value(self):
-        assert mask_value("my-secret-key") == "*********-key"
+        assert mask_value("my-secret-key") == "****-key"
 
     def test_empty_string(self):
         assert mask_value("") == "****"

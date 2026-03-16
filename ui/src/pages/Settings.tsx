@@ -160,24 +160,25 @@ export default function Settings() {
                 </h3>
                 <div className="space-y-1.5">
                   {items.map(({ key, masked, fullKey }) => (
-                    <div key={fullKey} className="flex items-center justify-between group">
-                      <span className="text-xs font-mono text-gray-600 dark:text-gray-400">
-                        {key}
-                      </span>
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-mono text-gray-400 dark:text-gray-500">
-                          {masked}
-                        </span>
-                        <button
-                          onClick={() => handleDelete(fullKey)}
-                          disabled={deleting === fullKey}
-                          className="text-[10px] text-gray-400 hover:text-red-500 dark:hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
-                          title={`Delete ${fullKey}`}
-                        >
-                          {deleting === fullKey ? "..." : "delete"}
-                        </button>
-                      </div>
-                    </div>
+                    <StoredCredentialRow
+                      key={fullKey}
+                      label={key}
+                      masked={masked}
+                      fullKey={fullKey}
+                      deleting={deleting === fullKey}
+                      onDelete={() => handleDelete(fullKey)}
+                      onSave={async (newValue) => {
+                        setError(null);
+                        setSuccess(null);
+                        try {
+                          await api.writeCredentials({ attributes: { [fullKey]: newValue } });
+                          setSuccess(`Updated ${key}`);
+                          await loadData();
+                        } catch (e) {
+                          setError(e instanceof Error ? e.message : "Failed to update");
+                        }
+                      }}
+                    />
                   ))}
                 </div>
               </div>
@@ -277,6 +278,103 @@ export default function Settings() {
 
         {error && <p className="mt-2 text-xs text-red-600 dark:text-red-400">{error}</p>}
         {success && <p className="mt-2 text-xs text-green-600 dark:text-green-400">{success}</p>}
+      </div>
+    </div>
+  );
+}
+
+function StoredCredentialRow({
+  label,
+  masked,
+  fullKey,
+  deleting,
+  onDelete,
+  onSave,
+}: {
+  label: string;
+  masked: string;
+  fullKey: string;
+  deleting: boolean;
+  onDelete: () => void;
+  onSave: (newValue: string) => Promise<void>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [editValue, setEditValue] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const handleSubmit = async () => {
+    if (!editValue.trim()) return;
+    setSaving(true);
+    await onSave(editValue.trim());
+    setSaving(false);
+    setEditing(false);
+    setEditValue("");
+  };
+
+  if (editing) {
+    return (
+      <div className="flex items-center gap-2 min-w-0">
+        <span className="text-xs font-mono text-gray-600 dark:text-gray-400 shrink-0">
+          {label}
+        </span>
+        <input
+          type="text"
+          value={editValue}
+          onChange={(e) => setEditValue(e.target.value)}
+          placeholder="Enter new value"
+          autoFocus
+          onKeyDown={(e) => {
+            if (e.key === "Enter") handleSubmit();
+            if (e.key === "Escape") {
+              setEditing(false);
+              setEditValue("");
+            }
+          }}
+          className="flex-1 px-2 py-1 text-xs font-mono rounded border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+        />
+        <button
+          onClick={handleSubmit}
+          disabled={saving || !editValue.trim()}
+          className="text-[10px] text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 disabled:opacity-50 shrink-0"
+        >
+          {saving ? "..." : "save"}
+        </button>
+        <button
+          onClick={() => {
+            setEditing(false);
+            setEditValue("");
+          }}
+          className="text-[10px] text-gray-400 hover:text-gray-600 shrink-0"
+        >
+          cancel
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-center justify-between gap-3 group min-w-0">
+      <span className="text-xs font-mono text-gray-600 dark:text-gray-400 shrink-0">
+        {label}
+      </span>
+      <div className="flex items-center gap-2 min-w-0">
+        <span className="text-xs font-mono text-gray-400 dark:text-gray-500 truncate">
+          {masked}
+        </span>
+        <button
+          onClick={() => setEditing(true)}
+          className="text-[10px] text-gray-400 hover:text-indigo-500 dark:hover:text-indigo-400 opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+        >
+          edit
+        </button>
+        <button
+          onClick={onDelete}
+          disabled={deleting}
+          className="text-[10px] text-gray-400 hover:text-red-500 dark:hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+          title={`Delete ${fullKey}`}
+        >
+          {deleting ? "..." : "delete"}
+        </button>
       </div>
     </div>
   );

@@ -45,4 +45,4 @@ def mask_value(value: str) -> str:
     """Mask a credential value for display, showing only last 4 chars."""
     if len(value) <= 4:
         return "****"
-    return f"{'*' * (len(value) - 4)}{value[-4:]}"
+    return f"****{value[-4:]}"
