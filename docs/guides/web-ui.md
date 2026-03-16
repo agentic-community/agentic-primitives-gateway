@@ -56,6 +56,16 @@ Interactive team execution with real-time task board. Features:
 
 Create and manage Cedar policy engines and policies.
 
+### Settings (`/ui/settings`)
+
+Per-user credential management. Features:
+
+- **Credential resolution status** -- shows whether OIDC resolution is active
+- **Stored credentials** -- displays existing `apg.*` credentials grouped by service with masked values
+- **Edit/delete** -- hover over a stored credential to reveal edit and delete buttons. Edit replaces the value inline; delete removes it from Keycloak.
+- **Add new credentials** -- key-value editor with `apg.` prefix shown inline. Use `service.key_name` format (e.g., `langfuse.public_key`, `mcp_registry.token`).
+- **Naming convention tip** -- shows how key names map to `service_credentials` for providers
+
 ### Primitive Explorer (`/ui/explorer`)
 
 Interactive API explorer that:
@@ -104,7 +114,7 @@ npm run build
 
 | Directory | Contents |
 |-----------|----------|
-| `src/pages/` | Page components (Dashboard, AgentList, AgentChat, TeamList, TeamRun, PolicyManager, PrimitiveExplorer) |
+| `src/pages/` | Page components (Dashboard, AgentList, AgentChat, TeamList, TeamRun, PolicyManager, PrimitiveExplorer, Settings) |
 | `src/components/` | Reusable components (ChatMessage, ToolCallBlock, SubAgentBlock, ArtifactBlock, MemoryPanel, ToolsPanel, CollapsibleSection, etc.) |
 | `src/hooks/` | Data fetching hooks (`useFetch<T>`, `useAutoScroll`) |
 | `src/lib/` | Shared utilities -- `cn` (class names), `theme` (CODE_THEME, PROSE_CLASSES), `sse` (generic `parseSSE<T>`) |

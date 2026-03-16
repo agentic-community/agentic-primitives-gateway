@@ -65,6 +65,11 @@ Agentic Primitives Gateway is a FastAPI service. Agent developers call it via RE
 |  +----+----------+-----------+-------+---------+----------+----------+ |
 |       |          |           |       |         |          |            |
 |  +----v-----------v-----------v-------v---------v---------v----------+ |
+|  |              CredentialResolutionMiddleware                       | |
+|  |    (Resolves per-user credentials from OIDC, populates context)   | |
+|  +----+----------+-----------+-------+---------+----------+----------+ |
+|       |          |           |       |         |          |            |
+|  +----v-----------v-----------v-------v---------v---------v----------+ |
 |  |              RequestContextMiddleware (outermost, after CORS)     | |
 |  |          (AWS creds + provider routing from headers)              | |
 |  +----+----------+-----------+-------+---------+----------+----------+ |
@@ -128,6 +133,15 @@ All nine primitives are fully implemented and wired to their respective provider
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/auth/config` | Returns auth configuration for UI OIDC flow. Exempt from authentication. |
+
+### Credentials (`/api/v1/credentials`)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/v1/credentials` | Read current user's stored credentials (values masked). |
+| `PUT` | `/api/v1/credentials` | Write/update credentials. Body: `{"attributes": {"langfuse.public_key": "pk-..."}}`. The `apg.` prefix is added automatically. |
+| `DELETE` | `/api/v1/credentials/{key}` | Delete a single credential by full attribute name (e.g., `apg.langfuse.public_key`). |
+| `GET` | `/api/v1/credentials/status` | Credential resolution status (source, AWS config). |
 
 ### Provider Discovery
 
@@ -846,27 +860,22 @@ Configuration is loaded from three sources in order of priority:
 
 ### Server Credential Fallback
 
-By default, the server requires clients to pass their own credentials (AWS, Langfuse, etc.) via request headers. If a client doesn't provide credentials, the request fails with a clear error.
+`allow_server_credentials` controls how the gateway resolves credentials when clients don't provide them via headers:
 
-To allow the server to use its own credentials as a fallback:
+| Mode | Behavior |
+|------|----------|
+| `never` (default) | Require per-user or header-provided credentials. Fail if missing. |
+| `fallback` | Try per-user OIDC credentials first, then fall back to server ambient credentials. |
+| `always` | Always use server credentials (dev mode). |
 
-```yaml
-allow_server_credentials: true
-```
+Backward compatible: `true` maps to `fallback`, `false` maps to `never`.
 
-Or via environment variable:
+Credential resolution order:
 
-```bash
-AGENTIC_PRIMITIVES_GATEWAY_ALLOW_SERVER_CREDENTIALS=true
-```
-
-When enabled, the credential resolution order is:
-
-1. **Client headers** (always preferred) -- `X-AWS-*`, `X-Cred-Langfuse-*`, etc.
-2. **Server credentials** (fallback) -- from the server's environment:
-   - AWS: `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`, IRSA, Pod Identity, instance profiles
-   - Langfuse: `LANGFUSE_PUBLIC_KEY`/`LANGFUSE_SECRET_KEY`/`LANGFUSE_BASE_URL` env vars, or `public_key`/`secret_key` in provider config
-   - Other services: their respective env vars or provider config values
+1. **Explicit headers** (`X-AWS-*`, `X-Cred-*`) -- always win
+2. **OIDC-resolved credentials** -- per-user attributes from the identity provider (when `credentials.resolver: oidc`)
+3. **Server ambient credentials** -- from environment, IRSA, provider config (when mode is `fallback` or `always`)
+4. **Fail** -- `ValueError` at provider level
 
 ### YAML Config File (Multi-Provider Format)
 
@@ -1815,6 +1824,53 @@ client.set_service_credentials("mcp_registry", {
 })
 ```
 
+### Per-User Credential Resolution (OIDC)
+
+In multi-tenant deployments, different users need different backend credentials (e.g., separate Langfuse projects, MCP Registry tokens). The credentials subsystem resolves per-user credentials from the OIDC identity provider and populates the same contextvars that `X-Cred-*` headers populate. Providers work unchanged.
+
+**Convention-based naming.** All gateway credentials use `apg.{service}.{key}` format:
+
+| OIDC attribute | Resolved as |
+|---------------|-------------|
+| `apg.langfuse.public_key` | `service_credentials["langfuse"]["public_key"]` |
+| `apg.langfuse.secret_key` | `service_credentials["langfuse"]["secret_key"]` |
+| `apg.mcp_registry.token` | `service_credentials["mcp_registry"]["token"]` |
+
+No explicit mapping config is needed. The `apg.` prefix scopes gateway credentials to avoid colliding with other OIDC user attributes.
+
+**Configuration:**
+
+```yaml
+allow_server_credentials: fallback
+
+credentials:
+  resolver: oidc
+  oidc:
+    aws:
+      enabled: false  # Phase 4: STS AssumeRoleWithWebIdentity
+  writer:
+    backend: keycloak
+    config:
+      admin_client_id: "${KC_ADMIN_CLIENT_ID}"
+      admin_client_secret: "${KC_ADMIN_CLIENT_SECRET}"
+  cache:
+    ttl_seconds: 300
+    max_entries: 10000
+```
+
+**Resolution modes** (tried in order):
+
+1. **Admin API** (preferred) -- When `admin_client_id`/`admin_client_secret` are configured, reads user attributes directly from the Keycloak Admin REST API. Returns all stored attributes; no protocol mappers needed.
+2. **Userinfo** (fallback) -- Fetches from the OIDC userinfo endpoint using the caller's access token. Only returns attributes with protocol mappers configured in Keycloak.
+
+**Keycloak setup:**
+
+1. Create a confidential client (`agentic-gateway-admin`) with Service Accounts Roles enabled
+2. Assign `realm-management` → `manage-users` and `manage-realm` roles to the service account
+3. Set credentials via the gateway UI Settings page (`/ui/settings`) -- the writer auto-declares attributes in Keycloak's User Profile
+
+**Checkpoint recovery:** OIDC-resolved credentials are captured in checkpoint data via `serialize_auth_context()`. On recovery, `restore_auth_context()` restores them. Long-lived API keys survive recovery. Short-lived STS tokens may expire (graceful failure with diagnostic message).
+
 ### AgentCore Memory ID Resolution
 
 The `AgentCoreMemoryProvider` resolves `memory_id` per-request in this order:
@@ -1842,6 +1898,8 @@ The gateway can serve multiple agents, users, or teams from a single deployment.
 **Per-request AWS identity.** AgentCore providers create a fresh `boto3.Session` per request using the caller's credentials. Each agent authenticates with its own AWS identity -- there are no shared service credentials (unless `allow_server_credentials` is enabled as a fallback).
 
 **Stateless server.** The gateway holds no tenant-specific state in memory between requests (aside from the in-memory providers, which are dev-only). In Kubernetes, any replica can serve any tenant's request.
+
+**Per-user credential isolation via OIDC.** When `credentials.resolver: oidc` is configured, each user's service credentials (Langfuse keys, MCP Registry tokens, etc.) are resolved from their OIDC user attributes. User A's Langfuse traces go to their project; User B's go to theirs. No credential headers needed from the UI -- the gateway resolves them automatically from the JWT.
 
 **Redis-backed stores for multi-replica.** Agent specs, team specs, and task boards can be stored in Redis for cross-replica consistency. Background run events and session registries are also persisted to Redis when configured. See the `configs/agentcore-redis.yaml` example.
 
@@ -1879,7 +1937,7 @@ providers:
 
 ### What does NOT work today (known gaps)
 
-**No built-in authentication.** The gateway does not verify caller identity. Headers like `X-Agent-Id`, `X-AWS-*`, and `X-Cred-*` are trusted as-is. In a multi-tenant production deployment, place an authenticating reverse proxy (e.g., AWS ALB with Cognito, Envoy with OAuth2, or an API gateway with JWT validation) in front of the gateway to validate identity before requests reach it. The reverse proxy should set `X-Agent-Id` based on the verified identity.
+**Limited authentication scope.** While the gateway now has built-in JWT authentication, it doesn't yet enforce authentication on all endpoints. Some management endpoints still rely on Cedar policies for access control. For complete multi-tenant isolation, combine JWT authentication with Cedar policies that scope access by principal.
 
 **No tenant-scoped metrics.** Prometheus metrics (`/metrics`) are aggregated across all tenants. There is no per-tenant breakdown of request counts, latencies, or error rates. If you need tenant-level observability, use the `X-Agent-Id` header in your proxy's access logs or configure per-tenant Langfuse projects via `X-Cred-Langfuse-*` headers.
 
@@ -1899,6 +1957,13 @@ providers:
 Client → Auth Proxy (validate JWT, set X-Agent-Id)
        → Gateway (Cedar enforcement, provider routing)
        → External backends (AgentCore, Milvus, Langfuse)
+```
+
+**Multi-tenant with OIDC credentials.** JWT authentication + OIDC credential resolution. The identity provider (Keycloak, Cognito, Auth0) is the single source of truth for both user identity and per-user backend credentials. The gateway reads credentials from user attributes, no header injection needed from the UI.
+
+```
+Client → Gateway (JWT auth + OIDC credential resolution + Cedar enforcement)
+       → External backends (per-user credentials from OIDC)
 ```
 
 **Multi-tenant with per-tenant credentials.** Each tenant sends their own AWS credentials (`X-AWS-*`) or service credentials (`X-Cred-*`). The gateway forwards them to backends. Tenants are isolated at the backend level (separate AWS accounts, separate Langfuse projects). No Cedar enforcement needed if backend-level isolation is sufficient.

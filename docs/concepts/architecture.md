@@ -9,7 +9,7 @@ The gateway is a FastAPI service with three layers:
 3. **Provider Registry** -- loads backend implementations, resolves per-request
 
 ```
-Request → CORS → RequestContextMiddleware → AuthenticationMiddleware → PolicyEnforcementMiddleware → Route → Registry → Provider
+Request → CORS → RequestContextMiddleware → AuthenticationMiddleware → CredentialResolutionMiddleware → PolicyEnforcementMiddleware → Route → Registry → Provider
 ```
 
 ## Request Flow
@@ -28,19 +28,26 @@ Client sends: POST /api/v1/memory/my-ns
    - Sets AuthenticatedPrincipal in a contextvar (principal_id, type, groups, scopes)
    - 401 if credentials are invalid or missing (when not using noop)
 
-3. PolicyEnforcementMiddleware (enforcement/middleware.py)
+3. CredentialResolutionMiddleware (credentials/middleware.py)
+   - Resolves per-user service credentials from OIDC user attributes
+   - Reads apg.* attributes from Keycloak Admin API (or userinfo fallback)
+   - Maps apg.{service}.{key} → service_credentials[service][key]
+   - Skips if explicit X-Cred-* headers are present (headers always win)
+   - Caches resolved credentials in-memory per user (configurable TTL)
+
+4. PolicyEnforcementMiddleware (enforcement/middleware.py)
    - Maps path + method → Cedar action (e.g., "memory:store_memory")
    - Evaluates: permit(User::"alice", Action::"memory:store_memory", resource)?
    - 403 if denied
 
-4. Route handler (routes/memory.py)
+5. Route handler (routes/memory.py)
    - Calls registry.memory.store(namespace, key, content)
 
-5. Registry (registry.py)
+6. Registry (registry.py)
    - Reads provider override from contextvars: "mem0"
    - Returns the mem0 provider instance (wrapped in MetricsProxy)
 
-6. Provider (primitives/memory/mem0_provider.py)
+7. Provider (primitives/memory/mem0_provider.py)
    - Creates boto3 session from request's AWS credentials
    - Calls mem0 with Bedrock embedder
    - Returns result
@@ -74,6 +81,25 @@ The registry loads classes via `importlib`, instantiates them with the config di
 Route handlers check resource-level access via `require_access()` (verifies the caller can view/use a resource based on ownership or sharing) and `require_owner_or_admin()` (verifies the caller owns the resource or has admin scope). These helpers read the principal from the contextvar and raise 403 if access is denied.
 
 For background tasks (agent runs, team runs), the principal flows from the originating request into the `asyncio.Task` via `copy_context()`, so authorization checks remain valid even after the HTTP connection closes.
+
+## Credential Resolution
+
+The `credentials/` subsystem resolves per-user service credentials from OIDC user attributes. It sits between authentication and policy enforcement in the middleware stack.
+
+**Convention-based mapping:** All gateway credentials use `apg.{service}.{key}` naming. The resolver auto-discovers `apg.*` attributes and maps them to `service_credentials[service][key]`. No explicit attribute mapping config is needed.
+
+**Two resolution modes** (tried in order):
+
+1. **Admin API** (preferred) -- Reads user attributes directly from the Keycloak Admin REST API via a service account. Returns all attributes; no protocol mappers needed.
+2. **Userinfo** (fallback) -- Fetches from the OIDC userinfo endpoint using the caller's access token. Only returns claims with protocol mappers.
+
+**Credential resolution chain** (priority order):
+
+1. Explicit headers (`X-AWS-*`, `X-Cred-*`) -- always win
+2. OIDC-resolved credentials -- per-user attributes from the identity provider
+3. Server ambient credentials -- env vars, IRSA, provider config (when `allow_server_credentials: fallback` or `always`)
+
+**Checkpoint integration:** OIDC-resolved credentials are captured in checkpoint data via `serialize_auth_context()`. On recovery, `restore_auth_context()` restores them into contextvars. Providers work unchanged.
 
 ## Agent Subsystem
 
@@ -190,6 +216,11 @@ src/agentic_primitives_gateway/
 │   ├── team_prompts.py   # Prompt builders for teams
 │   ├── team_agent_loop.py# Generic LLM loop for team agents
 │   └── tools/            # Tool catalog, handlers, delegation
+├── credentials/          # Per-user credential resolution (OIDC)
+│   ├── oidc.py          # Admin API + userinfo resolver
+│   ├── middleware.py    # CredentialResolutionMiddleware
+│   ├── cache.py         # In-memory LRU cache
+│   └── writer/          # Keycloak Admin API writer
 ├── enforcement/          # Cedar policy enforcement
 ├── models/               # Pydantic models per primitive
 ├── primitives/

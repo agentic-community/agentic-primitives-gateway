@@ -85,11 +85,57 @@ curl -H "X-Cred-Langfuse-Public-Key: pk-..." \
 
 ### Server Credential Fallback
 
-By default, the gateway requires client credentials. To allow the server's own credentials as a fallback:
+`allow_server_credentials` controls how the gateway resolves credentials when clients don't provide them via headers:
+
+| Mode | Behavior |
+|------|----------|
+| `never` (default) | Require per-user or header-provided credentials. Fail if missing. |
+| `fallback` | Try per-user OIDC credentials first, then fall back to server ambient. |
+| `always` | Always use server credentials (dev mode). |
+
+Backward compatible: `true` maps to `fallback`, `false` maps to `never`.
 
 ```yaml
-allow_server_credentials: true
+allow_server_credentials: fallback
 ```
+
+### Per-User Credential Resolution (OIDC)
+
+In multi-tenant deployments, different users need different backend credentials. The credentials subsystem resolves per-user credentials from OIDC user attributes and populates the same contextvars that `X-Cred-*` headers populate. Providers work unchanged.
+
+**Convention-based naming:** Use `apg.{service}.{key}` format (e.g., `apg.langfuse.public_key`). The resolver auto-discovers all `apg.*` attributes and maps them to `service_credentials[service][key]`.
+
+```yaml
+allow_server_credentials: fallback
+
+credentials:
+  resolver: oidc            # "noop" (default) or "oidc"
+  oidc:
+    aws:
+      enabled: false        # Phase 4: STS AssumeRoleWithWebIdentity
+  writer:
+    backend: keycloak       # "noop" (default) or "keycloak"
+    config:
+      admin_client_id: "${KC_ADMIN_CLIENT_ID}"
+      admin_client_secret: "${KC_ADMIN_CLIENT_SECRET}"
+  cache:
+    ttl_seconds: 300
+    max_entries: 10000
+```
+
+**Keycloak setup:**
+
+1. Create a confidential client with Service Accounts Roles enabled
+2. Assign `realm-management` roles: `manage-users` + `manage-realm`
+3. Set credentials via the gateway UI Settings page (`/ui/settings`)
+
+The resolver reads user attributes directly from the Keycloak Admin API (when admin credentials are configured), bypassing the need for protocol mappers. Falls back to the userinfo endpoint when admin credentials are unavailable.
+
+Credential resolution order:
+
+1. **Explicit headers** (`X-AWS-*`, `X-Cred-*`) -- always win
+2. **OIDC-resolved credentials** -- per-user attributes from the identity provider
+3. **Server ambient credentials** -- from environment (when mode is `fallback` or `always`)
 
 ## Authentication
 
@@ -294,6 +340,9 @@ enforcement:
 | `agents-mem0-langfuse.yaml` | Agents with mem0 memory, Langfuse tracing |
 | `agents-mixed.yaml` | Mixed providers per primitive |
 | `local-jwt.yaml` | Local providers with JWT authentication enabled |
+| `e2e-agentcore-strands.yaml` | All AgentCore providers, JWT auth, OIDC credentials, Cedar, Redis |
+| `e2e-selfhosted-langchain.yaml` | Self-hosted providers (mem0, Langfuse, Jupyter, Selenium), OIDC credentials |
+| `e2e-mixed.yaml` | Mixed providers for E2E testing |
 
 ## Hot Reload
 

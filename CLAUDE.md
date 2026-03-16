@@ -14,9 +14,10 @@ FastAPI service providing pluggable primitives (memory, observability, gateway, 
   - `watcher.py` — Config file hot-reload watcher
   - `models/` — Pydantic request/response models and StrEnum definitions (`enums.py`)
   - `primitives/` — Abstract base classes + backend implementations per primitive; `_sync.py` provides `SyncRunnerMixin` for executor-based async wrappers
-  - `routes/` — FastAPI routers, one per primitive plus health and agents; `_helpers.py` provides `@handle_provider_errors` decorator and `require_principal()`
+  - `routes/` — FastAPI routers, one per primitive plus health, agents, and credentials; `_helpers.py` provides `@handle_provider_errors` decorator and `require_principal()`
   - `enforcement/` — Policy enforcement layer: `base.py` (PolicyEnforcer ABC), `noop.py` (default allow-all), `cedar.py` (local Cedar evaluation via cedarpy), `middleware.py` (Starlette middleware mapping requests to Cedar principals/actions/resources)
   - `auth/` — Authentication subsystem: `base.py` (AuthBackend ABC), `models.py` (AuthenticatedPrincipal), `noop.py`, `api_key.py`, `jwt.py` (OIDC/JWKS), `middleware.py` (AuthenticationMiddleware), `access.py` (check_access, require_access)
+  - `credentials/` — Per-user credential resolution subsystem: `base.py` (CredentialResolver ABC), `models.py` (ResolvedCredentials, APG_PREFIX), `noop.py` (default no-op), `oidc.py` (OIDC resolver with Admin API + userinfo fallback, convention-based apg.* mapping), `cache.py` (in-memory LRU), `middleware.py` (CredentialResolutionMiddleware), `writer/` (CredentialWriter ABC, `noop.py`, `keycloak.py` with Admin API + User Profile auto-declaration)
   - `routes/_background.py` — `BackgroundRunManager` (asyncio.Task + Queue decoupling), `EventStore` ABC, `RedisEventStore`, `sse_response()` helper, `reconnect_event_generator()` for SSE reconnection
   - `agents/` — Declarative agent orchestration
     - `runner.py` — `AgentRunner` with `_RunContext` dataclass; `run()` (non-streaming) and `run_stream()` (SSE) share init/request/finalize via helpers
@@ -36,22 +37,22 @@ FastAPI service providing pluggable primitives (memory, observability, gateway, 
       - `delegation.py` — Agent-as-tool delegation (`_build_agent_tools`, `MAX_AGENT_DEPTH`)
 - `ui/` — React + Vite + TypeScript + Tailwind CSS web UI
   - `src/components/` — Reusable components (ChatMessage, ToolCallBlock, SubAgentBlock, ArtifactBlock, MemoryPanel, ToolsPanel, CollapsibleSection, etc.)
-  - `src/pages/` — Dashboard, AgentList (CRUD + edit), AgentChat (streaming + sub-agents + session resume), TeamList, TeamRun (streaming + event replay + background resume), PolicyManager, PrimitiveExplorer
+  - `src/pages/` — Dashboard, AgentList (CRUD + edit), AgentChat (streaming + sub-agents + session resume), TeamList, TeamRun (streaming + event replay + background resume), PolicyManager, PrimitiveExplorer, Settings
   - `src/hooks/` — Data fetching hooks built on generic `useFetch<T>`, `useAutoScroll`
   - `src/lib/` — Shared utilities (cn, theme with CODE_THEME/PROSE_CLASSES, SSE parser)
   - `src/api/` — API client + TypeScript types
   - Production build outputs to `src/agentic_primitives_gateway/static/`
   - FastAPI serves the built SPA at `/ui/` with client-side routing fallback
 - `client/` — Separate `agentic-primitives-gateway-client` package (httpx-based, no server dependency)
-- `tests/` — Server unit/system tests (pytest, async); 1350+ tests
+- `tests/` — Server unit/system tests (pytest, async); 1650+ tests
 - `client/tests/` — Client unit tests (100 tests)
-- `configs/` — YAML presets (local, local-jwt, agentcore, agentcore-redis, kitchen-sink, milvus-langfuse, agents-agentcore, agents-mem0-langfuse, agents-mixed)
+- `configs/` — YAML presets (local, local-jwt, agentcore, agentcore-redis, kitchen-sink, milvus-langfuse, agents-agentcore, agents-mem0-langfuse, agents-mixed, e2e-agentcore-strands, e2e-selfhosted-langchain, e2e-mixed)
 - `examples/` — Example agents (langchain, strands)
 - `deploy/helm/` — Kubernetes Helm chart
 
 ## Architecture
 
-Each primitive has an abstract base class (`primitives/*/base.py`) with multiple backend implementations (noop, in_memory, agentcore, mem0, langfuse, etc.). The registry dynamically loads provider classes via `importlib` at startup from config. Requests flow through `RequestContextMiddleware` (in `middleware.py`) that extracts credentials and provider routing headers into contextvars, then through `AuthenticationMiddleware` (in `auth/middleware.py`) that validates credentials and sets `AuthenticatedPrincipal` in a contextvar, then through `PolicyEnforcementMiddleware` for Cedar policy evaluation, then routes call `registry.{primitive}` which resolves the correct backend.
+Each primitive has an abstract base class (`primitives/*/base.py`) with multiple backend implementations (noop, in_memory, agentcore, mem0, langfuse, etc.). The registry dynamically loads provider classes via `importlib` at startup from config. Requests flow through `RequestContextMiddleware` (in `middleware.py`) that extracts credentials and provider routing headers into contextvars, then through `AuthenticationMiddleware` (in `auth/middleware.py`) that validates credentials and sets `AuthenticatedPrincipal` in a contextvar, then through `CredentialResolutionMiddleware` (in `credentials/middleware.py`) that resolves per-user credentials from OIDC user attributes via the Admin API, then through `PolicyEnforcementMiddleware` for Cedar policy evaluation, then routes call `registry.{primitive}` which resolves the correct backend.
 
 The agents subsystem sits above the primitives. An agent spec (system prompt + model + enabled tools + hooks) defines a declarative agent. The `AgentRunner` (in `agents/runner.py`) uses a `_RunContext` dataclass to share state across phases. `run()` and `run_stream()` share initialization, request building, session management, and finalization — only LLM calling and tool execution differ. Streaming uses SSE with token-by-token delivery and real-time sub-agent event forwarding. Tool calls within a turn execute in parallel via `asyncio.gather` (non-streaming) or `asyncio.Queue` (streaming). Agents can delegate to other agents as tools (agent-as-tool pattern) with configurable depth limiting (`MAX_AGENT_DEPTH=3`). Agent specs are stored in `FileAgentStore` (JSON persistence) or `RedisAgentStore` (Redis hash) and seeded from YAML config on startup (config overwrites existing agents).
 
@@ -78,7 +79,7 @@ python -m pytest tests/ -v
 ## Test Commands
 
 ```bash
-# All server tests (1350+ unit/system + integration)
+# All server tests (1650+ unit/system + integration)
 python -m pytest tests/ -v
 
 # All client tests (100 tests)
@@ -99,7 +100,7 @@ pre-commit run --all-files # Run all hooks on entire repo
 
 ## Key Patterns
 
-- **StrEnum for fixed vocabularies** — `models/enums.py` defines Primitive, LogLevel, SessionStatus, TokenType, CodeLanguage, HealthStatus. Use enum members, not bare strings.
+- **StrEnum for fixed vocabularies** — `models/enums.py` defines Primitive, LogLevel, SessionStatus, TokenType, CodeLanguage, HealthStatus, ServerCredentialMode. Use enum members, not bare strings.
 - **Provider pattern** — New backends implement the primitive's ABC, get registered in config YAML. Provider classes are referenced by fully-qualified dotted path.
 - **Request-scoped context** — AWS credentials, service credentials (`X-Cred-{Service}-{Key}`), and provider overrides (`X-Provider-*`) are stored per-request in contextvars.
 - **MetricsProxy** — All provider instances are wrapped transparently for Prometheus instrumentation.
@@ -136,6 +137,11 @@ pre-commit run --all-files # Run all hooks on entire repo
 - **SSE reconnection** — `routes/_background.py` provides `reconnect_event_generator()` used by both agent and team reconnect endpoints. Replays stored events from `EventStore`, polls every 0.2s for new events, throttles token-type events with 5ms delays for smooth replay. Closes on `done`/`cancelled` events or after seeing running→idle transition.
 - **Partial token recovery on resume** — On checkpoint resume, `AgentRunner._recover_partial_tokens()` reads token events from the Redis event store and injects them as a `[RESUME CONTEXT]` system prompt hint so the model continues from where it left off. For teams, `run_agent_with_tools_stream()` emits `invocation_id` per call and `invocation_start` events, allowing `TeamRunner._recover_partial_tokens()` to filter tokens by specific agent invocation.
 - **Shared route helpers** — `routes/_helpers.py` provides `require_principal()` (extracted from duplicated `_principal()` functions in agents/teams routes) and `@handle_provider_errors` decorator. `routes/_background.py` provides `reconnect_event_generator()` shared by both SSE reconnect endpoints.
+- **Credentials is NOT a primitive** — `credentials/` is a separate subsystem (like `auth/`, `enforcement/`). `CredentialResolutionMiddleware` resolves per-user credentials from OIDC user attributes and populates the same contextvars that `X-Cred-*` headers populate. Providers work unchanged. Resolution priority: explicit headers → OIDC-resolved → server ambient. Default is `NoopCredentialResolver` (no per-user resolution).
+- **Convention-based credential mapping** — All gateway credentials use `apg.{service}.{key}` naming (e.g. `apg.langfuse.public_key`). The OIDC resolver auto-discovers all `apg.*` attributes from the user and maps them to `service_credentials[service][key]`. No explicit attribute mapping config is needed.
+- **ServerCredentialMode** — `allow_server_credentials` is now a three-way enum (`never`/`fallback`/`always`). Backward-compat: `true` → `fallback`, `false` → `never`. Validator in Settings handles migration.
+- **Keycloak credential writer** — Uses the Admin REST API via a service account (requires `manage-users` + `manage-realm` roles). Auto-declares new `apg.*` attributes in Keycloak's User Profile config. Falls back to Account API if admin creds unavailable. Only reads/writes `apg.*` attributes.
+- **Credential resolver Admin API mode** — When admin credentials are configured, the OIDC resolver reads user attributes directly from the Keycloak Admin API instead of userinfo. This bypasses the need for protocol mappers. Falls back to userinfo when admin creds are unavailable.
 
 ## Style
 
@@ -150,7 +156,7 @@ pre-commit run --all-files # Run all hooks on entire repo
 
 ## Web UI
 
-React + Vite SPA served at `/ui/`. Supports OIDC authentication via `oidc-client-ts` (Authorization Code + PKCE); unauthenticated mode when auth is disabled. Pages: Dashboard (health, providers, agents), Agent List (CRUD with inline edit), Agent Chat (token-streaming, sub-agent activity, tool artifacts, session resume with polling, multi-session picker), Team List (CRUD), Team Run (streaming task board, event replay on reconnect, background run indicator, multi-run picker), Policy Manager, Primitive Explorer. Shared `useFetch<T>` hook, `useAutoScroll` hook, `CollapsibleSection` component, `sseStream()` fetch wrapper, and centralized theme constants (`CODE_THEME`, `PROSE_CLASSES`) reduce duplication.
+React + Vite SPA served at `/ui/`. Supports OIDC authentication via `oidc-client-ts` (Authorization Code + PKCE); unauthenticated mode when auth is disabled. Pages: Dashboard (health, providers, agents), Agent List (CRUD with inline edit), Agent Chat (token-streaming, sub-agent activity, tool artifacts, session resume with polling, multi-session picker), Team List (CRUD), Team Run (streaming task board, event replay on reconnect, background run indicator, multi-run picker), Policy Manager, Primitive Explorer, Settings (per-user credential management). Shared `useFetch<T>` hook, `useAutoScroll` hook, `CollapsibleSection` component, `sseStream()` fetch wrapper, and centralized theme constants (`CODE_THEME`, `PROSE_CLASSES`) reduce duplication.
 
 ```bash
 # Development (hot reload, proxies API to :8000)
