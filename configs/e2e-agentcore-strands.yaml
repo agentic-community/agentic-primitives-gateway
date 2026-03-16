@@ -1,192 +1,157 @@
-## All providers registered simultaneously. Agents select at request time
-## via X-Provider-* headers. Useful for testing provider routing.
+## E2E AgentCore + Strands: all AWS-managed providers, JWT auth, Redis stores, Cedar enforcement.
+##
+## The definitive config for running the gateway with every feature enabled
+## against AWS-managed backends. Pairs with examples/e2e-agentcore-strands/.
+##
+## Features:
+##   - JWT authentication (Keycloak OIDC)
+##   - All AgentCore providers (memory, identity, code_interpreter, browser,
+##     observability, tools, policy, evaluations) + Bedrock Converse gateway
+##   - Redis-backed stores (agents, teams, tasks) for multi-replica support
+##   - Cedar policy enforcement with seed policies
+##   - Declarative agents: research-assistant, researcher, coder, coordinator,
+##     meta-agent, planner, synthesizer
+##   - Team: research-team (planner + synthesizer + [researcher, coder])
 ##
 ## Required:
-##   pip install -e ".[mem0,agentcore,langfuse,redis]"
+##   pip install -e ".[agentcore,redis,jwt]"
+##   Redis running at localhost:6379 (or set REDIS_URL)
+##   AWS credentials (environment, IRSA, Pod Identity, etc.)
+##
+## Optional:
+##   JWT_ISSUER / JWT_AUDIENCE / JWT_CLIENT_ID — Keycloak or other OIDC provider
+##   AGENTCORE_MEMORY_ID — AgentCore memory resource ID
 ##
 ## Usage:
-##   ./run.sh kitchen-sink
+##   ./run.sh e2e-agentcore-strands
 ##
-## Then test routing:
-##   curl -H "X-Provider-Memory: in_memory" localhost:8000/api/v1/memory/test
-##   curl -H "X-Provider-Memory: mem0"      localhost:8000/api/v1/memory/test
+## Environment variables:
+##   AWS_REGION          — AWS region (default: us-east-1)
+##   AGENTCORE_MEMORY_ID — AgentCore memory resource ID
+##   REDIS_URL           — Redis URL (default: redis://localhost:6379/0)
+##   JWT_ISSUER          — OIDC issuer URL (leave empty to skip JWT)
+##   JWT_AUDIENCE        — Expected audience claim / client ID (optional)
+##   JWT_CLIENT_ID       — Public OIDC client ID for UI login (default: agentic-gateway)
+##   JWT_GROUPS_CLAIM    — Claim name for groups (default: groups)
+##   JWT_SCOPES_CLAIM    — Claim name for scopes (default: scope)
+
+# ── Authentication ────────────────────────────────────────────────────
+# JWT via Keycloak (or any OIDC provider). Leave JWT_ISSUER empty to
+# fall back to noop auth (admin access, no login required).
+
+auth:
+  backend: jwt
+  jwt:
+    issuer: "${JWT_ISSUER:=-}"
+    audience: "${JWT_AUDIENCE:-}"
+    client_id: "${JWT_CLIENT_ID:=agentic-gateway}"
+    algorithms: ["RS256"]
+    claims_mapping:
+      groups: "${JWT_GROUPS_CLAIM:=groups}"
+      scopes: "${JWT_SCOPES_CLAIM:=scope}"
+    jwks_cache_seconds: 300
+
+# ── Providers ─────────────────────────────────────────────────────────
+# Every primitive backed by AgentCore / Bedrock.
 
 providers:
   memory:
-    default: "in_memory"
+    default: "agentcore"
     backends:
-      in_memory:
-        backend: "agentic_primitives_gateway.primitives.memory.in_memory.InMemoryProvider"
-        config: {}
-      mem0:
-        backend: "agentic_primitives_gateway.primitives.memory.mem0_provider.Mem0MemoryProvider"
-        config:
-          vector_store:
-            provider: milvus
-            config:
-              collection_name: agentic_memories
-              url: "http://${MILVUS_HOST:=localhost}:${MILVUS_PORT:=19530}"
-              token: ""
-              embedding_model_dims: 1024
-          llm:
-            provider: aws_bedrock
-            config:
-              model: us.anthropic.claude-sonnet-4-20250514-v1:0
-          embedder:
-            provider: aws_bedrock
-            config:
-              model: amazon.titan-embed-text-v2:0
       agentcore:
         backend: "agentic_primitives_gateway.primitives.memory.agentcore.AgentCoreMemoryProvider"
         config:
           region: "${AWS_REGION:=us-east-1}"
-
-  observability:
-    default: "noop"
-    backends:
-      noop:
-        backend: "agentic_primitives_gateway.primitives.observability.noop.NoopObservabilityProvider"
-        config: {}
-      langfuse:
-        backend: "agentic_primitives_gateway.primitives.observability.langfuse.LangfuseObservabilityProvider"
-        config: {}
-      agentcore:
-        backend: "agentic_primitives_gateway.primitives.observability.agentcore.AgentCoreObservabilityProvider"
-        config:
-          region: "${AWS_REGION:=us-east-1}"
+          memory_id: "${AGENTCORE_MEMORY_ID:=}"
 
   identity:
-    default: "noop"
+    default: "agentcore"
     backends:
-      noop:
-        backend: "agentic_primitives_gateway.primitives.identity.noop.NoopIdentityProvider"
-        config: {}
       agentcore:
         backend: "agentic_primitives_gateway.primitives.identity.agentcore.AgentCoreIdentityProvider"
         config:
           region: "${AWS_REGION:=us-east-1}"
 
   code_interpreter:
-    default: "jupyter"
+    default: "agentcore"
     backends:
-      noop:
-        backend: "agentic_primitives_gateway.primitives.code_interpreter.noop.NoopCodeInterpreterProvider"
-        config: {}
       agentcore:
         backend: "agentic_primitives_gateway.primitives.code_interpreter.agentcore.AgentCoreCodeInterpreterProvider"
         config:
           region: "${AWS_REGION:=us-east-1}"
-      jupyter:
-        backend: "agentic_primitives_gateway.primitives.code_interpreter.jupyter.JupyterCodeInterpreterProvider"
-        config:
-          base_url: "${JUPYTER_URL:=http://localhost:8888}"
-          token: "${JUPYTER_TOKEN:=}"
-          kernel_name: "${JUPYTER_KERNEL:=python3}"
-          execution_timeout: 30.0
-          file_root: "${JUPYTER_FILE_ROOT:=/tmp}"
 
   browser:
-    default: "noop"
+    default: "agentcore"
     backends:
-      noop:
-        backend: "agentic_primitives_gateway.primitives.browser.noop.NoopBrowserProvider"
-        config: {}
       agentcore:
         backend: "agentic_primitives_gateway.primitives.browser.agentcore.AgentCoreBrowserProvider"
         config:
           region: "${AWS_REGION:=us-east-1}"
-      selenium_grid:
-        backend: "agentic_primitives_gateway.primitives.browser.selenium_grid.SeleniumGridBrowserProvider"
-        config:
-          hub_url: "${SELENIUM_HUB_URL:=http://localhost:4444}"
-          browser: "${SELENIUM_BROWSER:=chrome}"
 
-  policy:
-    default: "noop"
+  observability:
+    default: "agentcore"
     backends:
-      noop:
-        backend: "agentic_primitives_gateway.primitives.policy.noop.NoopPolicyProvider"
-        config: {}
       agentcore:
-        backend: "agentic_primitives_gateway.primitives.policy.agentcore.AgentCorePolicyProvider"
+        backend: "agentic_primitives_gateway.primitives.observability.agentcore.AgentCoreObservabilityProvider"
         config:
           region: "${AWS_REGION:=us-east-1}"
-
-  evaluations:
-    default: "noop"
-    backends:
-      noop:
-        backend: "agentic_primitives_gateway.primitives.evaluations.noop.NoopEvaluationsProvider"
-        config: {}
-      agentcore:
-        backend: "agentic_primitives_gateway.primitives.evaluations.agentcore.AgentCoreEvaluationsProvider"
-        config:
-          region: "${AWS_REGION:=us-east-1}"
+          service_name: "agentic-primitives-gateway"
 
   gateway:
     default: "bedrock"
     backends:
-      noop:
-        backend: "agentic_primitives_gateway.primitives.gateway.noop.NoopGatewayProvider"
-        config: {}
       bedrock:
         backend: "agentic_primitives_gateway.primitives.gateway.bedrock.BedrockConverseProvider"
         config:
           region: "${AWS_REGION:=us-east-1}"
           default_model: "us.anthropic.claude-sonnet-4-20250514-v1:0"
 
-  tasks:
-    default: "in_memory"
+  tools:
+    default: "agentcore"
     backends:
-      noop:
-        backend: "agentic_primitives_gateway.primitives.tasks.noop.NoopTasksProvider"
-        config: {}
-      in_memory:
-        backend: "agentic_primitives_gateway.primitives.tasks.in_memory.InMemoryTasksProvider"
-        config: {}
+      agentcore:
+        backend: "agentic_primitives_gateway.primitives.tools.agentcore.AgentCoreGatewayProvider"
+        config:
+          region: "${AWS_REGION:=us-east-1}"
+
+  policy:
+    default: "agentcore"
+    backends:
+      agentcore:
+        backend: "agentic_primitives_gateway.primitives.policy.agentcore.AgentCorePolicyProvider"
+        config:
+          region: "${AWS_REGION:=us-east-1}"
+
+  evaluations:
+    default: "agentcore"
+    backends:
+      agentcore:
+        backend: "agentic_primitives_gateway.primitives.evaluations.agentcore.AgentCoreEvaluationsProvider"
+        config:
+          region: "${AWS_REGION:=us-east-1}"
+
+  tasks:
+    default: "redis"
+    backends:
       redis:
         backend: "agentic_primitives_gateway.primitives.tasks.redis.RedisTasksProvider"
         config:
           redis_url: "${REDIS_URL:=redis://localhost:6379/0}"
 
-  tools:
-    default: "noop"
-    backends:
-      noop:
-        backend: "agentic_primitives_gateway.primitives.tools.noop.NoopToolsProvider"
-        config: {}
-      agentcore:
-        backend: "agentic_primitives_gateway.primitives.tools.agentcore.AgentCoreGatewayProvider"
-        config:
-          region: "${AWS_REGION:=us-east-1}"
-      mcp_registry:
-        backend: "agentic_primitives_gateway.primitives.tools.mcp_registry.MCPRegistryProvider"
-        config:
-          base_url: "${MCP_REGISTRY_URL:=http://localhost:8080}"
-          verify_ssl: false
+# ── Cedar policy enforcement ──────────────────────────────────────────
+# Default-deny when Cedar is active. Seed policies grant baseline access.
+# The AgentCore policy provider stores policies durably; seeds are loaded
+# at startup so enforcement works out of the box.
 
-## Policy enforcement via Cedar. The CedarPolicyEnforcer evaluates every
-## request against Cedar policies loaded from the policy provider above.
-## Default-deny: when enabled with no policies, all non-exempt requests
-## are blocked. Policies are refreshed from the store every N seconds.
-##
-## Actions are auto-discovered from route definitions:
-##   memory:store_memory, memory:retrieve_memory, gateway:route_completion, etc.
-##
-## Seed policies are loaded into the policy provider at startup so that
-## enforcement works out of the box even with the noop (in-memory) provider.
 enforcement:
   backend: "agentic_primitives_gateway.enforcement.cedar.CedarPolicyEnforcer"
   config:
-    policy_refresh_interval: 5   # short interval for demo; use 30+ in production
-  seed_policies:
-    - description: "Allow anyone to list agents"
-      policy_body: 'permit(principal, action == Action::"agents:list_agents", resource);'
-    - description: "Allow anyone to view individual agents"
-      policy_body: 'permit(principal, action == Action::"agents:get_agent", resource);'
-    - description: "Allow anyone to view anything"
-      policy_body: 'permit(principal, action, resource);'
+    policy_refresh_interval: 5
+
 allow_server_credentials: true
+
+# ── Declarative agents ────────────────────────────────────────────────
+# These agents run server-side via the /agents API or the web UI.
 
 agents:
   store:
@@ -196,57 +161,57 @@ agents:
   specs:
     research-assistant:
       model: "us.anthropic.claude-sonnet-4-20250514-v1:0"
-      description: "A research assistant with long-term memory"
+      description: "A research assistant with long-term memory and web browsing"
       system_prompt: |
         You are a research assistant with long-term memory.
         Use the remember tool to store important information.
         Use search_memory to find things you've stored before.
         Use recall to retrieve a specific memory by key.
         Always search memory before saying you don't know something.
+        Use the browser to look up current information when needed.
       primitives:
         memory:
           enabled: true
-          namespace: "agent:{agent_name}:{session_id}"
+          namespace: "agent:{agent_name}"
         browser:
           enabled: true
-      provider_overrides:
-        browser: "selenium_grid"
       max_turns: 100
       hooks:
         auto_memory: true
-        auto_trace: false
+        auto_trace: true
+
     researcher:
       model: "us.anthropic.claude-sonnet-4-20250514-v1:0"
       description: "A focused researcher that searches memory and the web for information"
       system_prompt: |
         You are a focused researcher. When asked a question, search your memory
-        first, then provide a thorough answer. Store important findings.
+        first, then browse the web if needed. Provide thorough, well-sourced
+        answers. Store important findings for future reference.
       primitives:
         memory:
           enabled: true
         browser:
           enabled: true
-      provider_overrides:
-        browser: "selenium_grid"
       max_turns: 100
       hooks:
         auto_memory: true
-        auto_trace: false
+        auto_trace: true
+
     coder:
       model: "us.anthropic.claude-sonnet-4-20250514-v1:0"
       description: "A coding assistant that can write and execute code"
       system_prompt: |
         You are a coding assistant. Write clean, correct code. Execute it
-        when asked to verify results.
+        when asked to verify results. Use the code interpreter for calculations,
+        data processing, and prototyping.
       primitives:
         code_interpreter:
           enabled: true
-      provider_overrides:
-        code_interpreter: "jupyter"
       max_turns: 100
       hooks:
         auto_memory: false
-        auto_trace: false
+        auto_trace: true
+
     coordinator:
       model: "us.anthropic.claude-sonnet-4-20250514-v1:0"
       description: "A coordinator that delegates tasks to specialized agents"
@@ -258,8 +223,6 @@ agents:
         into a coherent answer for the user.
         IMPORTANT: When tasks can be done independently, call multiple agents
         in parallel by making multiple tool calls in the same response.
-        For example, if you need research AND code, call both agents at once.
-        If you need 3 separate scripts written, make 3 parallel call_coder calls.
       primitives:
         memory:
           enabled: true
@@ -268,7 +231,8 @@ agents:
           tools: ["researcher", "coder"]
       hooks:
         auto_memory: true
-        auto_trace: false
+        auto_trace: true
+
     meta-agent:
       model: "us.anthropic.claude-sonnet-4-20250514-v1:0"
       description: "Creates specialized agents on the fly and delegates tasks to them"
@@ -284,10 +248,7 @@ agents:
         4. Use delete_agent to clean up ephemeral agents when done
         5. Synthesize the results into a final response
 
-        Design each agent's system prompt to be specific and actionable. A web
-        scraper agent should know it scrapes web pages. A data analyst should know
-        it analyzes data. The more focused the prompt, the better the result.
-
+        Design each agent's system prompt to be specific and actionable.
         You can create multiple agents and delegate to them in parallel when tasks
         are independent.
       primitives:
@@ -297,7 +258,8 @@ agents:
           enabled: true
       hooks:
         auto_memory: true
-        auto_trace: false
+        auto_trace: true
+
     planner:
       model: "us.anthropic.claude-sonnet-4-20250514-v1:0"
       description: "Decomposes requests into tasks for team execution"
@@ -314,6 +276,7 @@ agents:
       hooks:
         auto_memory: false
         auto_trace: false
+
     synthesizer:
       model: "us.anthropic.claude-sonnet-4-20250514-v1:0"
       description: "Synthesizes team results into coherent responses"
@@ -324,6 +287,8 @@ agents:
       hooks:
         auto_memory: false
         auto_trace: false
+
+# ── Teams ─────────────────────────────────────────────────────────────
 
 teams:
   store:

@@ -1,0 +1,306 @@
+## E2E self-hosted config: JWT auth, Cedar enforcement, mem0/Milvus memory,
+## Langfuse observability, Jupyter code execution, Selenium Grid browser,
+## Redis-backed stores, declarative agents, and teams.
+##
+## The definitive example for running the gateway with all open-source /
+## self-hosted providers. Only AWS Bedrock is used for LLM inference.
+##
+## Required:
+##   pip install -e ".[mem0,langfuse,jupyter,redis,jwt,cedar]"
+##
+## Prerequisites:
+##   - Milvus running at localhost:19530
+##   - Langfuse running at localhost:3000 (or cloud.langfuse.com)
+##   - Jupyter server at localhost:8888
+##   - Selenium Grid at localhost:4444
+##   - MCP Registry at localhost:8080
+##   - Redis at localhost:6379
+##   - AWS credentials for Bedrock (LLM + embeddings)
+##   - Optional: Keycloak for JWT auth
+##
+## Usage:
+##   LANGFUSE_PUBLIC_KEY=pk-lf-... LANGFUSE_SECRET_KEY=sk-lf-... \
+##   ./run.sh e2e-selfhosted-langchain
+##
+## With JWT auth (Keycloak):
+##   JWT_ISSUER=https://keycloak.example.com/realms/my-realm \
+##   JWT_CLIENT_ID=agentic-gateway \
+##   LANGFUSE_PUBLIC_KEY=pk-lf-... LANGFUSE_SECRET_KEY=sk-lf-... \
+##   ./run.sh e2e-selfhosted-langchain
+
+# ── Authentication ────────────────────────────────────────────────────
+# JWT via Keycloak (or any OIDC provider). Leave JWT_ISSUER empty to
+# fall back to noop auth (dev mode, all requests get admin access).
+
+auth:
+  backend: jwt
+  jwt:
+    issuer: "${JWT_ISSUER:=}"
+    audience: "${JWT_AUDIENCE:-}"
+    client_id: "${JWT_CLIENT_ID:=agentic-gateway}"
+    algorithms: ["RS256"]
+    claims_mapping:
+      groups: "groups"
+      scopes: "scope"
+    jwks_cache_seconds: 300
+
+# ── Cedar Policy Enforcement ─────────────────────────────────────────
+# Default-deny when active. Seed policies permit all for easy startup.
+# Replace the catch-all with fine-grained policies for production.
+
+enforcement:
+  backend: "agentic_primitives_gateway.enforcement.cedar.CedarPolicyEnforcer"
+  config:
+    policy_refresh_interval: 5
+
+# ── Providers ─────────────────────────────────────────────────────────
+
+providers:
+  # Memory: mem0 with Milvus vector store (self-hosted)
+  memory:
+    default: "mem0"
+    backends:
+      mem0:
+        backend: "agentic_primitives_gateway.primitives.memory.mem0_provider.Mem0MemoryProvider"
+        config:
+          vector_store:
+            provider: milvus
+            config:
+              collection_name: agentic_memories_e2e
+              url: "http://${MILVUS_HOST:=localhost}:${MILVUS_PORT:=19530}"
+              token: ""
+              embedding_model_dims: 1024
+          llm:
+            provider: aws_bedrock
+            config:
+              model: us.anthropic.claude-sonnet-4-20250514-v1:0
+          embedder:
+            provider: aws_bedrock
+            config:
+              model: amazon.titan-embed-text-v2:0
+
+  # Observability: Langfuse (self-hosted or cloud)
+  observability:
+    default: "langfuse"
+    backends:
+      langfuse:
+        backend: "agentic_primitives_gateway.primitives.observability.langfuse.LangfuseObservabilityProvider"
+        config:
+          public_key: "${LANGFUSE_PUBLIC_KEY:=}"
+          secret_key: "${LANGFUSE_SECRET_KEY:=}"
+          base_url: "${LANGFUSE_BASE_URL:=https://cloud.langfuse.com}"
+
+  # Code interpreter: Jupyter (self-hosted)
+  code_interpreter:
+    default: "jupyter"
+    backends:
+      jupyter:
+        backend: "agentic_primitives_gateway.primitives.code_interpreter.jupyter.JupyterCodeInterpreterProvider"
+        config:
+          base_url: "${JUPYTER_URL:=http://localhost:8888}"
+          token: "${JUPYTER_TOKEN:=}"
+          kernel_name: "${JUPYTER_KERNEL:=python3}"
+          execution_timeout: 30.0
+          file_root: "${JUPYTER_FILE_ROOT:=/tmp}"
+
+  # Browser: Selenium Grid (self-hosted Chrome)
+  browser:
+    default: "selenium_grid"
+    backends:
+      selenium_grid:
+        backend: "agentic_primitives_gateway.primitives.browser.selenium_grid.SeleniumGridBrowserProvider"
+        config:
+          hub_url: "${SELENIUM_HUB_URL:=http://localhost:4444}"
+          browser: "${SELENIUM_BROWSER:=chrome}"
+
+  # Gateway: Bedrock (AWS — the only non-self-hosted component)
+  gateway:
+    default: "bedrock"
+    backends:
+      bedrock:
+        backend: "agentic_primitives_gateway.primitives.gateway.bedrock.BedrockConverseProvider"
+        config:
+          region: "${AWS_REGION:=us-east-1}"
+          default_model: "us.anthropic.claude-sonnet-4-20250514-v1:0"
+
+  # Identity: noop (no self-hosted identity provider)
+  identity:
+    default: "noop"
+    backends:
+      noop:
+        backend: "agentic_primitives_gateway.primitives.identity.noop.NoopIdentityProvider"
+        config: {}
+
+  # Tools: MCP Registry (self-hosted)
+  tools:
+    default: "mcp_registry"
+    backends:
+      mcp_registry:
+        backend: "agentic_primitives_gateway.primitives.tools.mcp_registry.MCPRegistryProvider"
+        config:
+          base_url: "${MCP_REGISTRY_URL:=http://localhost:8080}"
+          verify_ssl: false
+
+  # Policy: AgentCore (Cedar enforcement reads policies from this provider)
+  policy:
+    default: "agentcore"
+    backends:
+      agentcore:
+        backend: "agentic_primitives_gateway.primitives.policy.agentcore.AgentCorePolicyProvider"
+        config:
+          region: "${AWS_REGION:=us-east-1}"
+
+  # Evaluations: noop (no self-hosted evaluations backend)
+  evaluations:
+    default: "noop"
+    backends:
+      noop:
+        backend: "agentic_primitives_gateway.primitives.evaluations.noop.NoopEvaluationsProvider"
+        config: {}
+
+  # Tasks: Redis (required for teams)
+  tasks:
+    default: "redis"
+    backends:
+      redis:
+        backend: "agentic_primitives_gateway.primitives.tasks.redis.RedisTasksProvider"
+        config:
+          redis_url: "${REDIS_URL:=redis://localhost:6379/0}"
+
+allow_server_credentials: true
+
+# ── Declarative Agents ────────────────────────────────────────────────
+
+agents:
+  store:
+    backend: redis
+    config:
+      redis_url: "${REDIS_URL:=redis://localhost:6379/0}"
+  specs:
+    research-assistant:
+      model: "us.anthropic.claude-sonnet-4-20250514-v1:0"
+      description: "A research assistant with long-term memory and web browsing"
+      system_prompt: |
+        You are a research assistant with long-term memory backed by Milvus
+        vector search and a self-hosted browser via Selenium Grid.
+
+        **Memory:** Use remember to store facts, search_memory to find them via
+        semantic similarity, recall for exact key lookup, list_memories to browse,
+        and forget to clean up. Always search memory before saying you don't know.
+
+        **Browser:** Use navigate to visit pages, read_page to extract content,
+        click and type_text for interaction, screenshot for visual inspection.
+        Always open a browser session first.
+      primitives:
+        memory:
+          enabled: true
+          namespace: "agent:{agent_name}:{session_id}"
+        browser:
+          enabled: true
+      max_turns: 100
+      hooks:
+        auto_memory: true
+        auto_trace: true
+
+    researcher:
+      model: "us.anthropic.claude-sonnet-4-20250514-v1:0"
+      description: "A focused researcher that searches memory and the web for information"
+      system_prompt: |
+        You are a focused researcher. When asked a question, search your memory
+        first, then browse the web for answers. Store important findings in memory
+        for future reference.
+      primitives:
+        memory:
+          enabled: true
+          namespace: "agent:{agent_name}:{session_id}"
+        browser:
+          enabled: true
+      max_turns: 100
+      hooks:
+        auto_memory: true
+        auto_trace: true
+
+    coder:
+      model: "us.anthropic.claude-sonnet-4-20250514-v1:0"
+      description: "A coding assistant with Jupyter kernel and persistent memory"
+      system_prompt: |
+        You are a coding assistant with a live Jupyter kernel. Write clean,
+        correct code. Execute it to verify results. State persists across calls —
+        variables, imports, and data frames survive between executions. Use memory
+        to store useful code snippets and results.
+      primitives:
+        memory:
+          enabled: true
+          namespace: "agent:{agent_name}:{session_id}"
+        code_interpreter:
+          enabled: true
+      max_turns: 100
+      hooks:
+        auto_memory: true
+        auto_trace: true
+
+    coordinator:
+      model: "us.anthropic.claude-sonnet-4-20250514-v1:0"
+      description: "A coordinator that delegates tasks to specialized agents"
+      system_prompt: |
+        You are a coordinator agent. You have access to specialized agents:
+        - call_researcher: for research and information gathering (has browser + memory)
+        - call_coder: for writing and running code (has Jupyter kernel + memory)
+        Delegate tasks to the appropriate agent. Synthesize their responses
+        into a coherent answer for the user.
+        IMPORTANT: When tasks can be done independently, call multiple agents
+        in parallel by making multiple tool calls in the same response.
+      primitives:
+        memory:
+          enabled: true
+          namespace: "agent:{agent_name}:{session_id}"
+        agents:
+          enabled: true
+          tools: ["researcher", "coder"]
+      hooks:
+        auto_memory: true
+        auto_trace: true
+
+    planner:
+      model: "us.anthropic.claude-sonnet-4-20250514-v1:0"
+      description: "Decomposes requests into tasks for team execution"
+      system_prompt: |
+        You are a task planner for a team of specialized agents. Your job is to
+        decompose requests into multiple concrete tasks and assign each to the
+        right team member. You MUST create tasks for ALL workers when the request
+        involves their specialties. Always create at least one task per relevant
+        worker. Think carefully about what each worker can do and create tasks
+        that fully utilize the team. Where possible, write parallel tasks,
+        for instance: if the task is to evaluate 3 things, write out a task for each
+        evaluation.
+      primitives: {}
+      hooks:
+        auto_memory: false
+        auto_trace: false
+
+    synthesizer:
+      model: "us.anthropic.claude-sonnet-4-20250514-v1:0"
+      description: "Synthesizes team results into coherent responses"
+      system_prompt: |
+        You are a synthesizer. Given the results of multiple completed tasks,
+        produce a clear, comprehensive response that addresses the original request.
+      primitives: {}
+      hooks:
+        auto_memory: false
+        auto_trace: false
+
+# ── Teams ─────────────────────────────────────────────────────────────
+
+teams:
+  store:
+    backend: redis
+    config:
+      redis_url: "${REDIS_URL:=redis://localhost:6379/0}"
+  specs:
+    research-team:
+      description: "A team that researches topics and writes code collaboratively"
+      planner: "planner"
+      synthesizer: "synthesizer"
+      workers: ["researcher", "coder"]
+      global_max_turns: 100
+      global_timeout_seconds: 300

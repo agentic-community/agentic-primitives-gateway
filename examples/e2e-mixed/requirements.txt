@@ -1,0 +1,6 @@
+strands-agents
+strands-agents-tools
+langchain
+langchain-aws
+agentic-primitives-gateway-client[aws]
+httpx

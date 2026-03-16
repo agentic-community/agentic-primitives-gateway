@@ -89,16 +89,20 @@ providers:
           region: "${AWS_REGION:=us-east-1}"
 
   tasks:
-    default: "in_memory"
+    default: "redis"
     backends:
-      in_memory:
-        backend: "agentic_primitives_gateway.primitives.tasks.in_memory.InMemoryTasksProvider"
-        config: {}
+      redis:
+        backend: "agentic_primitives_gateway.primitives.tasks.redis.RedisTasksProvider"
+        config:
+          redis_url: "${REDIS_URL:=redis://localhost:6379/0}"
 
 allow_server_credentials: true
 
 agents:
-  store_path: "agents.json"
+  store:
+    backend: redis
+    config:
+      redis_url: "${REDIS_URL:=redis://localhost:6379/0}"
   specs:
     research-assistant:
       model: "us.anthropic.claude-sonnet-4-20250514-v1:0"
@@ -221,7 +225,10 @@ agents:
         auto_trace: false
 
 teams:
-  store_path: "teams.json"
+  store:
+    backend: redis
+    config:
+      redis_url: "${REDIS_URL:=redis://localhost:6379/0}"
   specs:
     research-team:
       description: "A team that researches topics and writes code collaboratively"

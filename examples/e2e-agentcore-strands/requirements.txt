@@ -1,0 +1,4 @@
+strands-agents
+strands-agents-tools
+agentic-primitives-gateway-client[aws]
+httpx
