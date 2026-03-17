@@ -306,6 +306,9 @@ async def cancel_team_run(name: str, team_run_id: str) -> dict:
         principal = require_principal()
         with contextlib.suppress(Exception):
             await agent_runner._checkpoint_store.delete(f"{principal.id}:{team_run_id}")
+        # Signal cross-replica cancellation for recovered runs on other replicas
+        with contextlib.suppress(Exception):
+            await agent_runner._checkpoint_store.mark_cancelled(team_run_id)
 
     return {"status": "cancelled"}
 

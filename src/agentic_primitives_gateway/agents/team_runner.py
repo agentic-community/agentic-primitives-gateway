@@ -916,7 +916,14 @@ class TeamRunner:
             content = ""
             cancel_evt = self._cancel_events.get(team_run_id)
             async for event in run_agent_with_tools_stream(
-                worker_spec, message, tools, worker_name, max_turns=worker_spec.max_turns, cancel_event=cancel_evt
+                worker_spec,
+                message,
+                tools,
+                worker_name,
+                max_turns=worker_spec.max_turns,
+                cancel_event=cancel_evt,
+                checkpoint_store=self._checkpoint_store,
+                run_id=team_run_id,
             ):
                 evt_type = event.get("type")
                 if evt_type == "agent_token":

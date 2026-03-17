@@ -460,6 +460,9 @@ async def cancel_session_run(name: str, session_id: str) -> dict:
         principal = require_principal()
         with contextlib.suppress(Exception):
             await _runner._checkpoint_store.delete(f"{principal.id}:{session_id}")
+        # Signal cross-replica cancellation for recovered runs on other replicas
+        with contextlib.suppress(Exception):
+            await _runner._checkpoint_store.mark_cancelled(session_id)
 
     return {"status": "cancelled"}
 

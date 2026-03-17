@@ -23,6 +23,7 @@ class InMemoryCheckpointStore(CheckpointStore):
         self._data: dict[str, dict[str, Any]] = {}
         self._locks: dict[str, str] = {}
         self._heartbeats: set[str] = set()
+        self._cancelled: set[str] = set()
 
     async def save(self, key: str, data: dict[str, Any], ttl: int = 600) -> None:
         self._data[key] = data
@@ -51,6 +52,12 @@ class InMemoryCheckpointStore(CheckpointStore):
 
     async def is_replica_alive(self, replica_id: str) -> bool:
         return replica_id in self._heartbeats
+
+    async def mark_cancelled(self, run_id: str, ttl: int = 300) -> None:
+        self._cancelled.add(run_id)
+
+    async def is_cancelled(self, run_id: str) -> bool:
+        return run_id in self._cancelled
 
 
 _ALICE = AuthenticatedPrincipal(id="alice", type="user", groups=frozenset({"engineering"}), scopes=frozenset())

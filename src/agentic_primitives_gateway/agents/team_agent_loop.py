@@ -13,6 +13,7 @@ import uuid
 from collections.abc import AsyncIterator
 from typing import Any
 
+from agentic_primitives_gateway.agents.checkpoint import CheckpointStore
 from agentic_primitives_gateway.agents.tools import ToolDefinition, execute_tool, to_gateway_tools
 from agentic_primitives_gateway.models.agents import AgentSpec
 from agentic_primitives_gateway.registry import registry
@@ -123,6 +124,8 @@ async def run_agent_with_tools_stream(
     max_turns: int = 20,
     cancel_event: asyncio.Event | None = None,
     resume_hint: str | None = None,
+    checkpoint_store: CheckpointStore | None = None,
+    run_id: str | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
     """Streaming version of run_agent_with_tools.
 
@@ -147,6 +150,9 @@ async def run_agent_with_tools_stream(
         # Check for cancellation before starting a new turn
         if cancel_event and cancel_event.is_set():
             logger.info("Agent[%s] cancelled before turn %d", spec.name, _turn + 1)
+            return
+        if checkpoint_store and run_id and await checkpoint_store.is_cancelled(run_id):
+            logger.info("Agent[%s] cancelled via Redis signal before turn %d", spec.name, _turn + 1)
             return
 
         system = spec.system_prompt
@@ -218,6 +224,9 @@ async def run_agent_with_tools_stream(
             # Check for cancellation before each tool execution
             if cancel_event and cancel_event.is_set():
                 logger.info("Agent[%s] cancelled before tool %s", spec.name, tc["name"])
+                return
+            if checkpoint_store and run_id and await checkpoint_store.is_cancelled(run_id):
+                logger.info("Agent[%s] cancelled via Redis signal before tool %s", spec.name, tc["name"])
                 return
             logger.info("Agent[%s] stream tool: %s(%s)", spec.name, tc["name"], str(tc.get("input", {}))[:200])
             try:

@@ -711,6 +711,11 @@ class AgentRunner:
         # Continue the LLM loop
         resumed_first_turn = True
         while ctx.turns_used < spec.max_turns:
+            # Check for cross-replica cancellation signal
+            if self._checkpoint_store and await self._checkpoint_store.is_cancelled(ctx.session_id):
+                logger.info("Agent[%s] session=%s cancelled via Redis signal", spec.name, ctx.session_id)
+                break
+
             ctx.turns_used += 1
             request_dict = self._build_request(ctx)
 

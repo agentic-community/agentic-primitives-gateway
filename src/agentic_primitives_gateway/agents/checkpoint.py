@@ -52,6 +52,16 @@ class CheckpointStore(ABC):
         ...
 
     @abstractmethod
+    async def mark_cancelled(self, run_id: str, ttl: int = 300) -> None:
+        """Signal that a run should be cancelled (cross-replica)."""
+        ...
+
+    @abstractmethod
+    async def is_cancelled(self, run_id: str) -> bool:
+        """Check if a run has been signalled for cancellation."""
+        ...
+
+    @abstractmethod
     async def set_heartbeat(self, replica_id: str, ttl: int = 30) -> None:
         """Write or refresh this replica's heartbeat."""
         ...
@@ -120,6 +130,16 @@ class RedisCheckpointStore(CheckpointStore):
 
     async def is_replica_alive(self, replica_id: str) -> bool:
         return bool(await self._redis.exists(self._heartbeat_key(replica_id)))
+
+    @staticmethod
+    def _cancel_key(run_id: str) -> str:
+        return f"checkpoint:cancel:{run_id}"
+
+    async def mark_cancelled(self, run_id: str, ttl: int = 300) -> None:
+        await self._redis.set(self._cancel_key(run_id), "1", ex=ttl)
+
+    async def is_cancelled(self, run_id: str) -> bool:
+        return bool(await self._redis.exists(self._cancel_key(run_id)))
 
 
 # ── Replica heartbeat ────────────────────────────────────────────────
