@@ -110,11 +110,27 @@ def _warn_replica_unsafe_config() -> None:
         warnings.append(f"teams.store.backend={team_backend!r} (should be 'redis')")
 
     # Check primitives for in-memory backends
-    for prim_name, prim_cfg in (settings.providers or {}).items():
-        backends = prim_cfg if isinstance(prim_cfg, dict) else {}
-        backend_path = backends.get("backend", "")
-        if isinstance(backend_path, str) and "in_memory" in backend_path.lower():
-            warnings.append(f"primitives.{prim_name} uses in-memory provider ({backend_path})")
+    providers_cfg = settings.providers
+    for prim_name in (
+        "memory",
+        "observability",
+        "gateway",
+        "tools",
+        "identity",
+        "code_interpreter",
+        "browser",
+        "policy",
+        "evaluations",
+        "tasks",
+    ):
+        prim_cfg = getattr(providers_cfg, prim_name, None)
+        if prim_cfg is None:
+            continue
+        for backend_name, backend_cfg in prim_cfg.backends.items():
+            if "in_memory" in backend_cfg.backend.lower():
+                warnings.append(
+                    f"primitives.{prim_name}.{backend_name} uses in-memory provider ({backend_cfg.backend})"
+                )
 
     if warnings:
         logger.warning(
