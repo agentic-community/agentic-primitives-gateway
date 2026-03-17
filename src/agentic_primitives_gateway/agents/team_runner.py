@@ -73,11 +73,37 @@ class TeamRunner:
         self._cancel_events: dict[str, asyncio.Event] = {}
 
     def cancel_run(self, team_run_id: str) -> None:
-        """Signal a running team to stop at the next checkpoint."""
+        """Signal a running team to stop at the next checkpoint.
+
+        Sets the local asyncio.Event for this replica. Cross-replica
+        cancellation is handled by the cancel endpoint setting the Redis
+        event store status to "cancelled", which ``_sync_remote_cancel``
+        picks up in the worker loop.
+        """
         event = self._cancel_events.get(team_run_id)
         if event:
             event.set()
             logger.info("Cancel event set for team run %s", team_run_id)
+
+    async def _sync_remote_cancel(self, team_run_id: str) -> None:
+        """Check the Redis event store for a remote cancel signal.
+
+        If another replica set the status to ``"cancelled"``, propagate it to
+        the local ``asyncio.Event`` so worker loops and agent tool-call loops
+        stop cooperatively.
+        """
+        event_store = self._get_event_store()
+        if not event_store:
+            return
+        try:
+            status = await event_store.get_status(team_run_id)
+            if status == "cancelled":
+                cancel_evt = self._cancel_events.get(team_run_id)
+                if cancel_evt and not cancel_evt.is_set():
+                    cancel_evt.set()
+                    logger.info("Remote cancel detected for team run %s", team_run_id)
+        except Exception:
+            pass  # best-effort
 
     def set_stores(
         self,
@@ -716,7 +742,14 @@ class TeamRunner:
             logger.warning("Worker agent '%s' not found — skipping", worker_name)
             return
 
+        cancel_evt = self._cancel_events.get(team_run_id)
         while True:
+            # Check for cancellation (local event + remote Redis status)
+            await self._sync_remote_cancel(team_run_id)
+            if cancel_evt and cancel_evt.is_set():
+                logger.info("Worker '%s': cancelled, exiting", worker_name)
+                break
+
             available = await registry.tasks.get_available(team_run_id, worker_name=worker_name)
             if not available:
                 if not await self._has_incomplete_tasks(team_run_id):
@@ -755,7 +788,8 @@ class TeamRunner:
 
         yield {"type": "worker_start", "agent": worker_name}
         while True:
-            # Check for cancellation before polling for tasks
+            # Check for cancellation (local event + remote Redis status)
+            await self._sync_remote_cancel(team_run_id)
             if cancel_evt and cancel_evt.is_set():
                 logger.info("Worker '%s': cancelled, exiting", worker_name)
                 break
@@ -813,7 +847,8 @@ class TeamRunner:
 
         finished_ids: set[int] = set()
         while len(finished_ids) < len(parallel_tasks):
-            # Check cancel event — cancel all sub-tasks and exit
+            # Check cancel event (local + remote) — cancel all sub-tasks and exit
+            await self._sync_remote_cancel(team_run_id)
             if cancel_evt and cancel_evt.is_set():
                 for pt in parallel_tasks:
                     if not pt.done():
