@@ -1,5 +1,7 @@
 """Shared route helpers to reduce boilerplate."""
 
+from __future__ import annotations
+
 from collections.abc import Awaitable, Callable
 from functools import wraps
 from typing import Any
@@ -9,6 +11,10 @@ from fastapi import HTTPException
 from agentic_primitives_gateway.auth.models import AuthenticatedPrincipal
 from agentic_primitives_gateway.context import get_authenticated_principal
 
+# Separator used by agents/namespace.py to embed user IDs in actor_ids
+# and namespaces.  E.g. ``agent:bot:u:user-123``.
+_USER_SCOPE_SEP = ":u:"
+
 
 def require_principal() -> AuthenticatedPrincipal:
     """Return the authenticated principal. Raises if not set."""
@@ -16,6 +22,83 @@ def require_principal() -> AuthenticatedPrincipal:
     if principal is None:
         raise RuntimeError("No authenticated principal — auth middleware did not run")
     return principal
+
+
+def require_admin() -> AuthenticatedPrincipal:
+    """Return the principal if it has admin scope. Raises 403 otherwise."""
+    principal = require_principal()
+    if not principal.is_admin:
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return principal
+
+
+def require_user_scoped(value: str, principal: AuthenticatedPrincipal) -> None:
+    """Raise 403 if *value* (actor_id or namespace) is user-scoped to a different user.
+
+    User-scoped values contain ``:u:{user_id}``.  If the embedded user_id
+    does not match ``principal.id`` and the principal is not an admin, access
+    is denied.  Values that do NOT contain the ``:u:`` marker are considered
+    unscoped (shared/legacy) and are allowed through.
+    """
+    idx = value.find(_USER_SCOPE_SEP)
+    if idx == -1:
+        return  # not user-scoped — allow
+    owner_id = value[idx + len(_USER_SCOPE_SEP) :]
+    # owner_id may contain further segments (e.g. ``user-123:extra``), but
+    # the convention is that the user_id is the terminal segment.
+    if owner_id != principal.id and not principal.is_admin:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+
+class SessionOwnershipStore:
+    """Tracks which principal created each browser/code-interpreter session.
+
+    In-memory by default.  Call ``set_redis`` to enable cross-replica
+    visibility via a shared Redis instance.
+    """
+
+    def __init__(self) -> None:
+        self._local: dict[str, str] = {}
+        self._redis: Any | None = None
+
+    def set_redis(self, redis_client: Any) -> None:
+        self._redis = redis_client
+
+    @staticmethod
+    def _key(session_id: str) -> str:
+        return f"session_owner:{session_id}"
+
+    async def set_owner(self, session_id: str, owner_id: str) -> None:
+        self._local[session_id] = owner_id
+        if self._redis:
+            await self._redis.set(self._key(session_id), owner_id, ex=86400)
+
+    async def get_owner(self, session_id: str) -> str | None:
+        owner = self._local.get(session_id)
+        if owner is None and self._redis:
+            owner = await self._redis.get(self._key(session_id))
+            if owner:
+                self._local[session_id] = owner
+        return owner
+
+    async def delete(self, session_id: str) -> None:
+        self._local.pop(session_id, None)
+        if self._redis:
+            await self._redis.delete(self._key(session_id))
+
+    async def require_owner(self, session_id: str, principal: AuthenticatedPrincipal) -> None:
+        """Raise 403 if the principal does not own the session."""
+        if principal.is_admin:
+            return
+        owner = await self.get_owner(session_id)
+        if owner is not None and owner != principal.id:
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+
+# Shared stores — one per primitive.  Initialized at module import;
+# ``main.py`` lifespan can call ``.set_redis()`` for multi-replica.
+browser_session_owners = SessionOwnershipStore()
+code_interpreter_session_owners = SessionOwnershipStore()
 
 
 def handle_provider_errors(

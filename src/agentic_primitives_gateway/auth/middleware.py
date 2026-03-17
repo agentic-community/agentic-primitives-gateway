@@ -9,7 +9,7 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 from starlette.responses import JSONResponse, Response
 
 from agentic_primitives_gateway.auth.base import AuthBackend
-from agentic_primitives_gateway.auth.models import ANONYMOUS_PRINCIPAL
+from agentic_primitives_gateway.auth.models import ANONYMOUS_PRINCIPAL, NOOP_PRINCIPAL
 from agentic_primitives_gateway.context import set_authenticated_principal
 
 logger = logging.getLogger(__name__)
@@ -40,7 +40,11 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
     before ``PolicyEnforcementMiddleware`` (so the enforcer can read the
     principal from context).
 
-    Exempt paths skip authentication entirely and get the anonymous principal.
+    When no auth backend is configured (dev mode), all requests get the
+    noop principal (admin access).
+
+    Exempt paths get the anonymous principal (non-admin) so that
+    resource-level access checks (e.g. private agent discovery) still apply.
 
     When the auth backend returns ``None`` (missing/invalid credentials)
     and the backend is not noop, the middleware returns 401.
@@ -49,12 +53,12 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         backend: AuthBackend | None = getattr(request.app.state, "auth_backend", None)
 
-        # No backend configured — anonymous pass-through
+        # No backend configured — noop pass-through (dev mode, full access)
         if backend is None:
-            set_authenticated_principal(ANONYMOUS_PRINCIPAL)
+            set_authenticated_principal(NOOP_PRINCIPAL)
             return await call_next(request)
 
-        # Exempt paths get anonymous principal without validation
+        # Exempt paths get anonymous principal (non-admin) without validation
         path = request.url.path
         for prefix in AUTH_EXEMPT_PREFIXES:
             if path.startswith(prefix):

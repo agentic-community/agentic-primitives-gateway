@@ -18,7 +18,7 @@ from agentic_primitives_gateway.models.policy import (
     UpdatePolicyRequest,
 )
 from agentic_primitives_gateway.registry import registry
-from agentic_primitives_gateway.routes._helpers import handle_provider_errors, require_principal
+from agentic_primitives_gateway.routes._helpers import handle_provider_errors, require_admin, require_principal
 
 router = APIRouter(
     prefix="/api/v1/policy",
@@ -46,6 +46,7 @@ async def get_enforcement_info(request: Request) -> dict[str, Any]:
 
 @router.post("/engines", response_model=PolicyEngineInfo, status_code=201)
 async def create_policy_engine(request: CreatePolicyEngineRequest) -> PolicyEngineInfo:
+    require_admin()
     result = await registry.policy.create_policy_engine(
         name=request.name,
         description=request.description,
@@ -75,6 +76,7 @@ async def get_policy_engine(engine_id: str) -> PolicyEngineInfo:
 
 @router.delete("/engines/{engine_id}")
 async def delete_policy_engine(engine_id: str) -> Response:
+    require_admin()
     await registry.policy.delete_policy_engine(engine_id)
     return Response(status_code=204)
 
@@ -84,6 +86,7 @@ async def delete_policy_engine(engine_id: str) -> Response:
 
 @router.post("/engines/{engine_id}/policies", response_model=PolicyInfo, status_code=201)
 async def create_policy(engine_id: str, request: CreatePolicyRequest) -> PolicyInfo:
+    require_admin()
     result = await registry.policy.create_policy(
         engine_id=engine_id,
         policy_body=request.policy_body,
@@ -115,6 +118,7 @@ async def get_policy(engine_id: str, policy_id: str) -> PolicyInfo:
 
 @router.put("/engines/{engine_id}/policies/{policy_id}", response_model=PolicyInfo)
 async def update_policy(engine_id: str, policy_id: str, request: UpdatePolicyRequest) -> PolicyInfo:
+    require_admin()
     result = await registry.policy.update_policy(
         engine_id=engine_id,
         policy_id=policy_id,
@@ -126,6 +130,7 @@ async def update_policy(engine_id: str, policy_id: str, request: UpdatePolicyReq
 
 @router.delete("/engines/{engine_id}/policies/{policy_id}")
 async def delete_policy(engine_id: str, policy_id: str) -> Response:
+    require_admin()
     await registry.policy.delete_policy(engine_id=engine_id, policy_id=policy_id)
     return Response(status_code=204)
 

@@ -272,14 +272,21 @@ class TestPerAgentCard:
         """
         from starlette.testclient import TestClient
 
+        from agentic_primitives_gateway.auth.noop import NoopAuthBackend
         from agentic_primitives_gateway.main import app
 
         spec = _make_spec("private-bot", "Private bot", shared_with=[], owner_id="alice")
         mock_store.get = AsyncMock(return_value=spec)
 
-        client = TestClient(app)
-        resp = client.get("/a2a/agents/private-bot/.well-known/agent.json")
-        assert resp.status_code == 403
+        # Set an auth backend so exempt paths get anonymous principal (not noop/admin)
+        prev = getattr(app.state, "auth_backend", None)
+        app.state.auth_backend = NoopAuthBackend()
+        try:
+            client = TestClient(app)
+            resp = client.get("/a2a/agents/private-bot/.well-known/agent.json")
+            assert resp.status_code == 403
+        finally:
+            app.state.auth_backend = prev
 
     @pytest.mark.asyncio
     async def test_skill_uses_description_fallback(self, mock_store: AsyncMock) -> None:

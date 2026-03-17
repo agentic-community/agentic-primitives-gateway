@@ -20,7 +20,11 @@ from agentic_primitives_gateway.models.memory import (
     TurnGroup,
 )
 from agentic_primitives_gateway.registry import registry
-from agentic_primitives_gateway.routes._helpers import handle_provider_errors, require_principal
+from agentic_primitives_gateway.routes._helpers import (
+    handle_provider_errors,
+    require_principal,
+    require_user_scoped,
+)
 
 router = APIRouter(
     prefix="/api/v1/memory",
@@ -29,15 +33,33 @@ router = APIRouter(
 )
 
 
+def _check_actor(actor_id: str) -> None:
+    """Validate the caller owns this actor_id."""
+    require_user_scoped(actor_id, require_principal())
+
+
+def _check_namespace(namespace: str) -> None:
+    """Validate the caller owns this namespace."""
+    require_user_scoped(namespace, require_principal())
+
+
 # ── Namespace discovery ──────────────────────────────────────────────
 # Must be registered before /{namespace} catch-all routes.
 
 
 @router.get("/namespaces")
 async def list_namespaces() -> Any:
-    """List all known memory namespaces that contain stored memories."""
+    """List memory namespaces visible to the current user.
+
+    Non-admin callers only see namespaces scoped to their own user ID.
+    """
+    principal = require_principal()
     namespaces = await registry.memory.list_namespaces()
-    return {"namespaces": namespaces}
+    if principal.is_admin:
+        return {"namespaces": namespaces}
+    # Filter to namespaces belonging to this user
+    filtered = [ns for ns in namespaces if f":u:{principal.id}" in ns]
+    return {"namespaces": filtered}
 
 
 # ── Conversation events ─────────────────────────────────────────────
@@ -54,6 +76,7 @@ async def create_event(
     session_id: str,
     request: CreateEventRequest,
 ) -> Any:
+    _check_actor(actor_id)
     try:
         return await registry.memory.create_event(
             actor_id=actor_id,
@@ -75,6 +98,7 @@ async def list_events(
     session_id: str,
     limit: int = Query(default=100, ge=1, le=1000),
 ) -> Any:
+    _check_actor(actor_id)
     events = await registry.memory.list_events(
         actor_id=actor_id,
         session_id=session_id,
@@ -89,6 +113,7 @@ async def list_events(
 )
 @handle_provider_errors("Conversation events not supported by this provider", not_found="Event not found")
 async def get_event(actor_id: str, session_id: str, event_id: str) -> Any:
+    _check_actor(actor_id)
     return await registry.memory.get_event(
         actor_id=actor_id,
         session_id=session_id,
@@ -99,6 +124,7 @@ async def get_event(actor_id: str, session_id: str, event_id: str) -> Any:
 @router.delete("/sessions/{actor_id}/{session_id}/events/{event_id}")
 @handle_provider_errors("Conversation events not supported by this provider", not_found="Event not found")
 async def delete_event(actor_id: str, session_id: str, event_id: str) -> Response:
+    _check_actor(actor_id)
     await registry.memory.delete_event(
         actor_id=actor_id,
         session_id=session_id,
@@ -117,6 +143,7 @@ async def get_last_turns(
     session_id: str,
     k: int = Query(default=5, ge=1, le=100),
 ) -> Any:
+    _check_actor(actor_id)
     turns = await registry.memory.get_last_turns(
         actor_id=actor_id,
         session_id=session_id,
@@ -133,13 +160,22 @@ async def get_last_turns(
 @router.get("/actors")
 @handle_provider_errors("Actor listing not supported by this provider")
 async def list_actors() -> Any:
+    """List actors visible to the current user.
+
+    Non-admin callers only see their own actor IDs.
+    """
+    principal = require_principal()
     actors = await registry.memory.list_actors()
-    return {"actors": actors}
+    if principal.is_admin:
+        return {"actors": actors}
+    filtered = [a for a in actors if f":u:{principal.id}" in a]
+    return {"actors": filtered}
 
 
 @router.get("/actors/{actor_id}/sessions")
 @handle_provider_errors("Session listing not supported by this provider")
 async def list_sessions(actor_id: str) -> Any:
+    _check_actor(actor_id)
     sessions = await registry.memory.list_sessions(actor_id=actor_id)
     return {"sessions": sessions}
 
@@ -156,6 +192,7 @@ async def fork_conversation(
     session_id: str,
     request: ForkConversationRequest,
 ) -> Any:
+    _check_actor(actor_id)
     try:
         return await registry.memory.fork_conversation(
             actor_id=actor_id,
@@ -171,6 +208,7 @@ async def fork_conversation(
 @router.get("/sessions/{actor_id}/{session_id}/branches")
 @handle_provider_errors("Branch management not supported by this provider")
 async def list_branches(actor_id: str, session_id: str) -> Any:
+    _check_actor(actor_id)
     branches = await registry.memory.list_branches(
         actor_id=actor_id,
         session_id=session_id,
@@ -249,6 +287,7 @@ async def delete_strategy(memory_id: str, strategy_id: str) -> Response:
 
 @router.post("/{namespace}", response_model=MemoryRecord, status_code=201)
 async def store_memory(namespace: str, request: StoreMemoryRequest) -> MemoryRecord:
+    _check_namespace(namespace)
     return await registry.memory.store(
         namespace=namespace,
         key=request.key,
@@ -259,6 +298,7 @@ async def store_memory(namespace: str, request: StoreMemoryRequest) -> MemoryRec
 
 @router.get("/{namespace}/{key}", response_model=MemoryRecord)
 async def retrieve_memory(namespace: str, key: str) -> MemoryRecord:
+    _check_namespace(namespace)
     record = await registry.memory.retrieve(namespace=namespace, key=key)
     if record is None:
         raise HTTPException(status_code=404, detail="Memory not found")
@@ -271,12 +311,14 @@ async def list_memories(
     limit: int = Query(default=100, ge=1, le=1000),
     offset: int = Query(default=0, ge=0),
 ) -> ListMemoryResponse:
+    _check_namespace(namespace)
     records = await registry.memory.list_memories(namespace=namespace, limit=limit, offset=offset)
     return ListMemoryResponse(records=records, total=len(records))
 
 
 @router.post("/{namespace}/search", response_model=SearchMemoryResponse)
 async def search_memories(namespace: str, request: SearchMemoryRequest) -> SearchMemoryResponse:
+    _check_namespace(namespace)
     results = await registry.memory.search(
         namespace=namespace,
         query=request.query,
@@ -288,6 +330,7 @@ async def search_memories(namespace: str, request: SearchMemoryRequest) -> Searc
 
 @router.delete("/{namespace}/{key}")
 async def delete_memory(namespace: str, key: str) -> Response:
+    _check_namespace(namespace)
     deleted = await registry.memory.delete(namespace=namespace, key=key)
     if not deleted:
         raise HTTPException(status_code=404, detail="Memory not found")

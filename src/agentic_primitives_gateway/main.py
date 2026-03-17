@@ -114,6 +114,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     agent_bg = agent_store.create_background_run_manager(stale_seconds=600)
     if agent_bg:
         set_agent_bg(agent_bg)
+        # Wire Redis into session ownership stores for multi-replica visibility
+        if agent_bg._event_store and hasattr(agent_bg._event_store, "_redis"):
+            from agentic_primitives_gateway.routes._helpers import (
+                browser_session_owners,
+                code_interpreter_session_owners,
+            )
+
+            browser_session_owners.set_redis(agent_bg._event_store._redis)
+            code_interpreter_session_owners.set_redis(agent_bg._event_store._redis)
     agent_session_reg = agent_store.create_session_registry()
     if agent_session_reg:
         agent_runner.set_session_registry(agent_session_reg)

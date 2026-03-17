@@ -65,16 +65,16 @@ class TestAuthMiddlewareNoop:
             assert "admin" in data["scopes"]
 
     @pytest.mark.asyncio
-    async def test_no_backend_sets_anonymous(self):
-        """When no auth backend is configured at all, anonymous pass-through."""
+    async def test_no_backend_sets_noop(self):
+        """When no auth backend is configured, noop (admin) pass-through."""
         app = _make_app(auth_backend=None)
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get("/api/v1/test")
             assert resp.status_code == 200
             data = resp.json()
-            # No backend = anonymous fallback (only for unconfigured state)
-            assert data["principal_id"] == "anonymous"
+            # No backend = noop fallback (dev mode, full access)
+            assert data["principal_id"] == "noop"
 
 
 class TestAuthMiddlewareApiKey:

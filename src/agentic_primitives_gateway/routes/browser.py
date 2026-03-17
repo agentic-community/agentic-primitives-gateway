@@ -14,7 +14,7 @@ from agentic_primitives_gateway.models.browser import (
 )
 from agentic_primitives_gateway.models.enums import Primitive
 from agentic_primitives_gateway.registry import registry
-from agentic_primitives_gateway.routes._helpers import require_principal
+from agentic_primitives_gateway.routes._helpers import browser_session_owners, require_principal
 
 router = APIRouter(
     prefix="/api/v1/browser",
@@ -27,6 +27,7 @@ router = APIRouter(
 async def start_session(
     request: StartBrowserSessionRequest,
 ) -> BrowserSessionInfo:
+    principal = require_principal()
     config = dict(request.config)
     if request.viewport:
         config["viewport"] = request.viewport
@@ -34,17 +35,22 @@ async def start_session(
         session_id=request.session_id,
         config=config,
     )
-    return BrowserSessionInfo(**result)
+    info = BrowserSessionInfo(**result)
+    await browser_session_owners.set_owner(info.session_id, principal.id)
+    return info
 
 
 @router.delete("/sessions/{session_id}")
 async def stop_session(session_id: str) -> Response:
+    await browser_session_owners.require_owner(session_id, require_principal())
     await registry.browser.stop_session(session_id)
+    await browser_session_owners.delete(session_id)
     return Response(status_code=204)
 
 
 @router.get("/sessions/{session_id}", response_model=BrowserSessionInfo)
 async def get_session(session_id: str) -> BrowserSessionInfo:
+    await browser_session_owners.require_owner(session_id, require_principal())
     try:
         result = await registry.browser.get_session(session_id)
     except ValueError as e:
@@ -65,6 +71,7 @@ async def get_live_view_url(
     session_id: str,
     expires: int = Query(default=300, ge=1, le=3600),
 ) -> LiveViewResponse:
+    await browser_session_owners.require_owner(session_id, require_principal())
     try:
         url = await registry.browser.get_live_view_url(session_id=session_id, expires=expires)
     except ValueError as e:
@@ -77,6 +84,7 @@ async def get_live_view_url(
 
 @router.post("/sessions/{session_id}/navigate")
 async def navigate(session_id: str, request: NavigateRequest) -> dict[str, Any]:
+    await browser_session_owners.require_owner(session_id, require_principal())
     try:
         return await registry.browser.navigate(session_id, request.url)
     except (ValueError, NotImplementedError) as e:
@@ -85,6 +93,7 @@ async def navigate(session_id: str, request: NavigateRequest) -> dict[str, Any]:
 
 @router.get("/sessions/{session_id}/screenshot")
 async def screenshot(session_id: str) -> dict[str, str]:
+    await browser_session_owners.require_owner(session_id, require_principal())
     try:
         data = await registry.browser.screenshot(session_id)
         return {"format": "png", "data": data}
@@ -94,6 +103,7 @@ async def screenshot(session_id: str) -> dict[str, str]:
 
 @router.get("/sessions/{session_id}/content")
 async def get_page_content(session_id: str) -> dict[str, str]:
+    await browser_session_owners.require_owner(session_id, require_principal())
     try:
         content = await registry.browser.get_page_content(session_id)
         return {"content": content}
@@ -103,6 +113,7 @@ async def get_page_content(session_id: str) -> dict[str, str]:
 
 @router.post("/sessions/{session_id}/click")
 async def click(session_id: str, request: ClickRequest) -> dict[str, Any]:
+    await browser_session_owners.require_owner(session_id, require_principal())
     try:
         return await registry.browser.click(session_id, request.selector)
     except (ValueError, NotImplementedError) as e:
@@ -111,6 +122,7 @@ async def click(session_id: str, request: ClickRequest) -> dict[str, Any]:
 
 @router.post("/sessions/{session_id}/type")
 async def type_text(session_id: str, request: TypeRequest) -> dict[str, Any]:
+    await browser_session_owners.require_owner(session_id, require_principal())
     try:
         return await registry.browser.type_text(session_id, request.selector, request.text)
     except (ValueError, NotImplementedError) as e:
@@ -119,6 +131,7 @@ async def type_text(session_id: str, request: TypeRequest) -> dict[str, Any]:
 
 @router.post("/sessions/{session_id}/evaluate")
 async def evaluate(session_id: str, request: EvaluateRequest) -> dict[str, Any]:
+    await browser_session_owners.require_owner(session_id, require_principal())
     try:
         result = await registry.browser.evaluate(session_id, request.expression)
         return {"result": result}
