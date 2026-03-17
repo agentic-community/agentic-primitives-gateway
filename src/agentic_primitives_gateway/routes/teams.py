@@ -138,6 +138,7 @@ async def run_team_stream(name: str, request: TeamRunRequest) -> StreamingRespon
         owner_id=require_principal().id,
         record_events=True,
         rekey_field="team_run_id",
+        index_key=f"team:{name}:runs",
     )
     return sse_response(queue)
 
@@ -146,7 +147,7 @@ async def run_team_stream(name: str, request: TeamRunRequest) -> StreamingRespon
 async def list_team_runs(name: str) -> dict:
     """List all known runs for a team.
 
-    Checks both in-memory active runs and Redis event store for
+    Checks both in-memory active runs and a per-team Redis index for
     runs associated with this team.
     """
     store = _get_store()
@@ -156,36 +157,30 @@ async def list_team_runs(name: str) -> dict:
     require_access(require_principal(), spec.owner_id, spec.shared_with)
 
     runs: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
 
     # Check local active runs
     for key, (task, _, event_log, _started) in _bg.runs.items():
         if key.startswith("__pending_"):
             continue
-        # Check if this run belongs to this team by looking at events
         for ev in event_log:
             if ev.get("type") == "team_start" and ev.get("team_name") == name:
                 status = "running" if not task.done() else "idle"
                 runs.append({"team_run_id": key, "status": status})
+                seen_ids.add(key)
                 break
 
-    # Check Redis event store for completed runs
+    # Check per-team index in Redis (O(1) instead of SCAN)
     if _bg._event_store:
         try:
-            # Scan for run events that mention this team
-
-            redis_client = _bg._event_store._redis  # type: ignore[attr-defined]
-            async for redis_key in redis_client.scan_iter(match="run:*:events"):
-                run_id = redis_key.removeprefix("run:").removesuffix(":events")
-                if any(r["team_run_id"] == run_id for r in runs):
-                    continue  # already found locally
-                events = await _bg.get_events_async(run_id)
-                for ev in events:
-                    if ev.get("type") == "team_start" and ev.get("team_name") == name:
-                        status = await _bg.get_status_async(run_id)
-                        runs.append({"team_run_id": run_id, "status": status})
-                        break
+            indexed_ids = await _bg._event_store.get_index(f"team:{name}:runs")
+            for run_id in indexed_ids:
+                if run_id in seen_ids:
+                    continue
+                status = await _bg.get_status_async(run_id)
+                runs.append({"team_run_id": run_id, "status": status})
         except Exception:
-            logger.debug("Failed to scan Redis for team runs", exc_info=True)
+            logger.debug("Failed to read team run index from Redis", exc_info=True)
 
     return {"team_name": name, "runs": runs}
 

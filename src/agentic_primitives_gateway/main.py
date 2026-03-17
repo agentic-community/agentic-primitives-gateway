@@ -89,10 +89,46 @@ async def _seed_policies(engine_id: str) -> None:
     logger.info("Seeded %d policies into engine %s", len(seed), engine_id)
 
 
+def _warn_replica_unsafe_config() -> None:
+    """Log warnings if local-only backends are mixed with Redis-backed ones.
+
+    This suggests a multi-replica deployment with an incomplete config — some
+    components will work cross-replica but others won't.
+    """
+    agent_backend = settings.agents.store.backend
+    team_backend = settings.teams.store.backend
+
+    # Check if any store uses Redis (indicating multi-replica intent)
+    has_redis = agent_backend == "redis" or team_backend == "redis"
+    if not has_redis:
+        return  # fully local — no warning needed
+
+    warnings: list[str] = []
+    if agent_backend != "redis":
+        warnings.append(f"agents.store.backend={agent_backend!r} (should be 'redis')")
+    if team_backend != "redis":
+        warnings.append(f"teams.store.backend={team_backend!r} (should be 'redis')")
+
+    # Check primitives for in-memory backends
+    for prim_name, prim_cfg in (settings.providers or {}).items():
+        backends = prim_cfg if isinstance(prim_cfg, dict) else {}
+        backend_path = backends.get("backend", "")
+        if isinstance(backend_path, str) and "in_memory" in backend_path.lower():
+            warnings.append(f"primitives.{prim_name} uses in-memory provider ({backend_path})")
+
+    if warnings:
+        logger.warning(
+            "Multi-replica config warning: Redis is enabled for some stores but "
+            "local-only backends detected. These won't share state across replicas:\n  - %s",
+            "\n  - ".join(warnings),
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logger.info("agentic-primitives-gateway build=%s", BUILD_REF)
     registry.initialize()
+    _warn_replica_unsafe_config()
 
     # Initialize stores via pluggable backend config
     from agentic_primitives_gateway.routes.agents import set_agent_store

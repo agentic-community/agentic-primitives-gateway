@@ -212,22 +212,18 @@ class TestListTeamRuns:
         teams_client.post("/api/v1/teams", json=TEAM_PAYLOAD)
 
         mock_event_store = AsyncMock()
-        mock_redis = AsyncMock()
-
-        async def mock_scan_iter(match: str = ""):
-            yield "run:redis-run-1:events"
-
-        mock_redis.scan_iter = mock_scan_iter
-        mock_event_store._redis = mock_redis
+        mock_event_store.get_index = AsyncMock(return_value=["redis-run-1"])
 
         teams_module._bg._event_store = mock_event_store
-        teams_module._bg.get_events_async = AsyncMock(return_value=[{"type": "team_start", "team_name": "test-team"}])
         teams_module._bg.get_status_async = AsyncMock(return_value="idle")
 
         resp = teams_client.get("/api/v1/teams/test-team/runs")
         assert resp.status_code == 200
         runs = resp.json()["runs"]
         assert any(r["team_run_id"] == "redis-run-1" for r in runs)
+
+        # Verify it used the index with the correct key
+        mock_event_store.get_index.assert_called_once_with("team:test-team:runs")
 
         # Clean up
         teams_module._bg._event_store = None
@@ -236,14 +232,7 @@ class TestListTeamRuns:
         teams_client.post("/api/v1/teams", json=TEAM_PAYLOAD)
 
         mock_event_store = AsyncMock()
-        mock_redis = AsyncMock()
-
-        async def mock_scan_iter_error(match: str = ""):
-            raise RuntimeError("Redis error")
-            yield
-
-        mock_redis.scan_iter = mock_scan_iter_error
-        mock_event_store._redis = mock_redis
+        mock_event_store.get_index = AsyncMock(side_effect=RuntimeError("Redis error"))
 
         teams_module._bg._event_store = mock_event_store
 

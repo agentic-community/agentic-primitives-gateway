@@ -58,6 +58,13 @@ class EventStore(ABC):
         """Get the owner of a run. Default returns None."""
         return None
 
+    async def add_to_index(self, index_key: str, run_id: str, ttl: int = 86400) -> None:  # noqa: B027
+        """Add a run ID to a named index (e.g. per-team run list). Default is no-op."""
+
+    async def get_index(self, index_key: str) -> list[str]:
+        """Get all run IDs in a named index. Default returns empty list."""
+        return []
+
     async def rename_key(self, old_key: str, new_key: str) -> None:  # noqa: B027
         """Rename keys when a run ID changes. Default is no-op."""
 
@@ -108,6 +115,15 @@ class RedisEventStore(EventStore):
 
     async def delete(self, key: str) -> None:
         await self._redis.delete(self._status_key(key), self._events_key(key), self._owner_key(key))
+
+    async def add_to_index(self, index_key: str, run_id: str, ttl: int = 86400) -> None:
+        key = f"index:{index_key}"
+        await self._redis.sadd(key, run_id)
+        await self._redis.expire(key, ttl)
+
+    async def get_index(self, index_key: str) -> list[str]:
+        members = await self._redis.smembers(f"index:{index_key}")
+        return list(members)
 
     async def rename_key(self, old_key: str, new_key: str) -> None:
         """Rename status, events, and owner keys (best-effort)."""
@@ -207,6 +223,7 @@ class BackgroundRunManager:
         owner_id: str | None = None,
         record_events: bool = False,
         rekey_field: str | None = None,
+        index_key: str | None = None,
     ) -> tuple[asyncio.Queue, list[dict[str, Any]]]:
         """Spawn a background task that feeds events into a queue.
 
@@ -216,6 +233,7 @@ class BackgroundRunManager:
             owner_id: The authenticated user who started this run.
             record_events: If True, accumulate events for replay.
             rekey_field: If set, watch for this field in events and re-key.
+            index_key: If set, register the run in this index after rekey.
 
         Returns:
             (queue, event_log) — the SSE generator reads from the queue.
@@ -229,6 +247,7 @@ class BackgroundRunManager:
         store = self._event_store
         ttl = int(self._stale_seconds)
         run_owner = owner_id
+        run_index_key = index_key
 
         async def _run() -> None:
             rekeyed = False
@@ -246,6 +265,8 @@ class BackgroundRunManager:
                         manager.rekey(current_key, new_key)
                         if store:
                             await store.rename_key(current_key, new_key)
+                            if run_index_key:
+                                await store.add_to_index(run_index_key, new_key, ttl=ttl)
                         current_key = new_key
                         rekeyed = True
                     if store:
