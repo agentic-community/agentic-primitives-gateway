@@ -13,8 +13,10 @@ from agentic_primitives_gateway.watcher import get_last_reload_error
 router = APIRouter(tags=["health"])
 logger = logging.getLogger(__name__)
 
-# Per-provider timeout for healthchecks (seconds)
-_HEALTHCHECK_TIMEOUT = 2.0
+# Per-provider timeout for healthchecks (seconds).
+# Each check runs in a new thread + event loop, so this must account for
+# both the actual I/O and the asyncio.run() overhead.
+_HEALTHCHECK_TIMEOUT = 5.0
 
 
 @router.get("/healthz")

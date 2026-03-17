@@ -118,6 +118,7 @@ class RedisTasksProvider(TasksProvider):
         import redis.asyncio as aioredis
 
         self._redis = aioredis.from_url(redis_url, decode_responses=True)
+        self._redis_url = redis_url
         self._scripts: dict[str, Any] = {}
         logger.info("RedisTasksProvider initialized (url=%s)", redis_url.split("@")[-1])
 
@@ -222,7 +223,13 @@ class RedisTasksProvider(TasksProvider):
         return _parse_task(raw)
 
     async def healthcheck(self) -> bool:
+        """Sync Redis ping — avoids event-loop mismatch when called via asyncio.run() in a thread."""
+        import redis
+
         try:
-            return bool(await self._redis.ping())
+            r = redis.from_url(self._redis_url, decode_responses=True, socket_timeout=2)
+            result = r.ping()
+            r.close()
+            return bool(result)
         except Exception:
             return False
