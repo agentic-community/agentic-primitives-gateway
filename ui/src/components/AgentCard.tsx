@@ -1,4 +1,5 @@
 import { Link } from "react-router-dom";
+import { api } from "../api/client";
 import type { AgentSpec } from "../api/types";
 
 export default function AgentCard({ agent }: { agent: AgentSpec }) {
@@ -19,12 +20,21 @@ export default function AgentCard({ agent }: { agent: AgentSpec }) {
             </p>
           )}
         </div>
-        <Link
-          to={`/agents/${agent.name}/chat`}
-          className="shrink-0 rounded bg-indigo-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-indigo-700"
-        >
-          Chat
-        </Link>
+        <div className="flex items-center gap-1.5 shrink-0">
+          <button
+            onClick={() => api.exportAgent(agent.name)}
+            className="rounded border border-gray-300 dark:border-gray-700 px-2 py-1 text-xs text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"
+            title="Export as Python script"
+          >
+            Export
+          </button>
+          <Link
+            to={`/agents/${agent.name}/chat`}
+            className="rounded bg-indigo-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-indigo-700"
+          >
+            Chat
+          </Link>
+        </div>
       </div>
       <div className="flex flex-wrap items-center gap-2 text-[11px]">
         <span className="font-mono text-gray-600 dark:text-gray-400">

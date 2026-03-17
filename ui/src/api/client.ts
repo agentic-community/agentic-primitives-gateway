@@ -167,6 +167,19 @@ export const api = {
       method: "POST",
       body: JSON.stringify(data),
     }),
+  exportAgent: async (name: string) => {
+    const res = await fetch(`/api/v1/agents/${name}/export`, {
+      headers: { ...authHeaders() },
+    });
+    if (!res.ok) throw new Error(`Export failed: ${res.statusText}`);
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${name}.py`;
+    a.click();
+    URL.revokeObjectURL(url);
+  },
   getAgentTools: (name: string) =>
     request<AgentToolsResponse>(`/api/v1/agents/${name}/tools`),
   getToolCatalog: () =>

@@ -3,7 +3,7 @@ import logging
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
-from starlette.responses import StreamingResponse
+from starlette.responses import Response, StreamingResponse
 
 from agentic_primitives_gateway.agents.namespace import resolve_actor_id, resolve_knowledge_namespace_for_name
 from agentic_primitives_gateway.agents.runner import AgentRunner
@@ -96,6 +96,29 @@ async def get_tool_catalog() -> dict:
     # Add agents as a special primitive (tools are dynamic, so no static list)
     catalog["agents"] = []
     return {"primitives": catalog}
+
+
+@router.get("/{name}/export")
+async def export_agent(name: str) -> Response:
+    """Export an agent spec as a standalone Python script.
+
+    The generated script uses ``agentic-primitives-gateway-client`` for
+    primitive calls and raw boto3 Bedrock ``converse()`` for the LLM loop.
+    """
+    from agentic_primitives_gateway.agents.export import export_agent as _export
+
+    store = _get_store()
+    spec = await store.get(name)
+    if spec is None:
+        raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
+    require_access(require_principal(), spec.owner_id, spec.shared_with)
+
+    code = _export(spec)
+    return Response(
+        content=code,
+        media_type="text/x-python",
+        headers={"Content-Disposition": f'attachment; filename="{name}.py"'},
+    )
 
 
 @router.get("/{name}", response_model=AgentSpec)
