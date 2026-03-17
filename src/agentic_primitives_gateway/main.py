@@ -351,6 +351,7 @@ app.add_middleware(
 
 @app.exception_handler(ValueError)
 async def value_error_handler(request: Request, exc: ValueError) -> Response:
+    logger.warning("ValueError on %s %s: %s", request.method, request.url.path, exc)
     return JSONResponse(status_code=400, content={"detail": str(exc)})
 
 

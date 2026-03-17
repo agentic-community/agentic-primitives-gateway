@@ -25,7 +25,7 @@ class AuthenticatedPrincipal:
 
     @property
     def is_admin(self) -> bool:
-        return "admin" in self.scopes
+        return "admin" in self.scopes or "admin" in self.groups
 
 
 ANONYMOUS_PRINCIPAL = AuthenticatedPrincipal(
