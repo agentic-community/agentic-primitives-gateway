@@ -21,7 +21,7 @@ from agentic_primitives_gateway.models.identity import (
     WorkloadTokenResponse,
 )
 from agentic_primitives_gateway.registry import registry
-from agentic_primitives_gateway.routes._helpers import handle_provider_errors, require_principal
+from agentic_primitives_gateway.routes._helpers import handle_provider_errors, require_admin, require_principal
 
 router = APIRouter(
     prefix="/api/v1/identity",
@@ -92,6 +92,7 @@ async def list_credential_providers() -> ListCredentialProvidersResponse:
 
 @router.post("/credential-providers", response_model=CredentialProviderInfo, status_code=201)
 async def create_credential_provider(request: CreateCredentialProviderRequest) -> JSONResponse:
+    require_admin()
     try:
         result = await registry.identity.create_credential_provider(
             name=request.name,
@@ -114,6 +115,7 @@ async def get_credential_provider(name: str) -> JSONResponse:
 
 @router.put("/credential-providers/{name}", response_model=CredentialProviderInfo)
 async def update_credential_provider(name: str, request: UpdateCredentialProviderRequest) -> JSONResponse:
+    require_admin()
     try:
         result = await registry.identity.update_credential_provider(
             name=name,
@@ -128,6 +130,7 @@ async def update_credential_provider(name: str, request: UpdateCredentialProvide
 
 @router.delete("/credential-providers/{name}", status_code=204)
 async def delete_credential_provider(name: str) -> Response:
+    require_admin()
     try:
         await registry.identity.delete_credential_provider(name)
     except NotImplementedError:
@@ -153,6 +156,7 @@ async def list_workload_identities() -> JSONResponse:
 
 @router.post("/workload-identities", response_model=WorkloadIdentityInfo, status_code=201)
 async def create_workload_identity(request: CreateWorkloadIdentityRequest) -> JSONResponse:
+    require_admin()
     try:
         result = await registry.identity.create_workload_identity(
             name=request.name,
@@ -174,6 +178,7 @@ async def get_workload_identity(name: str) -> JSONResponse:
 
 @router.put("/workload-identities/{name}", response_model=WorkloadIdentityInfo)
 async def update_workload_identity(name: str, request: UpdateWorkloadIdentityRequest) -> JSONResponse:
+    require_admin()
     try:
         result = await registry.identity.update_workload_identity(
             name=name,
@@ -188,6 +193,7 @@ async def update_workload_identity(name: str, request: UpdateWorkloadIdentityReq
 
 @router.delete("/workload-identities/{name}", status_code=204)
 async def delete_workload_identity(name: str) -> Response:
+    require_admin()
     try:
         await registry.identity.delete_workload_identity(name)
     except NotImplementedError:

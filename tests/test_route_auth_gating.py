@@ -338,3 +338,200 @@ class TestPolicyAdminGating:
         """Admin (noop) principal can create engines."""
         resp = client.post("/api/v1/policy/engines", json={"name": "test-admin"})
         assert resp.status_code == 201
+
+
+# ── Identity: admin-only control plane mutations ─────────────────────
+
+
+class TestIdentityAdminGating:
+    """Identity control plane mutations require admin scope."""
+
+    def _non_admin_client(self) -> TestClient:
+        from agentic_primitives_gateway.auth.base import AuthBackend
+
+        class FixedBackend(AuthBackend):
+            async def authenticate(self, request):
+                return _user("alice")
+
+        self._prev_backend = getattr(app.state, "auth_backend", None)
+        app.state.auth_backend = FixedBackend()
+        return TestClient(app, raise_server_exceptions=False)
+
+    def _restore(self):
+        app.state.auth_backend = self._prev_backend
+
+    def test_create_credential_provider_requires_admin(self) -> None:
+        c = self._non_admin_client()
+        try:
+            resp = c.post(
+                "/api/v1/identity/credential-providers",
+                json={"name": "test", "provider_type": "oauth2", "config": {}},
+            )
+            assert resp.status_code == 403
+        finally:
+            self._restore()
+
+    def test_update_credential_provider_requires_admin(self) -> None:
+        c = self._non_admin_client()
+        try:
+            resp = c.put("/api/v1/identity/credential-providers/test", json={"config": {}})
+            assert resp.status_code == 403
+        finally:
+            self._restore()
+
+    def test_delete_credential_provider_requires_admin(self) -> None:
+        c = self._non_admin_client()
+        try:
+            resp = c.delete("/api/v1/identity/credential-providers/test")
+            assert resp.status_code == 403
+        finally:
+            self._restore()
+
+    def test_create_workload_identity_requires_admin(self) -> None:
+        c = self._non_admin_client()
+        try:
+            resp = c.post("/api/v1/identity/workload-identities", json={"name": "test"})
+            assert resp.status_code == 403
+        finally:
+            self._restore()
+
+    def test_update_workload_identity_requires_admin(self) -> None:
+        c = self._non_admin_client()
+        try:
+            resp = c.put("/api/v1/identity/workload-identities/test", json={})
+            assert resp.status_code == 403
+        finally:
+            self._restore()
+
+    def test_delete_workload_identity_requires_admin(self) -> None:
+        c = self._non_admin_client()
+        try:
+            resp = c.delete("/api/v1/identity/workload-identities/test")
+            assert resp.status_code == 403
+        finally:
+            self._restore()
+
+    def test_list_credential_providers_allowed_for_non_admin(self) -> None:
+        c = self._non_admin_client()
+        try:
+            resp = c.get("/api/v1/identity/credential-providers")
+            assert resp.status_code != 403
+        finally:
+            self._restore()
+
+    def test_list_workload_identities_allowed_for_non_admin(self) -> None:
+        c = self._non_admin_client()
+        try:
+            resp = c.get("/api/v1/identity/workload-identities")
+            assert resp.status_code != 403
+        finally:
+            self._restore()
+
+    def test_data_plane_token_allowed_for_non_admin(self) -> None:
+        c = self._non_admin_client()
+        try:
+            resp = c.post(
+                "/api/v1/identity/token",
+                json={"credential_provider": "test", "workload_token": "tok"},
+            )
+            # Should not be 403 — data plane is open to authenticated users
+            assert resp.status_code != 403
+        finally:
+            self._restore()
+
+
+# ── Observability: cross-user query restriction ──────────────────────
+
+
+class TestObservabilityCrossUserQuery:
+    """Observability list_sessions restricts user_id for non-admins."""
+
+    def test_non_admin_user_id_forced(self) -> None:
+        """Non-admin's user_id param is overridden with their own ID."""
+        from agentic_primitives_gateway.auth.base import AuthBackend
+
+        class FixedBackend(AuthBackend):
+            async def authenticate(self, request):
+                return _user("alice")
+
+        prev = getattr(app.state, "auth_backend", None)
+        app.state.auth_backend = FixedBackend()
+        try:
+            c = TestClient(app, raise_server_exceptions=False)
+            # Try to query another user's sessions
+            resp = c.get("/api/v1/observability/sessions?user_id=bob")
+            # Should succeed (not 403) but the user_id should be forced to "alice"
+            assert resp.status_code != 403
+        finally:
+            app.state.auth_backend = prev
+
+    def test_admin_can_query_any_user(self, client: TestClient) -> None:
+        """Admin can query with any user_id."""
+        resp = client.get("/api/v1/observability/sessions?user_id=anyone")
+        assert resp.status_code != 403
+
+
+# ── Browser/Code Interpreter: list_sessions filtering ────────────────
+
+
+class TestBrowserListSessionsFiltering:
+    """Browser list_sessions filters by ownership for non-admin users."""
+
+    def setup_method(self):
+        browser_session_owners._local.clear()
+
+    def test_non_admin_sees_only_own_sessions(self) -> None:
+        import asyncio
+
+        asyncio.get_event_loop().run_until_complete(browser_session_owners.set_owner("alice-sess", "alice"))
+        asyncio.get_event_loop().run_until_complete(browser_session_owners.set_owner("bob-sess", "bob"))
+
+        from agentic_primitives_gateway.auth.base import AuthBackend
+
+        class FixedBackend(AuthBackend):
+            async def authenticate(self, request):
+                return _user("alice")
+
+        prev = getattr(app.state, "auth_backend", None)
+        app.state.auth_backend = FixedBackend()
+        try:
+            c = TestClient(app, raise_server_exceptions=False)
+            resp = c.get("/api/v1/browser/sessions")
+            assert resp.status_code == 200
+            sessions = resp.json()["sessions"]
+            # Alice should not see bob's sessions
+            session_ids = [s["session_id"] for s in sessions]
+            assert "bob-sess" not in session_ids
+        finally:
+            app.state.auth_backend = prev
+
+
+class TestCodeInterpreterListSessionsFiltering:
+    """Code interpreter list_sessions filters by ownership for non-admin users."""
+
+    def setup_method(self):
+        code_interpreter_session_owners._local.clear()
+
+    def test_non_admin_sees_only_own_sessions(self) -> None:
+        import asyncio
+
+        asyncio.get_event_loop().run_until_complete(code_interpreter_session_owners.set_owner("alice-ci", "alice"))
+        asyncio.get_event_loop().run_until_complete(code_interpreter_session_owners.set_owner("bob-ci", "bob"))
+
+        from agentic_primitives_gateway.auth.base import AuthBackend
+
+        class FixedBackend(AuthBackend):
+            async def authenticate(self, request):
+                return _user("alice")
+
+        prev = getattr(app.state, "auth_backend", None)
+        app.state.auth_backend = FixedBackend()
+        try:
+            c = TestClient(app, raise_server_exceptions=False)
+            resp = c.get("/api/v1/code-interpreter/sessions")
+            assert resp.status_code == 200
+            sessions = resp.json()["sessions"]
+            session_ids = [s["session_id"] for s in sessions]
+            assert "bob-ci" not in session_ids
+        finally:
+            app.state.auth_backend = prev

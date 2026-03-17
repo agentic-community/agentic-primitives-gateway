@@ -62,8 +62,13 @@ async def get_session(session_id: str) -> BrowserSessionInfo:
 async def list_sessions(
     status: str | None = None,
 ) -> ListBrowserSessionsResponse:
+    principal = require_principal()
     sessions = await registry.browser.list_sessions(status=status)
-    return ListBrowserSessionsResponse(sessions=[BrowserSessionInfo(**s) for s in sessions])
+    all_infos = [BrowserSessionInfo(**s) for s in sessions]
+    if principal.is_admin:
+        return ListBrowserSessionsResponse(sessions=all_infos)
+    owned = browser_session_owners.owned_session_ids(principal.id)
+    return ListBrowserSessionsResponse(sessions=[s for s in all_infos if s.session_id in owned])
 
 
 @router.get("/sessions/{session_id}/live-view", response_model=LiveViewResponse)

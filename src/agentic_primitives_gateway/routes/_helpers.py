@@ -86,6 +86,10 @@ class SessionOwnershipStore:
         if self._redis:
             await self._redis.delete(self._key(session_id))
 
+    def owned_session_ids(self, owner_id: str) -> set[str]:
+        """Return the set of session IDs owned by *owner_id* (local cache only)."""
+        return {sid for sid, oid in self._local.items() if oid == owner_id}
+
     async def require_owner(self, session_id: str, principal: AuthenticatedPrincipal) -> None:
         """Raise 403 if the principal does not own the session."""
         if principal.is_admin:

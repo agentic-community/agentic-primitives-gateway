@@ -47,6 +47,10 @@ async def list_sessions(
     user_id: str | None = None,
     limit: int = Query(default=100, ge=1, le=1000),
 ) -> Any:
+    principal = require_principal()
+    # Non-admin callers can only query their own sessions
+    if not principal.is_admin:
+        user_id = principal.id
     sessions = await registry.observability.list_sessions(user_id=user_id, limit=limit)
     return ListSessionsResponse(sessions=[ObservabilitySessionInfo(**s) for s in sessions])
 

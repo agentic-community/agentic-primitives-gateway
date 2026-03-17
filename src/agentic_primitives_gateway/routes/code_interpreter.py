@@ -49,8 +49,13 @@ async def stop_session(session_id: str) -> Response:
 
 @router.get("/sessions", response_model=ListSessionsResponse)
 async def list_sessions(status: str | None = None) -> ListSessionsResponse:
+    principal = require_principal()
     sessions = await registry.code_interpreter.list_sessions(status=status)
-    return ListSessionsResponse(sessions=[SessionInfo(**s) for s in sessions])
+    all_infos = [SessionInfo(**s) for s in sessions]
+    if principal.is_admin:
+        return ListSessionsResponse(sessions=all_infos)
+    owned = code_interpreter_session_owners.owned_session_ids(principal.id)
+    return ListSessionsResponse(sessions=[s for s in all_infos if s.session_id in owned])
 
 
 @router.get("/sessions/{session_id}/history", response_model=ExecutionHistoryResponse)
