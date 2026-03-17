@@ -370,6 +370,12 @@ async def get_task(name: str, task_id: str) -> A2ATask:
 
     from agentic_primitives_gateway.routes.agents import _bg as agent_bg
 
+    # Verify run ownership
+    principal = require_principal()
+    owner = await agent_bg.get_owner_async(task_id)
+    if owner and owner != principal.id and not principal.is_admin:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
     status_str = await agent_bg.get_status_async(task_id)
     events = await agent_bg.get_events_async(task_id)
 
@@ -442,6 +448,12 @@ async def subscribe_task(name: str, task_id: str) -> StreamingResponse:
     await _require_agent(name)
 
     from agentic_primitives_gateway.routes.agents import _bg as agent_bg
+
+    # Verify run ownership
+    principal = require_principal()
+    owner = await agent_bg.get_owner_async(task_id)
+    if owner and owner != principal.id and not principal.is_admin:
+        raise HTTPException(status_code=403, detail="Forbidden")
 
     async def _generate() -> AsyncIterator[str]:
         context_id = task_id

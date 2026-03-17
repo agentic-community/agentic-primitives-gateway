@@ -397,6 +397,11 @@ async def stream_session_events(name: str, session_id: str) -> StreamingResponse
         raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
     require_access(require_principal(), spec.owner_id, spec.shared_with)
 
+    # Verify run ownership
+    owner = await _bg.get_owner_async(session_id)
+    if owner and owner != require_principal().id and not require_principal().is_admin:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
     return StreamingResponse(
         reconnect_event_generator(_bg, session_id, done_event_types=frozenset({"done"})),
         media_type="text/event-stream",
@@ -407,6 +412,17 @@ async def stream_session_events(name: str, session_id: str) -> StreamingResponse
 @router.get("/{name}/sessions/{session_id}/status")
 async def get_session_status(name: str, session_id: str) -> dict:
     """Check if a run is currently active for this session."""
+    store = _get_store()
+    spec = await store.get(name)
+    if spec is None:
+        raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
+    require_access(require_principal(), spec.owner_id, spec.shared_with)
+
+    # Verify run ownership
+    owner = await _bg.get_owner_async(session_id)
+    if owner and owner != require_principal().id and not require_principal().is_admin:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
     _bg.cleanup()
     return {"status": await _bg.get_status_async(session_id)}
 
