@@ -121,8 +121,9 @@ class RedisCheckpointStore(CheckpointStore):
         keys: list[str] = []
         async for key in self._redis.scan_iter(match="checkpoint:*"):
             k = str(key)
-            if not k.endswith(":lock"):
-                keys.append(k.removeprefix("checkpoint:"))
+            if k.endswith(":lock") or ":cancel:" in k:
+                continue
+            keys.append(k.removeprefix("checkpoint:"))
         return keys
 
     async def set_heartbeat(self, replica_id: str, ttl: int = 30) -> None:
