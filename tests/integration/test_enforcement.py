@@ -47,7 +47,9 @@ def _build_app() -> FastAPI:
         return {}
 
     # Add a dummy RequestContextMiddleware to set up contextvars
+    from agentic_primitives_gateway.auth.models import NOOP_PRINCIPAL
     from agentic_primitives_gateway.context import (
+        set_authenticated_principal,
         set_aws_credentials,
         set_provider_overrides,
         set_request_id,
@@ -60,6 +62,7 @@ def _build_app() -> FastAPI:
             set_aws_credentials(None)
             set_service_credentials({})
             set_provider_overrides({})
+            set_authenticated_principal(NOOP_PRINCIPAL)
             return await call_next(request)
 
     inner_app.add_middleware(MinimalContextMiddleware)

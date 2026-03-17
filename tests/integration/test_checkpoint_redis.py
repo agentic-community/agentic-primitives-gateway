@@ -202,7 +202,7 @@ class TestAgentCheckpointIntegration:
     async def test_checkpoint_and_resume_e2e(self, store: RedisCheckpointStore):
         """Full cycle: checkpoint during run, delete after finalize, resume from checkpoint."""
         set_authenticated_principal(_ALICE)
-        spec = AgentSpec(name="integ-agent", model="test-model")
+        spec = AgentSpec(name="integ-agent", model="test-model", checkpointing_enabled=True)
 
         runner = AgentRunner()
         runner.set_checkpoint_store(store, replica_id="integ-replica")
