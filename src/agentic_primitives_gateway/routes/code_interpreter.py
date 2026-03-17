@@ -54,7 +54,7 @@ async def list_sessions(status: str | None = None) -> ListSessionsResponse:
     all_infos = [SessionInfo(**s) for s in sessions]
     if principal.is_admin:
         return ListSessionsResponse(sessions=all_infos)
-    owned = code_interpreter_session_owners.owned_session_ids(principal.id)
+    owned = await code_interpreter_session_owners.owned_session_ids(principal.id)
     return ListSessionsResponse(sessions=[s for s in all_infos if s.session_id in owned])
 
 

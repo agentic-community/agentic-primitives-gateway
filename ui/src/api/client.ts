@@ -283,4 +283,15 @@ export const api = {
     }),
 };
 
+/** Check if an error message indicates missing user credentials. */
+export function isCredentialError(message: string): boolean {
+  return (
+    message.includes("allow_server_credentials") ||
+    message.includes("X-Cred-") ||
+    message.includes("X-AWS-") ||
+    message.includes("server credential fallback is disabled") ||
+    message.includes("No AWS credentials")
+  );
+}
+
 export { ApiError };

@@ -3,7 +3,7 @@ import { useAutoScroll } from "../hooks/useAutoScroll";
 import { Link, useParams } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { api } from "../api/client";
+import { api, isCredentialError } from "../api/client";
 import type { TeamSpec, TeamStreamEvent } from "../api/types";
 import { useAuth } from "../auth/AuthProvider";
 import ChatInput from "../components/ChatInput";
@@ -584,6 +584,15 @@ export default function TeamRun() {
                 setTasks((prev) => prev.map((t) => t.status === "done" ? t : { ...t, status: "failed" }));
                 addLog("Run was cancelled");
                 break;
+              case "error": {
+                streamDoneRef.current = true;
+                if (isCredentialError(event.detail)) {
+                  setError("Credentials not configured. Go to Settings to configure your credentials.");
+                } else {
+                  addLog(`Error: ${event.detail}`);
+                }
+                break;
+              }
             }
           }
         }
@@ -591,8 +600,13 @@ export default function TeamRun() {
         if (err instanceof DOMException && err.name === "AbortError") {
           console.log("[TeamRun] Stream aborted (user or watchdog)");
         } else {
+          const msg = err instanceof Error ? err.message : "Request failed";
           console.log("[TeamRun] Stream error:", err);
-          addLog(`Error: ${err instanceof Error ? err.message : "Request failed"}`);
+          if (isCredentialError(msg)) {
+            setError("Credentials not configured. Go to Settings to configure your credentials.");
+          } else {
+            addLog(`Error: ${msg}`);
+          }
         }
       } finally {
         clearInterval(watchdog);
@@ -681,7 +695,14 @@ export default function TeamRun() {
   if (error || !team) {
     return (
       <div className="mt-32 text-center text-sm text-red-600 dark:text-red-400">
-        {error ?? "Team not found"}
+        <p>{error ?? "Team not found"}</p>
+        {error && isCredentialError(error) && (
+          <p className="mt-2">
+            <Link to="/settings" className="underline font-medium hover:text-red-800 dark:hover:text-red-300">
+              Go to Settings
+            </Link>
+          </p>
+        )}
       </div>
     );
   }

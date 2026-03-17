@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useAutoScroll } from "../hooks/useAutoScroll";
 import { Link, useParams } from "react-router-dom";
-import { api } from "../api/client";
+import { api, isCredentialError } from "../api/client";
 import type { StreamArtifact, StreamEvent } from "../api/types";
 import { useAuth } from "../auth/AuthProvider";
 import ArtifactBlock from "../components/ArtifactBlock";
@@ -456,6 +456,17 @@ export default function AgentChat() {
           setMemoryRefreshKey((k) => k + 1);
         }
         break;
+
+      case "error":
+        streamDoneRef.current = true;
+        setTurns((prev) =>
+          updateTurn(prev, turnIndex, (t) => ({
+            ...t,
+            error: event.detail ?? "Request failed",
+            done: true,
+          })),
+        );
+        break;
     }
   }
 
@@ -578,7 +589,20 @@ export default function AgentChat() {
               </>
             ) : turn.error ? (
               <div className="rounded-lg bg-red-50 dark:bg-red-950/40 px-4 py-3 text-sm text-red-600 dark:text-red-400 mr-12">
-                Error: {turn.error}
+                {isCredentialError(turn.error) ? (
+                  <>
+                    <p className="font-medium">Credentials not configured</p>
+                    <p className="mt-1 text-xs">
+                      This agent requires credentials that aren't set up yet.{" "}
+                      <Link to="/settings" className="underline font-medium hover:text-red-800 dark:hover:text-red-300">
+                        Go to Settings
+                      </Link>{" "}
+                      to configure your credentials.
+                    </p>
+                  </>
+                ) : (
+                  <>Error: {turn.error}</>
+                )}
               </div>
             ) : !turn.done ? (
               <div className="mr-12 rounded-lg bg-gray-50 dark:bg-gray-900 px-4 py-3">

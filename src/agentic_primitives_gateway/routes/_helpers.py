@@ -86,9 +86,24 @@ class SessionOwnershipStore:
         if self._redis:
             await self._redis.delete(self._key(session_id))
 
-    def owned_session_ids(self, owner_id: str) -> set[str]:
-        """Return the set of session IDs owned by *owner_id* (local cache only)."""
-        return {sid for sid, oid in self._local.items() if oid == owner_id}
+    async def owned_session_ids(self, owner_id: str) -> set[str]:
+        """Return the set of session IDs owned by *owner_id*.
+
+        Checks the local cache first.  When Redis is configured, also
+        scans ``session_owner:*`` keys to find sessions created on other
+        replicas (cross-replica visibility).
+        """
+        result = {sid for sid, oid in self._local.items() if oid == owner_id}
+        if self._redis:
+            async for key in self._redis.scan_iter(match="session_owner:*"):
+                k = str(key)
+                sid = k.removeprefix("session_owner:")
+                if sid not in result:
+                    oid = await self._redis.get(k)
+                    if oid == owner_id:
+                        result.add(sid)
+                        self._local[sid] = owner_id  # warm local cache
+        return result
 
     async def require_owner(self, session_id: str, principal: AuthenticatedPrincipal) -> None:
         """Raise 403 if the principal does not own the session."""

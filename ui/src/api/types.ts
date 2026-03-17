@@ -126,7 +126,8 @@ export type StreamEvent =
   | { type: "tool_call_result"; name: string; id: string; result: string }
   | { type: "sub_agent_token"; agent: string; content: string }
   | { type: "sub_agent_tool"; agent: string; name: string }
-  | { type: "done"; response: string; session_id: string; agent_name: string; turns_used: number; tools_called: string[]; artifacts?: StreamArtifact[]; metadata: Record<string, unknown> };
+  | { type: "done"; response: string; session_id: string; agent_name: string; turns_used: number; tools_called: string[]; artifacts?: StreamArtifact[]; metadata: Record<string, unknown> }
+  | { type: "error"; detail: string };
 
 export interface StreamArtifact {
   tool_name: string;

@@ -544,8 +544,17 @@ class TeamRunner:
         prompt = await build_planner_prompt(team_spec, message, self._agent_store)  # type: ignore[arg-type]
         tools = self._planner_tools(team_run_id, team_spec.planner)
         logger.info("Planner prompt:\n%s", prompt)
+        cancel_evt = self._cancel_events.get(team_run_id)
         async for event in run_agent_with_tools_stream(
-            planner_spec, prompt, tools, "planner", max_turns=planner_spec.max_turns, resume_hint=resume_hint
+            planner_spec,
+            prompt,
+            tools,
+            "planner",
+            max_turns=planner_spec.max_turns,
+            resume_hint=resume_hint,
+            cancel_event=cancel_evt,
+            checkpoint_store=self._checkpoint_store,
+            run_id=team_run_id,
         ):
             yield event
 
@@ -596,8 +605,16 @@ class TeamRunner:
         tools = self._planner_tools(team_run_id, team_spec.planner)
 
         await event_queue.put({"type": "phase_change", "phase": "replanning"})
+        cancel_evt = self._cancel_events.get(team_run_id)
         async for event in run_agent_with_tools_stream(
-            planner_spec, prompt, tools, "planner", max_turns=planner_spec.max_turns
+            planner_spec,
+            prompt,
+            tools,
+            "planner",
+            max_turns=planner_spec.max_turns,
+            cancel_event=cancel_evt,
+            checkpoint_store=self._checkpoint_store,
+            run_id=team_run_id,
         ):
             await event_queue.put(event)
             # Poll for newly created tasks during re-planning
@@ -973,8 +990,17 @@ class TeamRunner:
         synth_spec = await self._get_agent(team_spec.synthesizer, "Synthesizer")
         prompt = await build_synthesis_prompt(team_run_id, message)
         tools = self._synthesizer_tools(team_run_id, team_spec.synthesizer)
+        cancel_evt = self._cancel_events.get(team_run_id)
         async for event in run_agent_with_tools_stream(
-            synth_spec, prompt, tools, "synthesizer", max_turns=synth_spec.max_turns, resume_hint=resume_hint
+            synth_spec,
+            prompt,
+            tools,
+            "synthesizer",
+            max_turns=synth_spec.max_turns,
+            resume_hint=resume_hint,
+            cancel_event=cancel_evt,
+            checkpoint_store=self._checkpoint_store,
+            run_id=team_run_id,
         ):
             yield event
 
