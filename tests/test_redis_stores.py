@@ -262,7 +262,11 @@ class TestRedisTasksProvider:
         assert await provider.add_note("run1", "missing", note) is None
 
     async def test_healthcheck(self, provider) -> None:
-        assert await provider.healthcheck() is True
+        mock_sync = MagicMock()
+        mock_sync.ping.return_value = True
+        mock_sync.close = MagicMock()
+        with patch("redis.from_url", return_value=mock_sync):
+            assert await provider.healthcheck() is True
 
 
 # ── RedisSpecStore base class methods ────────────────────────────────

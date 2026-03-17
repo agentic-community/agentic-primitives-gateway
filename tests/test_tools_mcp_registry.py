@@ -326,6 +326,21 @@ class TestMCPRegistryProvider:
             mock_client.get.return_value = health_resp
             mock_client_cls.return_value = mock_client
 
+            # No token configured → "reachable" (server up, needs user creds)
+            assert await provider.healthcheck() == "reachable"
+
+    @pytest.mark.asyncio
+    async def test_healthcheck_with_token(self, mock_get_creds):
+        mock_get_creds.return_value = None
+        provider = self._make_provider(base_url="http://localhost:8080", token="test-token")
+
+        with patch("httpx.Client") as mock_client_cls:
+            mock_client = self._mock_httpx_client()
+            health_resp = MagicMock()
+            health_resp.status_code = 200
+            mock_client.get.return_value = health_resp
+            mock_client_cls.return_value = mock_client
+
             assert await provider.healthcheck() is True
 
     @pytest.mark.asyncio

@@ -402,27 +402,32 @@ class LangfuseObservabilityProvider(SyncRunnerMixin, ObservabilityProvider):
         result: dict[str, Any] = await self._run_sync(_get)
         return result
 
-    async def healthcheck(self) -> bool:
-        """Check that the Langfuse server is reachable.
+    async def healthcheck(self) -> bool | str:
+        """Check Langfuse server health.
 
-        When server-side credentials are configured, uses the SDK's
-        ``auth_check()``.  Otherwise falls back to an HTTP connectivity
-        check so the readiness probe works without credentials (e.g.
-        ``allow_server_credentials=never`` with per-user credentials).
+        Returns ``True`` when fully authenticated (server keys or user
+        credentials in request context), ``"reachable"`` when the server
+        responds but no credentials are available, or ``False`` when the
+        server is unreachable.
         """
-        has_server_keys = bool(self._default_public_key and self._default_secret_key)
-
-        if has_server_keys:
-            try:
+        # Always try credential-based auth first — works when server keys
+        # are configured OR when user credentials are in request context
+        # (e.g. called from the authenticated /api/v1/providers/status).
+        try:
+            creds = self._resolve_credentials()
+            if creds.get("public_key") and creds.get("secret_key"):
                 client = self._resolve_client()
                 result: bool = await self._run_sync(client.auth_check)
                 return result
-            except Exception:
-                logger.debug("Langfuse auth_check failed", exc_info=True)
-                return False
+        except ValueError:
+            pass  # No credentials available at all
+        except Exception:
+            logger.debug("Langfuse auth_check failed", exc_info=True)
+            # Credentials were present but auth failed — don't fall through
+            # to "reachable" (that would hide the auth error)
+            return False
 
-        # No server keys — do a lightweight HTTP ping instead of
-        # instantiating the Langfuse SDK (which logs noisy warnings).
+        # No credentials — do a lightweight HTTP ping to check connectivity.
         base_url = (self._default_base_url or "https://cloud.langfuse.com").rstrip("/")
 
         def _ping() -> bool:
@@ -430,7 +435,9 @@ class LangfuseObservabilityProvider(SyncRunnerMixin, ObservabilityProvider):
             return resp.status_code < 500
 
         try:
-            return await self._run_sync(_ping)
+            if await self._run_sync(_ping):
+                return "reachable"
+            return False
         except Exception:
             logger.debug("Langfuse connectivity check failed", exc_info=True)
             return False

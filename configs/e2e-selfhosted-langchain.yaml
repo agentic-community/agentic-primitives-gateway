@@ -149,7 +149,7 @@ providers:
         backend: "agentic_primitives_gateway.primitives.tools.mcp_registry.MCPRegistryProvider"
         config:
           base_url: "${MCP_REGISTRY_URL:=-}"
-          verify_ssl: false
+          verify_ssl: true
 
   # Policy: AgentCore (Cedar enforcement reads policies from this provider)
   policy:

@@ -137,6 +137,10 @@ export const api = {
     return res.json();
   },
 
+  // Authenticated provider status (uses user credentials for healthchecks)
+  providerStatus: () =>
+    request<{ checks: Record<string, string> }>("/api/v1/providers/status"),
+
   // Providers
   providers: () => request<ProvidersResponse>("/api/v1/providers"),
 

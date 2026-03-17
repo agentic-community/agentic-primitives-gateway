@@ -26,7 +26,7 @@ class TestCheckProvider:
         assert prim == "memory"
         assert prov == "default"
         assert key == "memory/default"
-        assert healthy is True
+        assert healthy == "ok"
 
     async def test_unhealthy_provider(self) -> None:
         mock_provider = AsyncMock()
@@ -39,7 +39,7 @@ class TestCheckProvider:
             mock_reg.get_primitive.return_value = mock_prim
             _, _, _, healthy = await _check_provider("memory", "default")
 
-        assert healthy is False
+        assert healthy == "down"
 
     async def test_provider_healthcheck_exception(self) -> None:
         mock_provider = AsyncMock()
@@ -52,7 +52,7 @@ class TestCheckProvider:
             mock_reg.get_primitive.return_value = mock_prim
             _, _, _, healthy = await _check_provider("memory", "default")
 
-        assert healthy is False
+        assert healthy == "down"
 
 
 @pytest.fixture

@@ -223,7 +223,14 @@ class RedisTasksProvider(TasksProvider):
         return _parse_task(raw)
 
     async def healthcheck(self) -> bool:
-        """Sync Redis ping — avoids event-loop mismatch when called via asyncio.run() in a thread."""
+        """Redis connectivity check using a throwaway sync client.
+
+        The readiness probe runs healthchecks in a thread pool via
+        ``asyncio.run()``, which creates a different event loop. Using
+        the shared async client (``self._redis``) from that loop corrupts
+        its connection pool and causes ``TCPTransport closed`` errors on
+        the main loop.  A short-lived sync client avoids this entirely.
+        """
         import redis
 
         try:

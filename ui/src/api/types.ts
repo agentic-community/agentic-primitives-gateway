@@ -78,7 +78,7 @@ export interface HealthResponse {
 
 export interface ReadinessResponse {
   status: "ok" | "degraded" | "error";
-  checks: Record<string, boolean>;
+  checks: Record<string, string>; // "ok" | "reachable" | "down"
   config_reload_error?: string;
 }
 

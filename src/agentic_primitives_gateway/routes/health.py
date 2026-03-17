@@ -1,13 +1,14 @@
 import asyncio
 import logging
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 
 from agentic_primitives_gateway.config import settings
 from agentic_primitives_gateway.metrics import PROVIDER_HEALTH
 from agentic_primitives_gateway.models.enums import HealthStatus
 from agentic_primitives_gateway.registry import PRIMITIVES, registry
+from agentic_primitives_gateway.routes._helpers import require_principal
 from agentic_primitives_gateway.watcher import get_last_reload_error
 
 router = APIRouter(tags=["health"])
@@ -45,8 +46,11 @@ async def auth_config() -> dict:
     return {"backend": auth.backend}
 
 
-async def _check_provider(primitive: str, provider_name: str) -> tuple[str, str, str, bool]:
+async def _check_provider(primitive: str, provider_name: str) -> tuple[str, str, str, str]:
     """Run a single provider healthcheck with a timeout.
+
+    Returns a status string: ``"ok"`` (fully healthy), ``"reachable"``
+    (server up but needs user credentials), or ``"down"``.
 
     Each healthcheck runs in its own thread via ``asyncio.run`` so that
     providers which block the event loop (e.g. synchronous gRPC connects
@@ -63,20 +67,22 @@ async def _check_provider(primitive: str, provider_name: str) -> tuple[str, str,
     done, _ = await asyncio.wait({task}, timeout=_HEALTHCHECK_TIMEOUT)
     if done:
         try:
-            healthy = task.result()
+            result = task.result()
+            # Providers can return bool (legacy) or str ("ok"/"reachable")
+            status = result if isinstance(result, str) else "ok" if result else "down"
         except Exception:
             logger.debug("Healthcheck failed: %s", key, exc_info=True)
-            healthy = False
+            status = "down"
     else:
         logger.debug("Healthcheck timed out: %s", key)
-        healthy = False
+        status = "down"
 
-    return primitive, provider_name, key, healthy
+    return primitive, provider_name, key, status
 
 
 @router.get("/readyz")
 async def readiness() -> JSONResponse:
-    checks: dict[str, bool] = {}
+    checks: dict[str, str] = {}
     try:
         tasks = []
         for primitive in PRIMITIVES:
@@ -90,12 +96,12 @@ async def readiness() -> JSONResponse:
             if isinstance(result, BaseException):
                 logger.exception("Healthcheck task failed", exc_info=result)
                 continue
-            prim, prov, key, healthy = result
-            checks[key] = healthy
+            prim, prov, key, status = result
+            checks[key] = status
             PROVIDER_HEALTH.labels(
                 primitive=prim,
                 provider=prov,
-            ).set(1 if healthy else 0)
+            ).set(1 if status != "down" else 0)
     except Exception:
         logger.exception("Readiness check failed")
         return JSONResponse(
@@ -103,7 +109,7 @@ async def readiness() -> JSONResponse:
             content={"status": HealthStatus.ERROR, "checks": checks},
         )
 
-    all_healthy = all(checks.values())
+    any_down = any(s == "down" for s in checks.values())
 
     reload_error = get_last_reload_error()
     if reload_error:
@@ -116,7 +122,65 @@ async def readiness() -> JSONResponse:
             },
         )
 
+    # "reachable" (needs user creds) is not a failure — only "down" degrades.
     return JSONResponse(
-        status_code=200 if all_healthy else 503,
-        content={"status": HealthStatus.OK if all_healthy else HealthStatus.DEGRADED, "checks": checks},
+        status_code=200 if not any_down else 503,
+        content={"status": HealthStatus.OK if not any_down else HealthStatus.DEGRADED, "checks": checks},
     )
+
+
+# ── Authenticated provider status (runs with user credentials) ──────
+
+
+async def _check_provider_authenticated(primitive: str, provider_name: str) -> tuple[str, str, str, str]:
+    """Healthcheck that runs on the main event loop with user credentials in context.
+
+    Unlike ``_check_provider`` (which runs in a thread pool with a fresh
+    event loop), this runs directly so that providers see the request-scoped
+    credentials populated by ``CredentialResolutionMiddleware``.
+    """
+
+    provider = registry.get_primitive(primitive).get(provider_name)
+    key = f"{primitive}/{provider_name}"
+
+    try:
+        result = await asyncio.wait_for(provider.healthcheck(), timeout=_HEALTHCHECK_TIMEOUT)
+        status = result if isinstance(result, str) else "ok" if result else "down"
+    except TimeoutError:
+        status = "down"
+    except Exception:
+        logger.debug("Authenticated healthcheck failed: %s", key, exc_info=True)
+        status = "down"
+
+    return primitive, provider_name, key, status
+
+
+@router.get(
+    "/api/v1/providers/status",
+    dependencies=[Depends(require_principal)],
+    tags=["providers"],
+)
+async def provider_status() -> dict:
+    """Per-user provider healthcheck.
+
+    Runs behind auth + credential resolution middleware so each provider's
+    ``healthcheck()`` sees the authenticated user's resolved credentials.
+    Providers that returned ``"reachable"`` on ``/readyz`` (no server creds)
+    will attempt authenticated checks here and may return ``"ok"`` if the
+    user has valid credentials stored.
+    """
+    checks: dict[str, str] = {}
+    tasks = []
+    for primitive in PRIMITIVES:
+        prim_providers = registry.get_primitive(primitive)
+        for provider_name in prim_providers.names:
+            tasks.append(_check_provider_authenticated(primitive, provider_name))
+
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    for result in results:
+        if isinstance(result, BaseException):
+            continue
+        _prim, _prov, key, status = result
+        checks[key] = status
+
+    return {"checks": checks}

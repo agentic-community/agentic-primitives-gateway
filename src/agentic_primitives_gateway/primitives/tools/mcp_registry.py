@@ -531,13 +531,24 @@ class MCPRegistryProvider(SyncRunnerMixin, ToolsProvider):
         result: dict[str, Any] = await self._run_sync(_register)
         return result
 
-    async def healthcheck(self) -> bool:
+    async def healthcheck(self) -> bool | str:
+        """Check MCP Registry server health.
+
+        Returns ``True`` when the server responds and a token is configured,
+        ``"reachable"`` when the server responds but no token is available
+        (per-user tokens will be resolved at request time), or ``False``
+        when the server is unreachable.
+        """
         base_url, token = self._resolve_config()
         try:
             import httpx
 
             with httpx.Client(timeout=5, verify=self._verify_ssl) as client:
                 resp = client.get(f"{base_url}/health", headers=self._headers(token))
-                return resp.status_code < 500
+                if resp.status_code >= 500:
+                    return False
+                if not token:
+                    return "reachable"
+                return True
         except Exception:
             return False

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api/client";
 import type { AgentSpec, CredentialStatusResponse } from "../api/types";
+import { useAuth } from "../auth/AuthProvider";
 import AgentCard from "../components/AgentCard";
 import HealthBadge from "../components/HealthBadge";
 import LoadingSpinner from "../components/LoadingSpinner";
@@ -12,9 +13,11 @@ import { useProviders } from "../hooks/useProviders";
 export default function Dashboard() {
   const { health, readiness, loading: healthLoading } = useHealth();
   const { providers, loading: providersLoading } = useProviders();
+  const { user } = useAuth();
   const [agents, setAgents] = useState<AgentSpec[]>([]);
   const [agentsLoading, setAgentsLoading] = useState(true);
   const [credStatus, setCredStatus] = useState<CredentialStatusResponse | null>(null);
+  const [userChecks, setUserChecks] = useState<Record<string, string> | null>(null);
 
   useEffect(() => {
     api
@@ -24,6 +27,25 @@ export default function Dashboard() {
       .finally(() => setAgentsLoading(false));
     api.credentialStatus().then(setCredStatus).catch(() => {});
   }, []);
+
+  // When readyz shows "reachable" providers and user is authenticated,
+  // run an authenticated healthcheck to validate user credentials.
+  useEffect(() => {
+    if (!readiness?.checks || !user) return;
+    const hasReachable = Object.values(readiness.checks).some((s) => s === "reachable");
+    if (!hasReachable) return;
+    api.providerStatus().then((r) => setUserChecks(r.checks)).catch(() => {});
+  }, [readiness, user]);
+
+  // Merge: prefer authenticated checks over readyz checks
+  const mergedChecks = readiness?.checks
+    ? { ...readiness.checks, ...userChecks }
+    : userChecks ?? undefined;
+
+  // Only show credential banner if there are still "reachable" providers after merge
+  const stillNeedsCreds = mergedChecks
+    ? Object.values(mergedChecks).some((s) => s === "reachable")
+    : false;
 
   const loading = healthLoading || providersLoading || agentsLoading;
   if (loading) return <LoadingSpinner className="mt-32" />;
@@ -49,7 +71,7 @@ export default function Dashboard() {
       </section>
 
       {/* Credential setup banner */}
-      {credStatus && credStatus.server_credentials === "never" && credStatus.required_credentials.length > 0 && (
+      {credStatus && credStatus.server_credentials === "never" && credStatus.required_credentials.length > 0 && stillNeedsCreds && (
         <section>
           <div className="rounded-lg border border-yellow-300 dark:border-yellow-700 bg-yellow-50 dark:bg-yellow-950/30 px-4 py-3">
             <p className="text-sm font-medium text-yellow-800 dark:text-yellow-300">
@@ -80,7 +102,7 @@ export default function Dashboard() {
                 key={primitive}
                 primitive={primitive}
                 info={info}
-                checks={readiness?.checks}
+                checks={mergedChecks}
               />
             ))}
           </div>

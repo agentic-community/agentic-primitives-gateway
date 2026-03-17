@@ -7,23 +7,22 @@ export default function ProviderCard({
 }: {
   primitive: string;
   info: ProviderInfo;
-  checks?: Record<string, boolean>;
+  checks?: Record<string, string>;
 }) {
   // Determine overall health for this primitive's providers
-  const healthStatuses = info.available.map(
-    (b) => checks?.[`${primitive}/${b}`],
-  );
-  const hasChecks = healthStatuses.some((s) => s !== undefined);
-  const allHealthy = hasChecks && healthStatuses.every((s) => s === true);
-  const allUnhealthy = hasChecks && healthStatuses.every((s) => s === false);
+  const statuses = info.available.map((b) => checks?.[`${primitive}/${b}`]);
+  const hasChecks = statuses.some((s) => s !== undefined);
+  const anyDown = hasChecks && statuses.some((s) => s === "down");
+  const allOk = hasChecks && statuses.every((s) => s === "ok");
 
   let borderClass = "border-gray-200 dark:border-gray-800";
   if (hasChecks) {
-    if (allHealthy) {
+    if (allOk) {
       borderClass = "border-green-400 dark:border-green-600";
-    } else if (allUnhealthy) {
+    } else if (anyDown) {
       borderClass = "border-red-400 dark:border-red-600";
     } else {
+      // All reachable (no down, not all ok)
       borderClass = "border-yellow-400 dark:border-yellow-600";
     }
   }
@@ -42,28 +41,55 @@ export default function ProviderCard({
       <div className="mt-2 flex flex-wrap gap-1">
         {info.available.map((backend) => {
           const checkKey = `${primitive}/${backend}`;
-          const healthy = checks?.[checkKey];
+          const status = checks?.[checkKey];
+          const { bg, dot } = statusStyle(status);
           return (
             <span
               key={backend}
-              className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-mono ${
-                healthy === true
-                  ? "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300"
-                  : healthy === false
-                    ? "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300"
-                    : "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300"
-              }`}
+              className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-mono ${bg}`}
             >
-              {healthy !== undefined && (
-                <span
-                  className={`h-1.5 w-1.5 rounded-full ${healthy ? "bg-green-500" : "bg-red-500"}`}
-                />
+              {status !== undefined && (
+                <span className={`h-1.5 w-1.5 rounded-full ${dot}`} />
               )}
               {backend}
             </span>
           );
         })}
       </div>
+      {info.available.some((b) => checks?.[`${primitive}/${b}`] === "reachable") && (
+        <p className="mt-1.5 text-[10px] text-yellow-600 dark:text-yellow-400">
+          Needs user credentials
+        </p>
+      )}
     </div>
   );
+}
+
+function statusStyle(status: string | undefined) {
+  switch (status) {
+    case "ok":
+      return {
+        bg: "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300",
+        dot: "bg-green-500",
+        label: "Healthy",
+      };
+    case "reachable":
+      return {
+        bg: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300",
+        dot: "bg-yellow-500",
+        label: "Reachable — needs user credentials",
+      };
+    case "down":
+      return {
+        bg: "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300",
+        dot: "bg-red-500",
+        label: "Down",
+      };
+    default:
+      return {
+        bg: "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300",
+        dot: "",
+        label: "Unknown",
+      };
+  }
 }
