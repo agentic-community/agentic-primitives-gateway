@@ -234,6 +234,8 @@ export const api = {
     request<{ team_run_id: string; status: string; events: Array<Record<string, unknown>> }>(
       `/api/v1/teams/${name}/runs/${runId}/events`,
     ),
+  retryTeamTask: (name: string, runId: string, taskId: string, signal?: AbortSignal): ReadableStream<string> =>
+    sseStream(`/api/v1/teams/${name}/runs/${runId}/tasks/${taskId}/retry`, "{}", signal),
   runTeamStream: (name: string, data: TeamRunRequest, signal?: AbortSignal): ReadableStream<string> =>
     sseStream(`/api/v1/teams/${name}/run/stream`, JSON.stringify(data), signal),
 

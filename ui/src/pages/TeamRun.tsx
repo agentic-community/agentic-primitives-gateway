@@ -38,7 +38,7 @@ const statusColors: Record<string, string> = {
   failed: "bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400",
 };
 
-function TaskCard({ task }: { task: TaskInfo }) {
+function TaskCard({ task, onRetry }: { task: TaskInfo; onRetry?: (taskId: string) => void }) {
   const [open, setOpen] = useState(false);
   const hasDetail = task.result || task.error || task.streamContent;
 
@@ -69,14 +69,24 @@ function TaskCard({ task }: { task: TaskInfo }) {
             </span>
           )}
         </div>
-        {hasDetail && (
-          <button
-            onClick={() => setOpen(!open)}
-            className="text-[10px] text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 shrink-0"
-          >
-            {open ? "hide" : "detail"}
-          </button>
-        )}
+        <div className="flex items-center gap-1.5 shrink-0">
+          {task.status === "failed" && onRetry && (
+            <button
+              onClick={() => onRetry(task.id)}
+              className="text-[10px] font-medium text-indigo-500 hover:text-indigo-700 dark:text-indigo-400 dark:hover:text-indigo-300"
+            >
+              retry
+            </button>
+          )}
+          {hasDetail && (
+            <button
+              onClick={() => setOpen(!open)}
+              className="text-[10px] text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+            >
+              {open ? "hide" : "detail"}
+            </button>
+          )}
+        </div>
       </div>
       {open && hasDetail && (
         <div className="mt-1.5 border-t border-gray-100 dark:border-gray-800 pt-1.5 max-h-64 overflow-y-auto">
@@ -602,6 +612,71 @@ export default function TeamRun() {
     [name, addLog],
   );
 
+  const handleRetryTask = useCallback(
+    async (taskId: string) => {
+      if (!name || !teamRunId) return;
+      addLog(`Retrying task ${taskId}...`);
+      // Reset task in local state to in_progress
+      setTasks((prev) =>
+        prev.map((t) =>
+          t.id === taskId ? { ...t, status: "in_progress", error: undefined, result: undefined, streamContent: "" } : t,
+        ),
+      );
+
+      try {
+        const stream = api.retryTeamTask(name, teamRunId, taskId);
+        const reader = stream.getReader();
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          for (const event of parseSSE<TeamStreamEvent>(value)) {
+            switch (event.type) {
+              case "task_retry":
+                addLog(`[${event.agent}] retrying: ${event.title}`);
+                break;
+              case "agent_token":
+                setTasks((prev) =>
+                  prev.map((t) =>
+                    t.id === event.task_id ? { ...t, streamContent: (t.streamContent ?? "") + event.content } : t,
+                  ),
+                );
+                break;
+              case "agent_tool":
+                addLog(`[${event.agent}] tool: ${event.name}`);
+                break;
+              case "task_completed":
+                setTasks((prev) =>
+                  prev.map((t) =>
+                    t.id === event.task_id ? { ...t, status: "done", result: event.result, streamContent: undefined } : t,
+                  ),
+                );
+                addLog(`[${event.agent}] completed: ${event.task_id}`);
+                break;
+              case "task_failed":
+                setTasks((prev) =>
+                  prev.map((t) =>
+                    t.id === event.task_id ? { ...t, status: "failed", error: event.error, streamContent: undefined } : t,
+                  ),
+                );
+                addLog(`[${event.agent}] retry failed: ${event.task_id} -- ${event.error}`);
+                break;
+              case "retry_done":
+                addLog(`Retry complete for task ${event.task_id}`);
+                break;
+              case "error":
+                addLog(`Retry error: ${event.detail}`);
+                break;
+            }
+          }
+        }
+      } catch (err) {
+        addLog(`Retry error: ${err instanceof Error ? err.message : "Request failed"}`);
+      }
+    },
+    [name, teamRunId, addLog],
+  );
+
   if (loading) return <LoadingSpinner className="mt-32" />;
   if (error || !team) {
     return (
@@ -719,7 +794,7 @@ export default function TeamRun() {
             </div>
           )}
           {tasks.map((task) => (
-            <TaskCard key={task.id} task={task} />
+            <TaskCard key={task.id} task={task} onRetry={!running ? handleRetryTask : undefined} />
           ))}
         </div>
 

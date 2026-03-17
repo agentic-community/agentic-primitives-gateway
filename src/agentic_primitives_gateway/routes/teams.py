@@ -376,3 +376,27 @@ async def get_team_run(name: str, team_run_id: str) -> dict:
         "tasks_created": len(all_tasks),
         "tasks_completed": done_count,
     }
+
+
+@router.post("/{name}/runs/{team_run_id}/tasks/{task_id}/retry")
+async def retry_task(name: str, team_run_id: str, task_id: str) -> StreamingResponse:
+    """Retry a single failed task within a team run.
+
+    Resets the task to in_progress, recovers partial tokens from the
+    event store as resume context, and re-executes the assigned worker
+    agent. Returns an SSE stream of events.
+    """
+    store = _get_store()
+    spec = await store.get(name)
+    if spec is None:
+        raise HTTPException(status_code=404, detail=f"Team '{name}' not found")
+    require_access(require_principal(), spec.owner_id, spec.shared_with)
+    await _require_run_owner(team_run_id)
+
+    queue, _ = _bg.start(
+        f"{team_run_id}:retry:{task_id}",
+        _runner.retry_task_stream(team_spec=spec, team_run_id=team_run_id, task_id=task_id),
+        owner_id=require_principal().id,
+        record_events=True,
+    )
+    return sse_response(queue)

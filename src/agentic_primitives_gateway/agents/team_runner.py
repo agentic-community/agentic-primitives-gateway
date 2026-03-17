@@ -985,6 +985,137 @@ class TeamRunner:
 
     # ── Helpers ──────────────────────────────────────────────────────
 
+    # ── Task retry ─────────────────────────────────────────────────
+
+    async def retry_task_stream(
+        self,
+        team_spec: TeamSpec,
+        team_run_id: str,
+        task_id: str,
+    ) -> AsyncIterator[dict[str, Any]]:
+        """Retry a single failed task, streaming events.
+
+        Resets the task to in_progress, recovers partial tokens from the
+        event store, and re-runs the assigned worker agent with resume context.
+        """
+        # Validate task exists and is failed
+        task = await registry.tasks.get_task(team_run_id, task_id)
+        if task is None:
+            yield {"type": "error", "detail": f"Task '{task_id}' not found"}
+            return
+        if task.status != TaskStatus.FAILED:
+            yield {"type": "error", "detail": f"Task '{task_id}' is {task.status}, not failed"}
+            return
+
+        worker_name = task.assigned_to or task.suggested_worker
+        if not worker_name:
+            yield {"type": "error", "detail": f"Task '{task_id}' has no assigned worker"}
+            return
+
+        worker_spec = await self._agent_store.get(worker_name)  # type: ignore[union-attr]
+        if worker_spec is None:
+            yield {"type": "error", "detail": f"Worker agent '{worker_name}' not found"}
+            return
+
+        # Reset task status
+        await registry.tasks.update_task(team_run_id, task_id, status=TaskStatus.IN_PROGRESS, result=None)
+        yield {"type": "task_retry", "agent": worker_name, "task_id": task_id, "title": task.title}
+
+        # Recover partial tokens from the previous failed attempt
+        resume_hint = await self._recover_task_tokens(team_run_id, task_id)
+
+        # Execute the task with resume context
+        prev_overrides = self._apply_overrides(worker_spec)
+        session_ctx = await self._start_sessions(worker_spec)
+        try:
+            tools = self._build_worker_tools(worker_spec, team_spec, team_run_id, session_ctx)
+            upstream = await self._gather_upstream_context(team_run_id, task_id)
+            message = build_task_message(task.title, task.description, upstream)
+
+            content = ""
+            async for event in run_agent_with_tools_stream(
+                worker_spec,
+                message,
+                tools,
+                worker_name,
+                max_turns=worker_spec.max_turns,
+                resume_hint=resume_hint or None,
+            ):
+                evt_type = event.get("type")
+                if evt_type == "agent_token":
+                    content += event.get("content", "")
+                    yield {
+                        "type": "agent_token",
+                        "agent": worker_name,
+                        "task_id": task_id,
+                        "content": event.get("content", ""),
+                    }
+                elif evt_type == "agent_tool":
+                    yield {
+                        "type": "agent_tool",
+                        "agent": worker_name,
+                        "task_id": task_id,
+                        "name": event.get("name", ""),
+                    }
+
+            await registry.tasks.update_task(team_run_id, task_id, status=TaskStatus.DONE, result=content)
+            yield {"type": "task_completed", "agent": worker_name, "task_id": task_id, "result": content}
+            logger.info("Task '%s' retry completed, content_len=%d", task_id, len(content))
+        except Exception as e:
+            logger.error("Task '%s' retry failed: %s: %s", task_id, type(e).__name__, e)
+            with contextlib.suppress(Exception):
+                await registry.tasks.update_task(team_run_id, task_id, status=TaskStatus.FAILED, result=str(e))
+            yield {"type": "task_failed", "agent": worker_name, "task_id": task_id, "error": str(e)}
+        finally:
+            await self._stop_sessions(session_ctx)
+            self._restore_overrides(prev_overrides)
+
+        yield {"type": "retry_done", "task_id": task_id}
+
+    async def _recover_task_tokens(self, team_run_id: str, task_id: str) -> str:
+        """Recover partial tokens for a specific task from the event store.
+
+        Walks events to find agent_token events tagged with this task_id,
+        collecting the content from the last invocation.
+        """
+        event_store = self._get_event_store()
+        if not event_store:
+            return ""
+        try:
+            events = await event_store.get_events(team_run_id)
+            if not events:
+                return ""
+
+            # Collect tokens for this task (last attempt only)
+            parts: list[str] = []
+            for ev in reversed(events):
+                if not isinstance(ev, dict):
+                    continue
+                if ev.get("task_id") != task_id:
+                    if parts:
+                        break  # Passed through all events for this task
+                    continue
+                if ev.get("type") == "agent_token":
+                    parts.append(ev.get("content", ""))
+                elif ev.get("type") in ("task_claimed", "task_retry"):
+                    break  # Reached the start of this task's execution
+
+            if not parts:
+                return ""
+            parts.reverse()
+            partial = "".join(parts)
+            if partial:
+                logger.info(
+                    "Recovered %d chars of partial tokens for task %s in run %s",
+                    len(partial),
+                    task_id,
+                    team_run_id,
+                )
+            return partial
+        except Exception:
+            logger.debug("Failed to recover task tokens for %s/%s", team_run_id, task_id, exc_info=True)
+            return ""
+
     async def _get_agent(self, name: str, role: str) -> AgentSpec:
         """Load an agent spec by name, raising if not found."""
         spec = await self._agent_store.get(name)  # type: ignore[union-attr]
