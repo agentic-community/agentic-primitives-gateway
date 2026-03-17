@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -12,8 +13,10 @@ class TestMCPRegistryProvider:
     """Tests for the MCP Registry tools provider."""
 
     def setup_method(self):
-        # Clear the class-level server path cache between tests
+        # Clear all class-level caches between tests
         MCPRegistryProvider._server_paths.clear()
+        MCPRegistryProvider._sessions.clear()
+        MCPRegistryProvider._mcp_endpoints.clear()
 
     def _make_provider(self, **kwargs):
         return MCPRegistryProvider(**kwargs)
@@ -139,7 +142,7 @@ class TestMCPRegistryProvider:
         provider = self._make_provider(base_url="http://localhost:8080")
 
         # Pre-populate server path cache
-        MCPRegistryProvider._server_paths["Calculator"] = "/mcp/calc"
+        MCPRegistryProvider._server_paths["Calculator"] = ("/mcp/calc", time.monotonic())
 
         mcp_resp = MagicMock()
         mcp_resp.text = 'data: {"result": {"content": [{"text": "42"}]}}'
@@ -158,7 +161,7 @@ class TestMCPRegistryProvider:
     async def test_invoke_tool_error_response(self, mock_get_creds):
         mock_get_creds.return_value = None
         provider = self._make_provider(base_url="http://localhost:8080")
-        MCPRegistryProvider._server_paths["Svc"] = "/mcp/svc"
+        MCPRegistryProvider._server_paths["Svc"] = ("/mcp/svc", time.monotonic())
 
         mcp_resp = MagicMock()
         mcp_resp.text = 'data: {"error": {"message": "tool not found", "code": -32601}}'

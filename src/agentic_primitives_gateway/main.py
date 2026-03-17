@@ -265,6 +265,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     credential_writer = writer_cls(**writer_kwargs)
     app.state.credential_writer = credential_writer
     credentials.set_credential_writer(credential_writer)
+    credentials.set_credential_resolver(credential_resolver)
     logger.info("Credential writer: %s", creds_cfg.writer.backend)
 
     # Initialize policy enforcer

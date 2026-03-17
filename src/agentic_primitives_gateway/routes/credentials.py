@@ -8,6 +8,7 @@ import httpx
 from fastapi import APIRouter, HTTPException
 
 from agentic_primitives_gateway.context import get_access_token
+from agentic_primitives_gateway.credentials.base import CredentialResolver
 from agentic_primitives_gateway.credentials.models import (
     CredentialStatus,
     CredentialUpdateRequest,
@@ -22,11 +23,26 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/credentials", tags=["credentials"])
 
 _writer: CredentialWriter | None = None
+_resolver: CredentialResolver | None = None
 
 
 def set_credential_writer(writer: CredentialWriter) -> None:
     global _writer
     _writer = writer
+
+
+def set_credential_resolver(resolver: CredentialResolver) -> None:
+    global _resolver
+    _resolver = resolver
+
+
+def _invalidate_cache(user_id: str) -> None:
+    """Invalidate the credential cache for a user after a write/delete."""
+    if _resolver is None:
+        return
+    cache = getattr(_resolver, "_cache", None)
+    if cache is not None:
+        cache.invalidate(user_id)
 
 
 def _require_writer() -> CredentialWriter:
@@ -86,6 +102,7 @@ async def write_credentials(body: CredentialUpdateRequest) -> dict[str, str]:
         logger.exception("Credential write failed")
         raise HTTPException(status_code=502, detail="Failed to write credentials to identity provider") from None
 
+    _invalidate_cache(principal.id)
     return {"status": "updated"}
 
 
@@ -110,6 +127,7 @@ async def delete_credential(key: str) -> dict[str, str]:
         logger.exception("Credential delete failed")
         raise HTTPException(status_code=502, detail="Failed to delete credential") from None
 
+    _invalidate_cache(principal.id)
     return {"status": "deleted"}
 
 

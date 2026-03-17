@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from typing import Any, ClassVar
 
 from agentic_primitives_gateway.context import get_service_credentials
@@ -82,11 +83,14 @@ class MCPRegistryProvider(SyncRunnerMixin, ToolsProvider):
 
     # ── MCP streamable-http session management ───────────────────────
 
-    # Cache: (base_url, path) -> session_id
-    _sessions: ClassVar[dict[tuple[str, str], str]] = {}
+    # Cache TTL in seconds — entries older than this are evicted on access.
+    _CACHE_TTL: ClassVar[int] = 300
 
-    # Cache: server_path -> resolved MCP endpoint URL
-    _mcp_endpoints: ClassVar[dict[str, str]] = {}
+    # Cache: (base_url, path) -> (session_id, timestamp)
+    _sessions: ClassVar[dict[tuple[str, str], tuple[str, float]]] = {}
+
+    # Cache: server_path -> (resolved MCP endpoint URL, timestamp)
+    _mcp_endpoints: ClassVar[dict[str, tuple[str, float]]] = {}
 
     def _discover_mcp_endpoint(self, base_url: str, server_path: str, token: str | None) -> str:
         """Discover the MCP streamable-http endpoint for a server.
@@ -95,8 +99,12 @@ class MCPRegistryProvider(SyncRunnerMixin, ToolsProvider):
         We try the path directly first, then with ``/mcp`` suffix.
         The result is cached.
         """
-        if server_path in self._mcp_endpoints:
-            return self._mcp_endpoints[server_path]
+        cached = self._mcp_endpoints.get(server_path)
+        if cached is not None:
+            endpoint, ts = cached
+            if time.monotonic() - ts < self._CACHE_TTL:
+                return endpoint
+            del self._mcp_endpoints[server_path]
 
         import httpx
 
@@ -113,17 +121,18 @@ class MCPRegistryProvider(SyncRunnerMixin, ToolsProvider):
             },
         }
 
+        now = time.monotonic()
         for endpoint in candidates:
             try:
                 with httpx.Client(timeout=15, verify=self._verify_ssl) as client:
                     resp = client.post(endpoint, json=payload, headers=self._headers(token))
                     if resp.status_code == 200:
-                        self._mcp_endpoints[server_path] = endpoint
+                        self._mcp_endpoints[server_path] = (endpoint, now)
                         # Also cache the session from this init
                         session_id = resp.headers.get("mcp-session-id", "")
                         if session_id:
                             cache_key = (base_url, server_path)
-                            self._sessions[cache_key] = session_id
+                            self._sessions[cache_key] = (session_id, now)
                         logger.info("MCP endpoint discovered: %s -> %s", server_path, endpoint)
                         return endpoint
             except Exception:
@@ -131,7 +140,7 @@ class MCPRegistryProvider(SyncRunnerMixin, ToolsProvider):
 
         # Default to path/mcp
         fallback = f"{base_url}{path}/mcp"
-        self._mcp_endpoints[server_path] = fallback
+        self._mcp_endpoints[server_path] = (fallback, now)
         return fallback
 
     def _init_mcp_session(
@@ -146,8 +155,12 @@ class MCPRegistryProvider(SyncRunnerMixin, ToolsProvider):
         Sessions are cached per (base_url, path).
         """
         cache_key = (base_url, server_path)
-        if cache_key in self._sessions:
-            return self._sessions[cache_key]
+        cached = self._sessions.get(cache_key)
+        if cached is not None:
+            session_id, ts = cached
+            if time.monotonic() - ts < self._CACHE_TTL:
+                return session_id
+            del self._sessions[cache_key]
 
         import httpx
 
@@ -173,7 +186,7 @@ class MCPRegistryProvider(SyncRunnerMixin, ToolsProvider):
             session_id = data.get("result", {}).get("sessionId", "")
 
         if session_id:
-            self._sessions[cache_key] = session_id
+            self._sessions[cache_key] = (session_id, time.monotonic())
             logger.debug("MCP session initialized: %s -> %s", server_path, session_id)
 
         return session_id
@@ -212,8 +225,7 @@ class MCPRegistryProvider(SyncRunnerMixin, ToolsProvider):
 
             # Session expired — re-initialize and retry once
             if resp.status_code in (400, 404):
-                cache_key = (base_url, server_path)
-                self._sessions.pop(cache_key, None)
+                self._sessions.pop((base_url, server_path), None)
                 session_id = self._init_mcp_session(base_url, server_path, token)
                 resp = client.post(
                     endpoint,
@@ -228,13 +240,17 @@ class MCPRegistryProvider(SyncRunnerMixin, ToolsProvider):
 
     # ── Server path resolution ────────────────────────────────────────
 
-    # Cache of server title -> path mappings
-    _server_paths: ClassVar[dict[str, str]] = {}
+    # Cache of server title -> (path, timestamp) mappings
+    _server_paths: ClassVar[dict[str, tuple[str, float]]] = {}
 
     async def _resolve_server_path(self, server_title: str, base_url: str, token: str | None) -> str:
         """Resolve a server title to its MCP proxy path."""
-        if server_title in self._server_paths:
-            return self._server_paths[server_title]
+        cached = self._server_paths.get(server_title)
+        if cached is not None:
+            path, ts = cached
+            if time.monotonic() - ts < self._CACHE_TTL:
+                return path
+            del self._server_paths[server_title]
 
         def _fetch() -> None:
             import httpx
@@ -244,6 +260,7 @@ class MCPRegistryProvider(SyncRunnerMixin, ToolsProvider):
                 resp.raise_for_status()
                 data = resp.json()
 
+            now = time.monotonic()
             for entry in data.get("servers", []):
                 server = entry.get("server", entry)
                 title = server.get("title", server.get("name", ""))
@@ -251,12 +268,13 @@ class MCPRegistryProvider(SyncRunnerMixin, ToolsProvider):
                 internal = meta.get("io.mcpgateway/internal", {})
                 path = internal.get("path", "")
                 if title and path:
-                    self._server_paths[title] = path
+                    self._server_paths[title] = (path, now)
 
         await self._run_sync(_fetch)
 
-        if server_title in self._server_paths:
-            return self._server_paths[server_title]
+        cached = self._server_paths.get(server_title)
+        if cached is not None:
+            return cached[0]
 
         raise ValueError(f"Server '{server_title}' not found in registry")
 
