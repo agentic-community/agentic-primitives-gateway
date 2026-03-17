@@ -1,6 +1,6 @@
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 
 from agentic_primitives_gateway.models.enums import Primitive
 from agentic_primitives_gateway.models.memory import (
@@ -20,9 +20,13 @@ from agentic_primitives_gateway.models.memory import (
     TurnGroup,
 )
 from agentic_primitives_gateway.registry import registry
-from agentic_primitives_gateway.routes._helpers import handle_provider_errors
+from agentic_primitives_gateway.routes._helpers import handle_provider_errors, require_principal
 
-router = APIRouter(prefix="/api/v1/memory", tags=[Primitive.MEMORY])
+router = APIRouter(
+    prefix="/api/v1/memory",
+    tags=[Primitive.MEMORY],
+    dependencies=[Depends(require_principal)],
+)
 
 
 # ── Namespace discovery ──────────────────────────────────────────────

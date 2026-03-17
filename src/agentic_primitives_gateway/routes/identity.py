@@ -1,4 +1,4 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 from starlette.responses import Response
 
@@ -21,9 +21,13 @@ from agentic_primitives_gateway.models.identity import (
     WorkloadTokenResponse,
 )
 from agentic_primitives_gateway.registry import registry
-from agentic_primitives_gateway.routes._helpers import handle_provider_errors
+from agentic_primitives_gateway.routes._helpers import handle_provider_errors, require_principal
 
-router = APIRouter(prefix="/api/v1/identity", tags=[Primitive.IDENTITY])
+router = APIRouter(
+    prefix="/api/v1/identity",
+    tags=[Primitive.IDENTITY],
+    dependencies=[Depends(require_principal)],
+)
 
 
 # ── Data plane — token operations ────────────────────────────────

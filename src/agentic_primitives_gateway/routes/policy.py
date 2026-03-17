@@ -1,6 +1,6 @@
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 
 from agentic_primitives_gateway.models.enums import Primitive
 from agentic_primitives_gateway.models.policy import (
@@ -18,9 +18,13 @@ from agentic_primitives_gateway.models.policy import (
     UpdatePolicyRequest,
 )
 from agentic_primitives_gateway.registry import registry
-from agentic_primitives_gateway.routes._helpers import handle_provider_errors
+from agentic_primitives_gateway.routes._helpers import handle_provider_errors, require_principal
 
-router = APIRouter(prefix="/api/v1/policy", tags=[Primitive.POLICY])
+router = APIRouter(
+    prefix="/api/v1/policy",
+    tags=[Primitive.POLICY],
+    dependencies=[Depends(require_principal)],
+)
 
 
 # ── Enforcement info ─────────────────────────────────────────────────

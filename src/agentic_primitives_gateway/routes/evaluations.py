@@ -1,6 +1,6 @@
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 
 from agentic_primitives_gateway.models.enums import Primitive
 from agentic_primitives_gateway.models.evaluations import (
@@ -10,9 +10,13 @@ from agentic_primitives_gateway.models.evaluations import (
     UpdateEvaluatorRequest,
 )
 from agentic_primitives_gateway.registry import registry
-from agentic_primitives_gateway.routes._helpers import handle_provider_errors
+from agentic_primitives_gateway.routes._helpers import handle_provider_errors, require_principal
 
-router = APIRouter(prefix="/api/v1/evaluations", tags=[Primitive.EVALUATIONS])
+router = APIRouter(
+    prefix="/api/v1/evaluations",
+    tags=[Primitive.EVALUATIONS],
+    dependencies=[Depends(require_principal)],
+)
 
 
 # ── Evaluator CRUD ─────────────────────────────────────────────────

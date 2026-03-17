@@ -1,6 +1,6 @@
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 
 from agentic_primitives_gateway.models.browser import (
     BrowserSessionInfo,
@@ -14,8 +14,13 @@ from agentic_primitives_gateway.models.browser import (
 )
 from agentic_primitives_gateway.models.enums import Primitive
 from agentic_primitives_gateway.registry import registry
+from agentic_primitives_gateway.routes._helpers import require_principal
 
-router = APIRouter(prefix="/api/v1/browser", tags=[Primitive.BROWSER])
+router = APIRouter(
+    prefix="/api/v1/browser",
+    tags=[Primitive.BROWSER],
+    dependencies=[Depends(require_principal)],
+)
 
 
 @router.post("/sessions", response_model=BrowserSessionInfo, status_code=201)

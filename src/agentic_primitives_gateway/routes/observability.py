@@ -1,6 +1,6 @@
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from agentic_primitives_gateway.models.enums import HealthStatus, Primitive
 from agentic_primitives_gateway.models.observability import (
@@ -19,9 +19,13 @@ from agentic_primitives_gateway.models.observability import (
     UpdateTraceRequest,
 )
 from agentic_primitives_gateway.registry import registry
-from agentic_primitives_gateway.routes._helpers import handle_provider_errors
+from agentic_primitives_gateway.routes._helpers import handle_provider_errors, require_principal
 
-router = APIRouter(prefix="/api/v1/observability", tags=[Primitive.OBSERVABILITY])
+router = APIRouter(
+    prefix="/api/v1/observability",
+    tags=[Primitive.OBSERVABILITY],
+    dependencies=[Depends(require_principal)],
+)
 
 
 # ── Flush ────────────────────────────────────────────────────────────

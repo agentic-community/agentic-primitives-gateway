@@ -1,6 +1,6 @@
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 
 from agentic_primitives_gateway.models.enums import Primitive
 from agentic_primitives_gateway.models.tools import (
@@ -14,9 +14,13 @@ from agentic_primitives_gateway.models.tools import (
     ToolResult,
 )
 from agentic_primitives_gateway.registry import registry
-from agentic_primitives_gateway.routes._helpers import handle_provider_errors
+from agentic_primitives_gateway.routes._helpers import handle_provider_errors, require_principal
 
-router = APIRouter(prefix="/api/v1/tools", tags=[Primitive.TOOLS])
+router = APIRouter(
+    prefix="/api/v1/tools",
+    tags=[Primitive.TOOLS],
+    dependencies=[Depends(require_principal)],
+)
 
 
 # ── Fixed-path routes (must come before {name:path} catch-all) ───────

@@ -1,6 +1,6 @@
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query, Response, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, UploadFile
 
 from agentic_primitives_gateway.models.code_interpreter import (
     ExecuteRequest,
@@ -14,9 +14,13 @@ from agentic_primitives_gateway.models.code_interpreter import (
 )
 from agentic_primitives_gateway.models.enums import Primitive
 from agentic_primitives_gateway.registry import registry
-from agentic_primitives_gateway.routes._helpers import handle_provider_errors
+from agentic_primitives_gateway.routes._helpers import handle_provider_errors, require_principal
 
-router = APIRouter(prefix="/api/v1/code-interpreter", tags=[Primitive.CODE_INTERPRETER])
+router = APIRouter(
+    prefix="/api/v1/code-interpreter",
+    tags=[Primitive.CODE_INTERPRETER],
+    dependencies=[Depends(require_principal)],
+)
 
 
 @router.post("/sessions", response_model=SessionInfo, status_code=201)

@@ -1,4 +1,4 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
 from agentic_primitives_gateway.models.enums import Primitive
 from agentic_primitives_gateway.models.gateway import (
@@ -8,8 +8,13 @@ from agentic_primitives_gateway.models.gateway import (
     ModelInfo,
 )
 from agentic_primitives_gateway.registry import registry
+from agentic_primitives_gateway.routes._helpers import require_principal
 
-router = APIRouter(prefix="/api/v1/gateway", tags=[Primitive.GATEWAY])
+router = APIRouter(
+    prefix="/api/v1/gateway",
+    tags=[Primitive.GATEWAY],
+    dependencies=[Depends(require_principal)],
+)
 
 
 @router.post("/completions", response_model=CompletionResponse)
