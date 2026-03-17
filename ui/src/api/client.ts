@@ -7,6 +7,7 @@ import type {
   ChatResponse,
   CreateAgentRequest,
   CreateTeamRequest,
+  CredentialStatusResponse,
   HealthResponse,
   PolicyEngineInfo,
   PolicyEngineListResponse,
@@ -241,9 +242,7 @@ export const api = {
 
   // Credentials
   credentialStatus: () =>
-    request<{ source: string; aws_configured: boolean; aws_credential_expiry: string | null }>(
-      "/api/v1/credentials/status",
-    ),
+    request<CredentialStatusResponse>("/api/v1/credentials/status"),
   readCredentials: () =>
     request<{ attributes: Record<string, string>; services: Record<string, Record<string, string>> }>(
       "/api/v1/credentials",

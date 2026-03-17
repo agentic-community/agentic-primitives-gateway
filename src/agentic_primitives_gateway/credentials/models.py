@@ -32,6 +32,8 @@ class CredentialStatus(BaseModel):
     source: str  # "oidc" | "headers" | "server" | "none"
     aws_configured: bool = False
     aws_credential_expiry: str | None = None
+    server_credentials: str = "never"  # "never" | "fallback" | "always"
+    required_credentials: list[str] = []  # e.g. ["aws", "langfuse"]
 
 
 class MaskedCredentials(BaseModel):

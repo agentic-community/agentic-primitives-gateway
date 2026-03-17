@@ -263,3 +263,11 @@ export interface SessionHistoryResponse {
   session_id: string;
   messages: { role: string; content: string }[];
 }
+
+export interface CredentialStatusResponse {
+  source: string;
+  aws_configured: boolean;
+  aws_credential_expiry: string | null;
+  server_credentials: string; // "never" | "fallback" | "always"
+  required_credentials: string[]; // e.g. ["aws", "langfuse"]
+}

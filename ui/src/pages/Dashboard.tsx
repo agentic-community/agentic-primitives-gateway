@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { api } from "../api/client";
-import type { AgentSpec } from "../api/types";
+import type { AgentSpec, CredentialStatusResponse } from "../api/types";
 import AgentCard from "../components/AgentCard";
 import HealthBadge from "../components/HealthBadge";
 import LoadingSpinner from "../components/LoadingSpinner";
@@ -13,6 +14,7 @@ export default function Dashboard() {
   const { providers, loading: providersLoading } = useProviders();
   const [agents, setAgents] = useState<AgentSpec[]>([]);
   const [agentsLoading, setAgentsLoading] = useState(true);
+  const [credStatus, setCredStatus] = useState<CredentialStatusResponse | null>(null);
 
   useEffect(() => {
     api
@@ -20,6 +22,7 @@ export default function Dashboard() {
       .then(setAgents)
       .catch(() => {})
       .finally(() => setAgentsLoading(false));
+    api.credentialStatus().then(setCredStatus).catch(() => {});
   }, []);
 
   const loading = healthLoading || providersLoading || agentsLoading;
@@ -44,6 +47,26 @@ export default function Dashboard() {
           )}
         </div>
       </section>
+
+      {/* Credential setup banner */}
+      {credStatus && credStatus.server_credentials === "never" && credStatus.required_credentials.length > 0 && (
+        <section>
+          <div className="rounded-lg border border-yellow-300 dark:border-yellow-700 bg-yellow-50 dark:bg-yellow-950/30 px-4 py-3">
+            <p className="text-sm font-medium text-yellow-800 dark:text-yellow-300">
+              Credentials required
+            </p>
+            <p className="mt-1 text-xs text-yellow-700 dark:text-yellow-400">
+              Server credentials are disabled. The active providers require:{" "}
+              <span className="font-mono font-medium">
+                {credStatus.required_credentials.join(", ")}
+              </span>.{" "}
+              <Link to="/settings" className="underline font-medium hover:text-yellow-900 dark:hover:text-yellow-200">
+                Configure your credentials in Settings
+              </Link>
+            </p>
+          </div>
+        </section>
+      )}
 
       {/* Providers */}
       {providers && (

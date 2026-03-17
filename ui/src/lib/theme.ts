@@ -2,17 +2,22 @@ const STORAGE_KEY = "apg-theme";
 
 export type Theme = "light" | "dark";
 
-export function getStoredTheme(): Theme {
+function _key(userId?: string): string {
+  return userId ? `${STORAGE_KEY}:${userId}` : STORAGE_KEY;
+}
+
+export function getStoredTheme(userId?: string): Theme {
   if (typeof window === "undefined") return "dark";
-  const stored = localStorage.getItem(STORAGE_KEY);
+  // Check user-scoped key first, then fall back to global
+  const stored = localStorage.getItem(_key(userId)) ?? localStorage.getItem(STORAGE_KEY);
   if (stored === "light" || stored === "dark") return stored;
   return window.matchMedia("(prefers-color-scheme: dark)").matches
     ? "dark"
     : "light";
 }
 
-export function setStoredTheme(theme: Theme) {
-  localStorage.setItem(STORAGE_KEY, theme);
+export function setStoredTheme(theme: Theme, userId?: string) {
+  localStorage.setItem(_key(userId), theme);
   applyTheme(theme);
 }
 

@@ -1,13 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api/client";
+import type { CredentialStatusResponse } from "../api/types";
 
 const APG_PREFIX = "apg.";
-
-interface CredentialStatus {
-  source: string;
-  aws_configured: boolean;
-  aws_credential_expiry: string | null;
-}
 
 interface MaskedCredentials {
   attributes: Record<string, string>;
@@ -19,7 +14,7 @@ interface CredentialRow {
 }
 
 export default function Settings() {
-  const [status, setStatus] = useState<CredentialStatus | null>(null);
+  const [status, setStatus] = useState<CredentialStatusResponse | null>(null);
   const [credentials, setCredentials] = useState<MaskedCredentials | null>(null);
   const [newRows, setNewRows] = useState<CredentialRow[]>([]);
   const [deleting, setDeleting] = useState<string | null>(null);
@@ -126,7 +121,7 @@ export default function Settings() {
         <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">
           Credential Resolution
         </h2>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
           <span
             className={`inline-block px-2 py-0.5 rounded text-xs font-mono ${
               status?.source === "oidc"
@@ -138,12 +133,40 @@ export default function Settings() {
           >
             {status?.source ?? "unknown"}
           </span>
+          <span
+            className={`inline-block px-2 py-0.5 rounded text-xs font-mono ${
+              status?.server_credentials === "never"
+                ? "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300"
+                : "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300"
+            }`}
+          >
+            server creds: {status?.server_credentials ?? "unknown"}
+          </span>
           {status?.aws_configured && (
             <span className="text-xs text-gray-500 dark:text-gray-400">
               AWS federation enabled
             </span>
           )}
         </div>
+        {status?.server_credentials === "never" && (
+          <p className="mt-2 text-xs text-yellow-700 dark:text-yellow-400">
+            Server credentials are disabled — you must configure your own credentials below.
+          </p>
+        )}
+        {status?.required_credentials && status.required_credentials.length > 0 && (
+          <div className="mt-3 border-t border-gray-100 dark:border-gray-700 pt-2">
+            <p className="text-xs text-gray-500 dark:text-gray-400 mb-1">
+              Required by active providers:
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {status.required_credentials.map((cred) => (
+                <span key={cred} className="inline-block px-2 py-0.5 rounded text-[10px] font-mono bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300">
+                  {cred}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Stored credentials */}

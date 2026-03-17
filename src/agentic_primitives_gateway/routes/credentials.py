@@ -145,7 +145,59 @@ async def credential_status() -> CredentialStatus:
         if hasattr(creds_cfg, "oidc"):
             aws_configured = creds_cfg.oidc.aws.enabled
 
+    server_credentials = str(settings.allow_server_credentials.value)
+
+    # Derive required credential types from active provider config
+    required = _derive_required_credentials(settings)
+
     return CredentialStatus(
         source=source,
         aws_configured=aws_configured,
+        server_credentials=server_credentials,
+        required_credentials=required,
     )
+
+
+# Provider class names that need AWS credentials
+_AWS_PROVIDERS = {"AgentCore", "Bedrock"}
+# Provider class name substring → service credential key
+_SERVICE_PROVIDERS: dict[str, str] = {
+    "Langfuse": "langfuse",
+    "Mem0": "mem0",
+    "Okta": "okta",
+    "Keycloak": "keycloak",
+    "MCPRegistry": "mcp_registry",
+    "SeleniumGrid": "selenium",
+}
+
+
+def _derive_required_credentials(settings: object) -> list[str]:
+    """Inspect active providers to determine what credentials are needed."""
+    providers_cfg = getattr(settings, "providers", None)
+    if not providers_cfg:
+        return []
+
+    required: set[str] = set()
+    provider_dict = providers_cfg if isinstance(providers_cfg, dict) else {}
+
+    for _primitive, prim_cfg in provider_dict.items():
+        if not isinstance(prim_cfg, dict):
+            continue
+        # Check both single-backend and multi-backend formats
+        backends = prim_cfg.get("backends", {})
+        if not backends and "backend" in prim_cfg:
+            backends = {"default": prim_cfg}
+        for _name, backend_cfg in backends.items():
+            if not isinstance(backend_cfg, dict):
+                continue
+            backend_path = backend_cfg.get("backend", "")
+            class_name = backend_path.rsplit(".", 1)[-1] if backend_path else ""
+            # Check AWS
+            if any(p in class_name for p in _AWS_PROVIDERS):
+                required.add("aws")
+            # Check service credentials
+            for pattern, svc in _SERVICE_PROVIDERS.items():
+                if pattern in class_name:
+                    required.add(svc)
+
+    return sorted(required)

@@ -365,13 +365,12 @@ async def get_team_run(name: str, team_run_id: str) -> dict:
         )
 
     done_count = sum(1 for t in all_tasks if t.status == "done")
-    entry = _active_team_runs.get(team_run_id)
-    is_running = entry is not None and not entry[0].done()
+    status = await _bg.get_status_async(team_run_id)
 
     return {
         "team_run_id": team_run_id,
         "team_name": name,
-        "status": "running" if is_running else "idle",
+        "status": status,
         "tasks": tasks_out,
         "tasks_created": len(all_tasks),
         "tasks_completed": done_count,

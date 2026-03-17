@@ -1,14 +1,17 @@
 import { useCallback, useState } from "react";
+import { useAuth } from "../auth/AuthProvider";
 import { type Theme, getStoredTheme, setStoredTheme } from "../lib/theme";
 
 export default function ThemeToggle() {
-  const [theme, setTheme] = useState<Theme>(getStoredTheme);
+  const { user } = useAuth();
+  const userId = user?.profile?.sub;
+  const [theme, setTheme] = useState<Theme>(() => getStoredTheme(userId));
 
   const toggle = useCallback(() => {
     const next = theme === "dark" ? "light" : "dark";
-    setStoredTheme(next);
+    setStoredTheme(next, userId);
     setTheme(next);
-  }, [theme]);
+  }, [theme, userId]);
 
   return (
     <button
