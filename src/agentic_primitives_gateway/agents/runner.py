@@ -15,7 +15,11 @@ from agentic_primitives_gateway.agents.checkpoint_utils import (
     restore_provider_overrides,
     serialize_auth_context,
 )
-from agentic_primitives_gateway.agents.namespace import resolve_actor_id, resolve_knowledge_namespace
+from agentic_primitives_gateway.agents.namespace import (
+    resolve_actor_id,
+    resolve_knowledge_namespace,
+    resolve_shared_pools,
+)
 from agentic_primitives_gateway.agents.store import AgentStore
 from agentic_primitives_gateway.agents.tools import (
     MAX_AGENT_DEPTH,
@@ -237,6 +241,7 @@ class AgentRunner:
         knowledge_ns = resolve_knowledge_namespace(spec, principal)
         actor_id = resolve_actor_id(spec.name, principal)
 
+        pools = resolve_shared_pools(spec, principal)
         tools = build_tool_list(
             spec.primitives,
             namespace=knowledge_ns,
@@ -244,6 +249,7 @@ class AgentRunner:
             agent_store=self._store,
             agent_runner=self,
             agent_depth=depth,
+            resolved_pools=pools,
         )
 
         ctx = _RunContext(
@@ -648,6 +654,7 @@ class AgentRunner:
 
         # Rebuild tools (handlers can't be serialized)
         prev_overrides = self._apply_overrides(spec)
+        resume_pools = resolve_shared_pools(spec, principal) if principal else None
         tools = build_tool_list(
             spec.primitives,
             namespace=data.get("knowledge_ns", ""),
@@ -655,6 +662,7 @@ class AgentRunner:
             agent_store=self._store,
             agent_runner=self,
             agent_depth=data.get("depth", 0),
+            resolved_pools=resume_pools,
         )
 
         ctx = _RunContext(

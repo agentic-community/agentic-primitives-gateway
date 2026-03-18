@@ -82,6 +82,48 @@ async def shared_memory_list(shared_namespace: str, limit: int = 20) -> str:
     return "\n".join(f"- {r.key}: {r.content[:100]}" for r in records)
 
 
+# ── Pool-based shared memory (agent-level, multiple namespaces) ─────
+
+
+def _resolve_pool(pools: dict[str, str], pool: str) -> str:
+    """Resolve a pool name to its namespace. Raises ValueError if invalid."""
+    ns = pools.get(pool)
+    if ns is None:
+        available = ", ".join(sorted(pools.keys()))
+        raise ValueError(f"Unknown pool '{pool}'. Available pools: {available}")
+    return ns
+
+
+async def pool_memory_store(pools: dict[str, str], pool: str, key: str, content: str) -> str:
+    ns = _resolve_pool(pools, pool)
+    await registry.memory.store(namespace=ns, key=key, content=content, metadata={})
+    return f"Stored '{key}' in pool '{pool}'."
+
+
+async def pool_memory_retrieve(pools: dict[str, str], pool: str, key: str) -> str:
+    ns = _resolve_pool(pools, pool)
+    record = await registry.memory.retrieve(namespace=ns, key=key)
+    if record is None:
+        return f"No finding for key '{key}' in pool '{pool}'."
+    return record.content
+
+
+async def pool_memory_search(pools: dict[str, str], pool: str, query: str, top_k: int = 5) -> str:
+    ns = _resolve_pool(pools, pool)
+    results = await registry.memory.search(namespace=ns, query=query, top_k=top_k)
+    if not results:
+        return f"No findings in pool '{pool}'."
+    return "\n".join(f"- [{r.score:.2f}] {r.record.key}: {r.record.content}" for r in results)
+
+
+async def pool_memory_list(pools: dict[str, str], pool: str, limit: int = 20) -> str:
+    ns = _resolve_pool(pools, pool)
+    records = await registry.memory.list_memories(namespace=ns, limit=limit)
+    if not records:
+        return f"No findings in pool '{pool}'."
+    return "\n".join(f"- {r.key}: {r.content[:100]}" for r in records)
+
+
 # ── Code interpreter ────────────────────────────────────────────────
 
 

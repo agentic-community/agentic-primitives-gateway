@@ -2,6 +2,7 @@ export interface PrimitiveConfig {
   enabled: boolean;
   tools: string[] | null;
   namespace: string | null;
+  shared_namespaces: string[] | null;
 }
 
 export interface HooksConfig {

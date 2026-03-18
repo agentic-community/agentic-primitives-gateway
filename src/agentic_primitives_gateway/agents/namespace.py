@@ -37,6 +37,28 @@ def resolve_knowledge_namespace_for_name(
     return f"{base}:u:{principal.id}"
 
 
+def resolve_shared_pools(spec: AgentSpec, principal: AuthenticatedPrincipal) -> dict[str, str] | None:
+    """Resolve shared memory pools from the agent's memory primitive config.
+
+    Returns a dict mapping pool name → user-scoped namespace, or None if
+    no shared namespaces are configured.
+
+    Example::
+
+        shared_namespaces: ["project:alpha", "team:research"]
+        →  {"project:alpha": "project:alpha:u:alice",
+            "team:research": "team:research:u:alice"}
+    """
+    mem_config = spec.primitives.get("memory")
+    if not mem_config or not mem_config.shared_namespaces:
+        return None
+    pools: dict[str, str] = {}
+    for ns in mem_config.shared_namespaces:
+        base = ns.replace("{agent_name}", spec.name).rstrip(":")
+        pools[ns] = f"{base}:u:{principal.id}"
+    return pools
+
+
 def resolve_actor_id(agent_name: str, principal: AuthenticatedPrincipal) -> str:
     """Resolve the actor_id for conversation history scoping.
 

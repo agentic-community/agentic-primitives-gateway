@@ -42,8 +42,20 @@ export default function PrimitivesSelector({
     if (next[name]?.enabled) {
       delete next[name];
     } else {
-      next[name] = { enabled: true, tools: null, namespace: null };
+      next[name] = { enabled: true, tools: null, namespace: null, shared_namespaces: null };
     }
+    onChange(next);
+  };
+
+  const updateSharedNamespaces = (text: string) => {
+    const next = { ...value };
+    const config = next["memory"];
+    if (!config) return;
+    const namespaces = text
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    next["memory"] = { ...config, shared_namespaces: namespaces.length > 0 ? namespaces : null };
     onChange(next);
   };
 
@@ -227,6 +239,23 @@ export default function PrimitivesSelector({
                       </div>
                     </label>
                   ))}
+                </div>
+              )}
+
+              {/* Shared namespaces for memory primitive */}
+              {name === "memory" && enabled && isOpen && (
+                <div className="px-3 pb-2 pl-8">
+                  <label className="block text-[11px] text-gray-500 dark:text-gray-400 mb-1">
+                    Shared memory pools
+                    <span className="text-gray-400 dark:text-gray-500 ml-1">(comma-separated, e.g. project:alpha, team:research)</span>
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Leave empty for no shared pools"
+                    value={config?.shared_namespaces?.join(", ") ?? ""}
+                    onChange={(e) => updateSharedNamespaces(e.target.value)}
+                    className="w-full rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 px-2 py-1 text-xs font-mono"
+                  />
                 </div>
               )}
 

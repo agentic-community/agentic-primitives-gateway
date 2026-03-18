@@ -11,6 +11,7 @@ class PrimitiveConfig(BaseModel):
     enabled: bool = True
     tools: list[str] | None = None
     namespace: str | None = None
+    shared_namespaces: list[str] | None = None
 
 
 class HooksConfig(BaseModel):

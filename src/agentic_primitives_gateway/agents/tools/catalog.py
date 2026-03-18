@@ -33,6 +33,10 @@ from agentic_primitives_gateway.agents.tools.handlers import (
     memory_retrieve,
     memory_search,
     memory_store,
+    pool_memory_list,
+    pool_memory_retrieve,
+    pool_memory_search,
+    pool_memory_store,
     shared_memory_list,
     shared_memory_retrieve,
     shared_memory_search,
@@ -524,6 +528,82 @@ _TOOL_CATALOG: dict[str, list[ToolDefinition]] = {
 }
 
 
+# ── Dynamic pool-based shared memory tools ───────────────────────────
+
+
+def _build_pool_memory_tools(pools: dict[str, str]) -> list[ToolDefinition]:
+    """Build shared memory tools with a ``pool`` parameter for multi-namespace agents.
+
+    Each tool's description lists the available pool names so the LLM knows
+    what to pass.  The ``pools`` dict is bound via ``functools.partial``.
+    """
+    pool_names = ", ".join(sorted(pools.keys()))
+    pool_prop = {
+        "type": "string",
+        "description": f"Name of the shared memory pool. Available: {pool_names}",
+    }
+    return [
+        ToolDefinition(
+            name="share_to",
+            description=f"Store a finding in a shared memory pool. Available pools: {pool_names}",
+            primitive="shared_memory",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "pool": pool_prop,
+                    "key": {"type": "string", "description": "A short identifier for this finding."},
+                    "content": {"type": "string", "description": "The information to share."},
+                },
+                "required": ["pool", "key", "content"],
+            },
+            handler=partial(pool_memory_store, pools),
+        ),
+        ToolDefinition(
+            name="read_from_pool",
+            description=f"Read a specific finding from a shared memory pool. Available pools: {pool_names}",
+            primitive="shared_memory",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "pool": pool_prop,
+                    "key": {"type": "string", "description": "The key to look up."},
+                },
+                "required": ["pool", "key"],
+            },
+            handler=partial(pool_memory_retrieve, pools),
+        ),
+        ToolDefinition(
+            name="search_pool",
+            description=f"Search a shared memory pool for relevant findings. Available pools: {pool_names}",
+            primitive="shared_memory",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "pool": pool_prop,
+                    "query": {"type": "string", "description": "What to search for."},
+                    "top_k": {"type": "integer", "description": "Maximum results.", "default": 5},
+                },
+                "required": ["pool", "query"],
+            },
+            handler=partial(pool_memory_search, pools),
+        ),
+        ToolDefinition(
+            name="list_pool",
+            description=f"List all findings in a shared memory pool. Available pools: {pool_names}",
+            primitive="shared_memory",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "pool": pool_prop,
+                    "limit": {"type": "integer", "description": "Maximum findings to show.", "default": 20},
+                },
+                "required": ["pool"],
+            },
+            handler=partial(pool_memory_list, pools),
+        ),
+    ]
+
+
 # ── Public API ───────────────────────────────────────────────────────
 
 
@@ -577,6 +657,7 @@ def build_tool_list(
     team_run_id: str | None = None,
     agent_name: str | None = None,
     shared_namespace: str | None = None,
+    resolved_pools: dict[str, str] | None = None,
 ) -> list[ToolDefinition]:
     """Build the final tool list for an agent run from its primitive config.
 
@@ -586,6 +667,7 @@ def build_tool_list(
       - memory tools get ``namespace`` bound (agent-scoped, no session_id)
       - browser/code_interpreter tools get ``session_id`` bound (if session started)
       - agent delegation tools are built dynamically from the agent store
+      - pool-based shared memory tools are built when ``resolved_pools`` is set
 
     The "agents" pseudo-primitive is special: its tools are not in the static
     catalog but built at runtime from the agent store. The delegation import
@@ -635,6 +717,11 @@ def build_tool_list(
                     handler=bound_handler,
                 )
             )
+
+    # Inject pool-based shared memory tools when resolved_pools is provided
+    # (Level 2: agent-level shared namespaces from PrimitiveConfig.shared_namespaces)
+    if resolved_pools:
+        tools.extend(_build_pool_memory_tools(resolved_pools))
 
     return tools
 
