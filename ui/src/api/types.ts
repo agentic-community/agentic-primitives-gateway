@@ -191,6 +191,7 @@ export interface CreateTeamRequest {
   max_concurrent?: number | null;
   global_max_turns?: number;
   global_timeout_seconds?: number;
+  shared_memory_namespace?: string;
   shared_with?: string[];
   checkpointing_enabled?: boolean;
 }
@@ -203,6 +204,7 @@ export interface UpdateTeamRequest {
   max_concurrent?: number | null;
   global_max_turns?: number;
   global_timeout_seconds?: number;
+  shared_memory_namespace?: string | null;
   shared_with?: string[];
   checkpointing_enabled?: boolean;
 }

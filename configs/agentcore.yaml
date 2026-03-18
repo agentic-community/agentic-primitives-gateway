@@ -235,5 +235,6 @@ teams:
       planner: "planner"
       synthesizer: "synthesizer"
       workers: ["researcher", "coder"]
+      shared_memory_namespace: "team:{team_name}"
       global_max_turns: 100
       global_timeout_seconds: 300

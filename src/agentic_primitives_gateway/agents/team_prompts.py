@@ -32,6 +32,14 @@ async def build_worker_descriptions(team_spec: TeamSpec, agent_store: AgentStore
 async def build_planner_prompt(team_spec: TeamSpec, message: str, agent_store: AgentStore) -> str:
     """Build the initial planning prompt with worker info and guidelines."""
     worker_list = await build_worker_descriptions(team_spec, agent_store)
+    shared_hint = ""
+    if team_spec.shared_memory_namespace:
+        shared_hint = (
+            "- Workers have SHARED MEMORY: they can store findings with share_finding and "
+            "read each other's findings with search_shared/read_shared. Design tasks to "
+            "leverage this — e.g. a researcher stores results that a coder then reads.\n"
+        )
+
     return (
         f"You are a task planner. Decompose the following request into concrete, "
         f"actionable tasks that can be worked on by team members.\n\n"
@@ -44,7 +52,8 @@ async def build_planner_prompt(team_spec: TeamSpec, message: str, agent_store: A
         f"after the research results come back.\n"
         f"- Each task should produce a complete, self-contained deliverable\n"
         f"- Use dependencies (depends_on with task IDs) when a task needs results from another\n"
-        f"- Use priority to indicate importance (higher = more important)\n\n"
+        f"- Use priority to indicate importance (higher = more important)\n"
+        f"{shared_hint}\n"
         f"Use the create_task tool to add each task to the board.\n\n"
         f"Request: {message}"
     )

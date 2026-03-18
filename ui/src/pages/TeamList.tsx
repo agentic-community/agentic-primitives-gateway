@@ -97,6 +97,7 @@ function TeamForm({ initial, onDone, onCancel }: TeamFormProps) {
   const [workers, setWorkers] = useState<string[]>(initial?.workers ?? []);
   const [globalMaxTurns, setGlobalMaxTurns] = useState(initial?.global_max_turns ?? 100);
   const [globalTimeout, setGlobalTimeout] = useState(initial?.global_timeout_seconds ?? 300);
+  const [sharedMemory, setSharedMemory] = useState(!!initial?.shared_memory_namespace);
   const [sharedWith, setSharedWith] = useState<string[]>(initial?.shared_with ?? []);
   const [checkpointingEnabled, setCheckpointingEnabled] = useState(initial?.checkpointing_enabled ?? false);
   const [agents, setAgents] = useState<AgentSpec[]>([]);
@@ -121,6 +122,7 @@ function TeamForm({ initial, onDone, onCancel }: TeamFormProps) {
             workers,
             global_max_turns: globalMaxTurns,
             global_timeout_seconds: globalTimeout,
+            shared_memory_namespace: sharedMemory ? "team:{team_name}" : null,
             shared_with: sharedWith,
             checkpointing_enabled: checkpointingEnabled,
           };
@@ -134,6 +136,7 @@ function TeamForm({ initial, onDone, onCancel }: TeamFormProps) {
             workers,
             global_max_turns: globalMaxTurns,
             global_timeout_seconds: globalTimeout,
+            shared_memory_namespace: sharedMemory ? "team:{team_name}" : undefined,
             shared_with: sharedWith,
             checkpointing_enabled: checkpointingEnabled,
           };
@@ -146,7 +149,7 @@ function TeamForm({ initial, onDone, onCancel }: TeamFormProps) {
         setSubmitting(false);
       }
     },
-    [name, description, planner, synthesizer, workers, globalMaxTurns, globalTimeout, sharedWith, checkpointingEnabled, isEdit, onDone],
+    [name, description, planner, synthesizer, workers, globalMaxTurns, globalTimeout, sharedMemory, sharedWith, checkpointingEnabled, isEdit, onDone],
   );
 
   return (
@@ -207,6 +210,19 @@ function TeamForm({ initial, onDone, onCancel }: TeamFormProps) {
           />
         </div>
       </div>
+
+      <label className="flex items-center gap-2 cursor-pointer">
+        <input
+          type="checkbox"
+          checked={sharedMemory}
+          onChange={(e) => setSharedMemory(e.target.checked)}
+          className="rounded border-gray-300 dark:border-gray-600 text-indigo-600 h-3.5 w-3.5"
+        />
+        <span className="text-xs text-gray-500 dark:text-gray-400">
+          Enable shared memory
+          <span className="text-[10px] text-gray-400 dark:text-gray-500 ml-1">(workers can share findings with each other)</span>
+        </span>
+      </label>
 
       <SharedWithInput value={sharedWith} onChange={setSharedWith} ownerId={isEdit ? initial?.owner_id : undefined} />
       <label className="flex items-center gap-2 cursor-pointer">

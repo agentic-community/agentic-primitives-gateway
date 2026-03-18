@@ -52,6 +52,36 @@ async def memory_list(namespace: str, limit: int = 20) -> str:
     return "\n".join(f"- {r.key}: {r.content[:100]}" for r in records)
 
 
+# ── Shared memory (team-scoped) ────────────────────────────────────
+
+
+async def shared_memory_store(shared_namespace: str, key: str, content: str, source: str = "") -> str:
+    metadata = {"source": source} if source else {}
+    await registry.memory.store(namespace=shared_namespace, key=key, content=content, metadata=metadata)
+    return f"Shared finding '{key}' with the team."
+
+
+async def shared_memory_retrieve(shared_namespace: str, key: str) -> str:
+    record = await registry.memory.retrieve(namespace=shared_namespace, key=key)
+    if record is None:
+        return f"No shared finding found for key '{key}'."
+    return record.content
+
+
+async def shared_memory_search(shared_namespace: str, query: str, top_k: int = 5) -> str:
+    results = await registry.memory.search(namespace=shared_namespace, query=query, top_k=top_k)
+    if not results:
+        return "No shared findings found."
+    return "\n".join(f"- [{r.score:.2f}] {r.record.key}: {r.record.content}" for r in results)
+
+
+async def shared_memory_list(shared_namespace: str, limit: int = 20) -> str:
+    records = await registry.memory.list_memories(namespace=shared_namespace, limit=limit)
+    if not records:
+        return "No shared findings."
+    return "\n".join(f"- {r.key}: {r.content[:100]}" for r in records)
+
+
 # ── Code interpreter ────────────────────────────────────────────────
 
 

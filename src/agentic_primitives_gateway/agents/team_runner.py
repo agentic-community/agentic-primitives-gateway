@@ -1222,16 +1222,39 @@ class TeamRunner:
     def _build_worker_tools(
         self, worker_spec: AgentSpec, team_spec: TeamSpec, team_run_id: str, session_ctx: dict[str, str]
     ) -> list[ToolDefinition]:
-        """Build the full tool list for a worker: its primitives + task board."""
+        """Build the full tool list for a worker: its primitives + task board + shared memory."""
         worker_primitives = dict(worker_spec.primitives)
         worker_primitives["task_board"] = PrimitiveConfig(enabled=True, tools=_WORKER_BOARD_TOOLS)
+
+        # Add shared memory tools when the team has a shared namespace
+        shared_ns = self._resolve_shared_namespace(team_spec)
+        if shared_ns:
+            worker_primitives["shared_memory"] = PrimitiveConfig(enabled=True)
+
         return build_tool_list(
             worker_primitives,
             namespace=f"team:{team_spec.name}:{team_run_id}",
             session_ctx=session_ctx,
             team_run_id=team_run_id,
             agent_name=worker_spec.name,
+            shared_namespace=shared_ns,
         )
+
+    @staticmethod
+    def _resolve_shared_namespace(team_spec: TeamSpec) -> str | None:
+        """Resolve the user-scoped shared memory namespace for a team.
+
+        Returns None if shared memory is not configured. The namespace
+        includes ``:u:{user_id}`` for multi-tenant isolation.
+        """
+        if not team_spec.shared_memory_namespace:
+            return None
+        principal = get_authenticated_principal()
+        if principal is None:
+            return None
+        ns = team_spec.shared_memory_namespace
+        ns = ns.replace("{team_name}", team_spec.name)
+        return f"{ns}:u:{principal.id}"
 
     @staticmethod
     async def _gather_upstream_context(team_run_id: str, task_id: str) -> str:

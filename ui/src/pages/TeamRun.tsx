@@ -657,7 +657,8 @@ export default function TeamRun() {
                 );
                 break;
               case "agent_tool":
-                addLog(`[${event.agent}] tool: ${event.name}`);
+                // Don't log agent tool events to the main activity log
+                // addLog(`[${event.agent}] tool: ${event.name}`);
                 break;
               case "task_completed":
                 setTasks((prev) =>

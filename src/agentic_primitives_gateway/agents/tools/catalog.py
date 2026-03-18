@@ -33,6 +33,10 @@ from agentic_primitives_gateway.agents.tools.handlers import (
     memory_retrieve,
     memory_search,
     memory_store,
+    shared_memory_list,
+    shared_memory_retrieve,
+    shared_memory_search,
+    shared_memory_store,
     task_add_note,
     task_claim,
     task_create,
@@ -124,6 +128,58 @@ _TOOL_CATALOG: dict[str, list[ToolDefinition]] = {
                 "required": [],
             },
             handler=memory_list,
+        ),
+    ],
+    "shared_memory": [
+        ToolDefinition(
+            name="share_finding",
+            description="Share a finding with other team members via the team's shared memory.",
+            primitive="shared_memory",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "key": {"type": "string", "description": "A short identifier for this finding."},
+                    "content": {"type": "string", "description": "The information to share."},
+                },
+                "required": ["key", "content"],
+            },
+            handler=shared_memory_store,
+        ),
+        ToolDefinition(
+            name="read_shared",
+            description="Read a specific shared finding by key.",
+            primitive="shared_memory",
+            input_schema={
+                "type": "object",
+                "properties": {"key": {"type": "string", "description": "The key to look up."}},
+                "required": ["key"],
+            },
+            handler=shared_memory_retrieve,
+        ),
+        ToolDefinition(
+            name="search_shared",
+            description="Search the team's shared memory for relevant findings from other agents.",
+            primitive="shared_memory",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "What to search for."},
+                    "top_k": {"type": "integer", "description": "Maximum results.", "default": 5},
+                },
+                "required": ["query"],
+            },
+            handler=shared_memory_search,
+        ),
+        ToolDefinition(
+            name="list_shared",
+            description="List all findings in the team's shared memory.",
+            primitive="shared_memory",
+            input_schema={
+                "type": "object",
+                "properties": {"limit": {"type": "integer", "description": "Maximum findings to show.", "default": 20}},
+                "required": [],
+            },
+            handler=shared_memory_list,
         ),
     ],
     "code_interpreter": [
@@ -482,11 +538,14 @@ def _bind_handler(
     agent_depth: int = 0,
     team_run_id: str | None = None,
     agent_name: str | None = None,
+    shared_namespace: str | None = None,
 ) -> Any:
     """Bind context parameters to a tool handler via functools.partial."""
     handler = tool.handler
     if primitive_name == "memory":
         return partial(handler, namespace=namespace)
+    if primitive_name == "shared_memory" and shared_namespace:
+        return partial(handler, shared_namespace=shared_namespace)
     if primitive_name in ("code_interpreter", "browser"):
         sid = session_ctx.get(primitive_name, "")
         return partial(handler, session_id=sid) if sid else handler
@@ -517,6 +576,7 @@ def build_tool_list(
     agent_depth: int = 0,
     team_run_id: str | None = None,
     agent_name: str | None = None,
+    shared_namespace: str | None = None,
 ) -> list[ToolDefinition]:
     """Build the final tool list for an agent run from its primitive config.
 
@@ -564,6 +624,7 @@ def build_tool_list(
                 agent_depth=agent_depth,
                 team_run_id=team_run_id,
                 agent_name=agent_name,
+                shared_namespace=shared_namespace,
             )
             tools.append(
                 ToolDefinition(
