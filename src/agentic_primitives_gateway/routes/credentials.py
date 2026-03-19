@@ -145,7 +145,7 @@ async def credential_status() -> CredentialStatus:
         if hasattr(creds_cfg, "oidc"):
             aws_configured = creds_cfg.oidc.aws.enabled
 
-    server_credentials = str(settings.allow_server_credentials.value)
+    server_credentials = settings.allow_server_credentials.value
 
     # Derive required credential types from active provider config
     required = _derive_required_credentials(settings)

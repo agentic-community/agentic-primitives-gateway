@@ -183,7 +183,7 @@ class MCPRegistryProvider(SyncRunnerMixin, ToolsProvider):
         session_id = resp.headers.get("mcp-session-id", "")
         if not session_id:
             data = self._parse_sse_json(resp.text)
-            session_id = data.get("result", {}).get("sessionId", "")
+            session_id = str(data.get("result", {}).get("sessionId", ""))
 
         if session_id:
             self._sessions[cache_key] = (session_id, time.monotonic())

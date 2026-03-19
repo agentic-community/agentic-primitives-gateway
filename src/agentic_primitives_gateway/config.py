@@ -333,7 +333,7 @@ class Settings(BaseSettings):
     port: int = 8000
     log_level: str = LogLevel.INFO
     config_file: str | None = None
-    allow_server_credentials: ServerCredentialMode | bool = ServerCredentialMode.NEVER
+    allow_server_credentials: ServerCredentialMode = ServerCredentialMode.NEVER
     cors_origins: list[str] = ["*"]
     providers: ProvidersConfig = ProvidersConfig()
     auth: AuthConfig = AuthConfig()

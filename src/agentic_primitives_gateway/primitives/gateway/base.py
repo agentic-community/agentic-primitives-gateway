@@ -45,5 +45,5 @@ class GatewayProvider(ABC):
     @abstractmethod
     async def list_models(self) -> list[dict[str, Any]]: ...
 
-    async def healthcheck(self) -> bool:
+    async def healthcheck(self) -> bool | str:
         return True

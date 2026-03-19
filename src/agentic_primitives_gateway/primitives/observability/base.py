@@ -16,7 +16,7 @@ class ObservabilityProvider(ABC):
     @abstractmethod
     async def query_traces(self, filters: dict[str, Any] | None = None) -> list[dict[str, Any]]: ...
 
-    async def healthcheck(self) -> bool:
+    async def healthcheck(self) -> bool | str:
         return True
 
     # ── Trace retrieval & LLM generation (optional) ──────────────────

@@ -51,5 +51,5 @@ class BrowserProvider(ABC):
         """Evaluate JavaScript in the browser and return the result."""
         raise NotImplementedError("evaluate not supported by this provider")
 
-    async def healthcheck(self) -> bool:
+    async def healthcheck(self) -> bool | str:
         return True

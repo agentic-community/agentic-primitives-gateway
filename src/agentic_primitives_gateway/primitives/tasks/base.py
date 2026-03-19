@@ -88,5 +88,5 @@ class TasksProvider(ABC):
         unassigned = [t for t in ready if t.suggested_worker is None]
         return mine + unassigned
 
-    async def healthcheck(self) -> bool:
+    async def healthcheck(self) -> bool | str:
         return True

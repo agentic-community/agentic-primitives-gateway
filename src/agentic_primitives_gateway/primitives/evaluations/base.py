@@ -85,5 +85,5 @@ class EvaluationsProvider(ABC):
     ) -> dict[str, Any]:
         raise NotImplementedError
 
-    async def healthcheck(self) -> bool:
+    async def healthcheck(self) -> bool | str:
         return True

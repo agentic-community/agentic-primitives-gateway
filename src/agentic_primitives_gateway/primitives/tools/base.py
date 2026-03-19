@@ -32,7 +32,7 @@ class ToolsProvider(ABC):
         ]
         return matched[:max_results]
 
-    async def healthcheck(self) -> bool:
+    async def healthcheck(self) -> bool | str:
         return True
 
     # ── Tool retrieval & deletion (optional) ─────────────────────────

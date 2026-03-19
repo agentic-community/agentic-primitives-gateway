@@ -44,7 +44,7 @@ class CodeInterpreterProvider(ABC):
     @abstractmethod
     async def list_sessions(self, status: str | None = None) -> list[dict[str, Any]]: ...
 
-    async def healthcheck(self) -> bool:
+    async def healthcheck(self) -> bool | str:
         return True
 
     # ── Session details & execution history (optional) ───────────────

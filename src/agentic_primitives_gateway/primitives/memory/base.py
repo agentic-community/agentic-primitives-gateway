@@ -166,5 +166,5 @@ class MemoryProvider(ABC):
         """
         return []
 
-    async def healthcheck(self) -> bool:
+    async def healthcheck(self) -> bool | str:
         return True
