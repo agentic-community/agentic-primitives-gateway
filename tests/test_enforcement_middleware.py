@@ -136,6 +136,15 @@ def _make_request(headers: dict[str, str]) -> MagicMock:
 class TestResolvePrincipal:
     """Tests for the _resolve_principal function."""
 
+    @pytest.fixture(autouse=True)
+    def _clear_principal(self):
+        """Ensure no authenticated principal leaks from other tests."""
+        from agentic_primitives_gateway.context import set_authenticated_principal
+
+        set_authenticated_principal(None)
+        yield
+        set_authenticated_principal(None)
+
     def test_agent_id_header(self):
         request = _make_request({"x-agent-id": "my-agent"})
         assert _resolve_principal(request) == 'Agent::"my-agent"'
@@ -168,6 +177,14 @@ class TestResolveResource:
 
 class TestPolicyEnforcementMiddleware:
     """Integration tests for the middleware using a real FastAPI app."""
+
+    @pytest.fixture(autouse=True)
+    def _clear_principal(self):
+        from agentic_primitives_gateway.context import set_authenticated_principal
+
+        set_authenticated_principal(None)
+        yield
+        set_authenticated_principal(None)
 
     @pytest.mark.asyncio
     async def test_no_enforcer_passes_through(self):
