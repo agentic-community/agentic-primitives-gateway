@@ -227,6 +227,19 @@ export const api = {
     request<{ status: string }>(`/api/v1/teams/${name}`, {
       method: "DELETE",
     }),
+  exportTeam: async (name: string) => {
+    const res = await fetch(`/api/v1/teams/${name}/export`, {
+      headers: { ...authHeaders() },
+    });
+    if (!res.ok) throw new Error(`Export failed: ${res.statusText}`);
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${name}.py`;
+    a.click();
+    URL.revokeObjectURL(url);
+  },
   runTeam: (name: string, data: TeamRunRequest) =>
     request<TeamRunResponse>(`/api/v1/teams/${name}/run`, {
       method: "POST",

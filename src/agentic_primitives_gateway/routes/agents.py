@@ -113,7 +113,16 @@ async def export_agent(name: str) -> Response:
         raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
     require_access(require_principal(), spec.owner_id, spec.shared_with)
 
-    code = _export(spec)
+    # Load sub-agent specs for delegation export
+    all_specs: dict[str, Any] = {}
+    agents_cfg = spec.primitives.get("agents")
+    if agents_cfg and agents_cfg.enabled and agents_cfg.tools:
+        for sa_name in agents_cfg.tools:
+            sa_spec = await store.get(sa_name)
+            if sa_spec:
+                all_specs[sa_name] = sa_spec
+
+    code = _export(spec, all_specs=all_specs if all_specs else None)
     return Response(
         content=code,
         media_type="text/x-python",

@@ -380,6 +380,13 @@ export default function TeamList() {
                         Run
                       </Link>
                       <button
+                        onClick={() => api.exportTeam(team.name)}
+                        className="rounded border border-gray-300 dark:border-gray-700 px-2 py-1 text-xs text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"
+                        title="Export as Python script"
+                      >
+                        Export
+                      </button>
+                      <button
                         onClick={() => { setEditing(team.name); setCreating(false); }}
                         className="rounded border border-gray-300 dark:border-gray-700 px-2.5 py-1 text-xs text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"
                       >

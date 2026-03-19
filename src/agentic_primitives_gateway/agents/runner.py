@@ -104,42 +104,41 @@ class AgentRunner:
 
         ctx = await self._init_context(spec, message, session_id or uuid.uuid4().hex[:16], _depth)
 
-        while ctx.turns_used < spec.max_turns:
-            ctx.turns_used += 1
-            await self._checkpoint(ctx, message)
-            request_dict = self._build_request(ctx)
+        try:
+            while ctx.turns_used < spec.max_turns:
+                ctx.turns_used += 1
+                await self._checkpoint(ctx, message)
+                request_dict = self._build_request(ctx)
 
-            logger.info(
-                "Agent[%s] turn %d: calling LLM (%d messages, %d tools)",
-                spec.name,
-                ctx.turns_used,
-                len(ctx.messages),
-                len(ctx.gateway_tools) if ctx.gateway_tools else 0,
-            )
-            response = await registry.gateway.route_request(request_dict)
+                logger.info(
+                    "Agent[%s] turn %d: calling LLM (%d messages, %d tools)",
+                    spec.name,
+                    ctx.turns_used,
+                    len(ctx.messages),
+                    len(ctx.gateway_tools) if ctx.gateway_tools else 0,
+                )
+                response = await registry.gateway.route_request(request_dict)
 
-            stop_reason = response.get("stop_reason", "end_turn")
-            tool_calls = response.get("tool_calls")
-            turn_content = response.get("content", "")
-            if turn_content:
-                ctx.content = turn_content
+                stop_reason = response.get("stop_reason", "end_turn")
+                tool_calls = response.get("tool_calls")
+                turn_content = response.get("content", "")
+                if turn_content:
+                    ctx.content = turn_content
 
-            if spec.hooks.auto_trace:
-                await self._trace_generation(ctx.trace_id, spec, ctx.turns_used, ctx.messages, response)
+                if spec.hooks.auto_trace:
+                    await self._trace_generation(ctx.trace_id, spec, ctx.turns_used, ctx.messages, response)
 
-            if stop_reason != "tool_use" or not tool_calls:
+                if stop_reason != "tool_use" or not tool_calls:
+                    ctx.messages.append({"role": "assistant", "content": ctx.content})
+                    break
+
+                ctx.messages.append({"role": "assistant", "content": ctx.content, "tool_calls": tool_calls})
+                await self._exec_tools_parallel(ctx, tool_calls)
+            else:
+                ctx.content = f"I've reached the maximum number of turns ({spec.max_turns}). Here's what I have so far: {ctx.content}"
                 ctx.messages.append({"role": "assistant", "content": ctx.content})
-                break
-
-            ctx.messages.append({"role": "assistant", "content": ctx.content, "tool_calls": tool_calls})
-            await self._exec_tools_parallel(ctx, tool_calls)
-        else:
-            ctx.content = (
-                f"I've reached the maximum number of turns ({spec.max_turns}). Here's what I have so far: {ctx.content}"
-            )
-            ctx.messages.append({"role": "assistant", "content": ctx.content})
-
-        await self._finalize(ctx, message)
+        finally:
+            await self._finalize(ctx, message)
 
         return ChatResponse(
             response=ctx.content,
@@ -175,49 +174,48 @@ class AgentRunner:
         ctx = await self._init_context(spec, message, session_id or uuid.uuid4().hex[:16], _depth)
         yield {"type": "stream_start", "session_id": ctx.session_id}
 
-        while ctx.turns_used < spec.max_turns:
-            ctx.turns_used += 1
-            await self._checkpoint(ctx, message)
-            request_dict = self._build_request(ctx)
+        try:
+            while ctx.turns_used < spec.max_turns:
+                ctx.turns_used += 1
+                await self._checkpoint(ctx, message)
+                request_dict = self._build_request(ctx)
 
-            # Stream LLM response
-            turn_content = ""
-            turn_tool_calls: list[dict[str, Any]] = []
-            stop_reason = "end_turn"
+                # Stream LLM response
+                turn_content = ""
+                turn_tool_calls: list[dict[str, Any]] = []
+                stop_reason = "end_turn"
 
-            async for event in registry.gateway.route_request_stream(request_dict):
-                etype = event.get("type")
-                if etype == "content_delta":
-                    turn_content += event["delta"]
-                    yield {"type": "token", "content": event["delta"]}
-                elif etype == "tool_use_start":
-                    yield {"type": "tool_call_start", "name": event.get("name", ""), "id": event.get("id", "")}
-                elif etype == "tool_use_complete":
-                    turn_tool_calls.append(
-                        {"id": event.get("id", ""), "name": event["name"], "input": event.get("input", {})}
-                    )
-                elif etype == "message_stop":
-                    stop_reason = event.get("stop_reason", "end_turn")
+                async for event in registry.gateway.route_request_stream(request_dict):
+                    etype = event.get("type")
+                    if etype == "content_delta":
+                        turn_content += event["delta"]
+                        yield {"type": "token", "content": event["delta"]}
+                    elif etype == "tool_use_start":
+                        yield {"type": "tool_call_start", "name": event.get("name", ""), "id": event.get("id", "")}
+                    elif etype == "tool_use_complete":
+                        turn_tool_calls.append(
+                            {"id": event.get("id", ""), "name": event["name"], "input": event.get("input", {})}
+                        )
+                    elif etype == "message_stop":
+                        stop_reason = event.get("stop_reason", "end_turn")
 
-            if turn_content:
-                ctx.content = turn_content
+                if turn_content:
+                    ctx.content = turn_content
 
-            if stop_reason != "tool_use" or not turn_tool_calls:
+                if stop_reason != "tool_use" or not turn_tool_calls:
+                    ctx.messages.append({"role": "assistant", "content": ctx.content})
+                    break
+
+                ctx.messages.append({"role": "assistant", "content": ctx.content, "tool_calls": turn_tool_calls})
+
+                # Execute tools and yield events
+                async for tool_event in self._exec_tools_streaming(ctx, turn_tool_calls):
+                    yield tool_event
+            else:
+                ctx.content = f"I've reached the maximum number of turns ({spec.max_turns}). Here's what I have so far: {ctx.content}"
                 ctx.messages.append({"role": "assistant", "content": ctx.content})
-                break
-
-            ctx.messages.append({"role": "assistant", "content": ctx.content, "tool_calls": turn_tool_calls})
-
-            # Execute tools and yield events
-            async for tool_event in self._exec_tools_streaming(ctx, turn_tool_calls):
-                yield tool_event
-        else:
-            ctx.content = (
-                f"I've reached the maximum number of turns ({spec.max_turns}). Here's what I have so far: {ctx.content}"
-            )
-            ctx.messages.append({"role": "assistant", "content": ctx.content})
-
-        await self._finalize(ctx, message)
+        finally:
+            await self._finalize(ctx, message)
 
         yield {
             "type": "done",
@@ -718,49 +716,48 @@ class AgentRunner:
 
         # Continue the LLM loop
         resumed_first_turn = True
-        while ctx.turns_used < spec.max_turns:
-            # Check for cross-replica cancellation signal
-            if self._checkpoint_store and await self._checkpoint_store.is_cancelled(ctx.session_id):
-                logger.info("Agent[%s] session=%s cancelled via Redis signal", spec.name, ctx.session_id)
-                break
+        try:
+            while ctx.turns_used < spec.max_turns:
+                # Check for cross-replica cancellation signal
+                if self._checkpoint_store and await self._checkpoint_store.is_cancelled(ctx.session_id):
+                    logger.info("Agent[%s] session=%s cancelled via Redis signal", spec.name, ctx.session_id)
+                    break
 
-            ctx.turns_used += 1
-            request_dict = self._build_request(ctx)
+                ctx.turns_used += 1
+                request_dict = self._build_request(ctx)
 
-            # On the first turn after resume, inject a continuation hint so
-            # the model picks up where it left off rather than regenerating.
-            if resumed_first_turn and partial_content:
-                hint = (
-                    "\n\n[RESUME CONTEXT: Your previous response was interrupted mid-generation. "
-                    "Below is the text you had already produced. Continue seamlessly from exactly "
-                    "where you left off — do not repeat any of this text:\n"
-                    f"{partial_content}]"
-                )
-                request_dict["system"] = (request_dict.get("system") or "") + hint
-                resumed_first_turn = False
+                # On the first turn after resume, inject a continuation hint so
+                # the model picks up where it left off rather than regenerating.
+                if resumed_first_turn and partial_content:
+                    hint = (
+                        "\n\n[RESUME CONTEXT: Your previous response was interrupted mid-generation. "
+                        "Below is the text you had already produced. Continue seamlessly from exactly "
+                        "where you left off — do not repeat any of this text:\n"
+                        f"{partial_content}]"
+                    )
+                    request_dict["system"] = (request_dict.get("system") or "") + hint
+                    resumed_first_turn = False
 
-            await self._checkpoint(ctx, original_message)
+                await self._checkpoint(ctx, original_message)
 
-            response = await registry.gateway.route_request(request_dict)
-            stop_reason = response.get("stop_reason", "end_turn")
-            tool_calls = response.get("tool_calls")
-            turn_content = response.get("content", "")
-            if turn_content:
-                ctx.content = turn_content
+                response = await registry.gateway.route_request(request_dict)
+                stop_reason = response.get("stop_reason", "end_turn")
+                tool_calls = response.get("tool_calls")
+                turn_content = response.get("content", "")
+                if turn_content:
+                    ctx.content = turn_content
 
-            if stop_reason != "tool_use" or not tool_calls:
+                if stop_reason != "tool_use" or not tool_calls:
+                    ctx.messages.append({"role": "assistant", "content": ctx.content})
+                    break
+
+                ctx.messages.append({"role": "assistant", "content": ctx.content, "tool_calls": tool_calls})
+                await self._exec_tools_parallel(ctx, tool_calls)
+            else:
+                ctx.content = f"I've reached the maximum number of turns ({spec.max_turns}). Here's what I have so far: {ctx.content}"
                 ctx.messages.append({"role": "assistant", "content": ctx.content})
-                break
-
-            ctx.messages.append({"role": "assistant", "content": ctx.content, "tool_calls": tool_calls})
-            await self._exec_tools_parallel(ctx, tool_calls)
-        else:
-            ctx.content = (
-                f"I've reached the maximum number of turns ({spec.max_turns}). Here's what I have so far: {ctx.content}"
-            )
-            ctx.messages.append({"role": "assistant", "content": ctx.content})
-
-        await self._finalize(ctx, original_message)
+        finally:
+            await self._finalize(ctx, original_message)
 
     # ── Partial token recovery ────────────────────────────────────────
 

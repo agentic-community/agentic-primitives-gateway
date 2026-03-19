@@ -3,7 +3,7 @@ import logging
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
-from starlette.responses import StreamingResponse
+from starlette.responses import Response, StreamingResponse
 
 from agentic_primitives_gateway.agents.team_runner import TeamRunner
 from agentic_primitives_gateway.agents.team_store import TeamStore
@@ -71,6 +71,35 @@ async def list_teams() -> TeamListResponse:
     principal = require_principal()
     teams = await store.list_for_user(principal)
     return TeamListResponse(teams=teams)
+
+
+@router.get("/{name}/export")
+async def export_team(name: str) -> Response:
+    """Export a team spec as a standalone Python script."""
+    from agentic_primitives_gateway.agents.export import export_team as _export
+    from agentic_primitives_gateway.routes.agents import _get_store as _get_agent_store
+
+    store = _get_store()
+    spec = await store.get(name)
+    if spec is None:
+        raise HTTPException(status_code=404, detail=f"Team '{name}' not found")
+    require_access(require_principal(), spec.owner_id, spec.shared_with)
+
+    # Load all referenced agent specs
+    agent_store = _get_agent_store()
+    agent_names = {spec.planner, spec.synthesizer, *spec.workers}
+    agent_specs = {}
+    for aname in agent_names:
+        aspec = await agent_store.get(aname)
+        if aspec:
+            agent_specs[aname] = aspec
+
+    code = _export(spec, agent_specs)
+    return Response(
+        content=code,
+        media_type="text/x-python",
+        headers={"Content-Disposition": f'attachment; filename="{name}.py"'},
+    )
 
 
 @router.get("/{name}", response_model=TeamSpec)

@@ -8,6 +8,7 @@ import uuid
 from typing import Any
 
 from selenium import webdriver
+from selenium.common.exceptions import WebDriverException
 from selenium.webdriver.common.by import By
 
 from agentic_primitives_gateway.context import get_service_credentials_or_defaults
@@ -15,6 +16,59 @@ from agentic_primitives_gateway.primitives._sync import SyncRunnerMixin
 from agentic_primitives_gateway.primitives.browser.base import BrowserProvider
 
 logger = logging.getLogger(__name__)
+
+# JavaScript injected after every navigation to dismiss common popups
+# (cookie banners, GDPR modals, newsletter overlays, etc.).
+_DISMISS_POPUPS_JS = """
+(function() {
+    // Common cookie/consent banner selectors
+    var selectors = [
+        '[class*="cookie"] button[class*="accept"]',
+        '[class*="cookie"] button[class*="agree"]',
+        '[class*="consent"] button[class*="accept"]',
+        '[class*="consent"] button[class*="agree"]',
+        '[id*="cookie"] button[class*="accept"]',
+        '[id*="cookie"] button',
+        '[class*="gdpr"] button',
+        'button[id*="accept"]',
+        '.cc-btn.cc-dismiss',
+        '#onetrust-accept-btn-handler',
+        '.fc-cta-consent',
+        '[data-testid="cookie-policy-dialog-accept-button"]',
+        '[aria-label="Accept cookies"]',
+        '[aria-label="Accept all"]',
+        '[aria-label="Close"]',
+    ];
+    for (var i = 0; i < selectors.length; i++) {
+        try {
+            var el = document.querySelector(selectors[i]);
+            if (el && el.offsetParent !== null) { el.click(); return; }
+        } catch(e) {}
+    }
+
+    // Remove fixed/sticky overlays blocking content
+    var all = document.querySelectorAll('*');
+    for (var j = 0; j < all.length; j++) {
+        var style = window.getComputedStyle(all[j]);
+        if ((style.position === 'fixed' || style.position === 'sticky') &&
+            style.zIndex > 999 && all[j].offsetHeight > 100) {
+            all[j].remove();
+        }
+    }
+})();
+"""
+
+
+def _clean_selenium_error(e: WebDriverException) -> ValueError:
+    """Convert a Selenium exception to a ValueError with a clean message.
+
+    Strips the verbose stacktrace so the LLM gets a concise, actionable
+    error it can use to adjust its strategy.
+    """
+    # Extract just the first line of the message (before Stacktrace:)
+    msg = str(e).split("\nStacktrace:")[0].split("\n")[0].strip()
+    cls_name = type(e).__name__
+    return ValueError(f"{cls_name}: {msg}")
 
 
 class SeleniumGridBrowserProvider(BrowserProvider, SyncRunnerMixin):
@@ -85,7 +139,16 @@ class SeleniumGridBrowserProvider(BrowserProvider, SyncRunnerMixin):
                 options=options,
             )
 
-        driver = await self._run_sync(_create)
+        try:
+            driver = await self._run_sync(_create)
+        except Exception as e:
+            err_msg = str(e)
+            if "Could not start a new session" in err_msg or "timed out" in err_msg.lower():
+                raise ValueError(
+                    "Selenium Grid has no available browser slots. "
+                    "Either wait for existing sessions to finish or scale up the grid."
+                ) from e
+            raise
 
         viewport = (config or {}).get("viewport")
         if viewport:
@@ -135,9 +198,17 @@ class SeleniumGridBrowserProvider(BrowserProvider, SyncRunnerMixin):
 
     async def navigate(self, session_id: str, url: str) -> dict[str, Any]:
         driver = self._get_driver(session_id)
-        await self._run_sync(driver.get, url)
-        title: str = await self._run_sync(lambda: driver.title)
-        current_url: str = await self._run_sync(lambda: driver.current_url)
+        try:
+            await self._run_sync(driver.get, url)
+
+            # Auto-dismiss common popups (cookie banners, modals, etc.)
+            with contextlib.suppress(WebDriverException):
+                await self._run_sync(driver.execute_script, _DISMISS_POPUPS_JS)
+
+            title: str = await self._run_sync(lambda: driver.title)
+            current_url: str = await self._run_sync(lambda: driver.current_url)
+        except WebDriverException as e:
+            raise _clean_selenium_error(e) from None
         return {
             "url": current_url,
             "status": 200,
@@ -146,7 +217,10 @@ class SeleniumGridBrowserProvider(BrowserProvider, SyncRunnerMixin):
 
     async def screenshot(self, session_id: str) -> str:
         driver = self._get_driver(session_id)
-        data: str = await self._run_sync(driver.get_screenshot_as_base64)
+        try:
+            data: str = await self._run_sync(driver.get_screenshot_as_base64)
+        except WebDriverException as e:
+            raise _clean_selenium_error(e) from None
         return data
 
     async def get_page_content(self, session_id: str) -> str:
@@ -157,7 +231,10 @@ class SeleniumGridBrowserProvider(BrowserProvider, SyncRunnerMixin):
             result: str = body.text
             return result
 
-        result: str = await self._run_sync(_get_text)
+        try:
+            result: str = await self._run_sync(_get_text)
+        except WebDriverException as e:
+            raise _clean_selenium_error(e) from None
         return result
 
     async def click(self, session_id: str, selector: str) -> dict[str, Any]:
@@ -165,9 +242,18 @@ class SeleniumGridBrowserProvider(BrowserProvider, SyncRunnerMixin):
 
         def _click() -> None:
             el = driver.find_element(By.CSS_SELECTOR, selector)
-            el.click()
+            # Scroll into view to avoid fixed headers/footers
+            driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", el)
+            try:
+                el.click()
+            except Exception:
+                # Fallback: JS click bypasses overlay interception
+                driver.execute_script("arguments[0].click();", el)
 
-        await self._run_sync(_click)
+        try:
+            await self._run_sync(_click)
+        except WebDriverException as e:
+            raise _clean_selenium_error(e) from None
         return {"status": "clicked", "selector": selector}
 
     async def type_text(self, session_id: str, selector: str, text: str) -> dict[str, Any]:
@@ -178,13 +264,19 @@ class SeleniumGridBrowserProvider(BrowserProvider, SyncRunnerMixin):
             el.clear()
             el.send_keys(text)
 
-        await self._run_sync(_type)
+        try:
+            await self._run_sync(_type)
+        except WebDriverException as e:
+            raise _clean_selenium_error(e) from None
         return {"status": "typed", "selector": selector, "text": text}
 
     async def evaluate(self, session_id: str, expression: str) -> Any:
         driver = self._get_driver(session_id)
         script = f"return {expression}" if not expression.strip().startswith("return") else expression
-        return await self._run_sync(driver.execute_script, script)
+        try:
+            return await self._run_sync(driver.execute_script, script)
+        except WebDriverException as e:
+            raise _clean_selenium_error(e) from None
 
     async def healthcheck(self) -> bool:
         hub_url = self._default_hub_url
