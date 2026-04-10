@@ -20,7 +20,7 @@ class TestExceptionHandlers:
                 "observability": {
                     "backend": "agentic_primitives_gateway.primitives.observability.noop.NoopObservabilityProvider"
                 },
-                "gateway": {"backend": "agentic_primitives_gateway.primitives.gateway.noop.NoopGatewayProvider"},
+                "llm": {"backend": "agentic_primitives_gateway.primitives.llm.noop.NoopLLMProvider"},
                 "tools": {"backend": "agentic_primitives_gateway.primitives.tools.noop.NoopToolsProvider"},
                 "identity": {"backend": "agentic_primitives_gateway.primitives.identity.noop.NoopIdentityProvider"},
                 "code_interpreter": {

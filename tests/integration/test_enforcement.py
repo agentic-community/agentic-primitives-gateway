@@ -85,8 +85,8 @@ def _init_noop_registry():
                 "backend": "agentic_primitives_gateway.primitives.observability.noop.NoopObservabilityProvider",
                 "config": {},
             },
-            "gateway": {
-                "backend": "agentic_primitives_gateway.primitives.gateway.noop.NoopGatewayProvider",
+            "llm": {
+                "backend": "agentic_primitives_gateway.primitives.llm.noop.NoopLLMProvider",
                 "config": {},
             },
             "tools": {
@@ -120,7 +120,7 @@ def _init_noop_registry():
 
 
 class TestNoopEnforcerIntegration:
-    """With NoopPolicyEnforcer, all requests pass through (gateway default)."""
+    """With NoopPolicyEnforcer, all requests pass through (default)."""
 
     @pytest.mark.asyncio
     async def test_all_requests_allowed(self, _init_noop_registry):

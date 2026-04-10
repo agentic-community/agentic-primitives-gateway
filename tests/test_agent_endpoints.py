@@ -124,7 +124,7 @@ class TestSessionHistoryEndpoint:
 
 class TestStreamingEndpoint:
     def test_returns_sse_response(self) -> None:
-        """Noop gateway returns empty content, but SSE envelope should work."""
+        """Noop LLM returns empty content, but SSE envelope should work."""
         client = TestClient(app)
         client.post("/api/v1/agents", json=SAMPLE_AGENT)
 

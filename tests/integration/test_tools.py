@@ -5,7 +5,7 @@ AgenticPlatformClient → ASGI → middleware → route → registry →
 AgentCoreGatewayProvider → real MCP gateway (JSON-RPC).
 
 Requires: AWS credentials + AGENTCORE_GATEWAY_ID env var pointing to
-a pre-provisioned gateway.
+a pre-provisioned AgentCore Gateway.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ from agentic_primitives_gateway_client import AgenticPlatformClient
 pytestmark = pytest.mark.integration
 
 _gateway_id = os.environ.get("AGENTCORE_GATEWAY_ID")
-_skip_no_gateway = pytest.mark.skipif(
+_skip_no_agentcore_gw = pytest.mark.skipif(
     not _gateway_id,
     reason="AGENTCORE_GATEWAY_ID not set — skipping tools integration tests",
 )
@@ -28,7 +28,7 @@ _skip_no_gateway = pytest.mark.skipif(
 # ── List tools ───────────────────────────────────────────────────────
 
 
-@_skip_no_gateway
+@_skip_no_agentcore_gw
 class TestListTools:
     async def test_list_tools(self, client: AgenticPlatformClient) -> None:
         result = await client.list_tools()
@@ -47,7 +47,7 @@ class TestListTools:
 # ── Get tool ─────────────────────────────────────────────────────────
 
 
-@_skip_no_gateway
+@_skip_no_agentcore_gw
 class TestGetTool:
     async def test_get_tool(self, client: AgenticPlatformClient) -> None:
         # First list to get a known tool name
@@ -65,7 +65,7 @@ class TestGetTool:
 # ── Invoke tool ──────────────────────────────────────────────────────
 
 
-@_skip_no_gateway
+@_skip_no_agentcore_gw
 class TestInvokeTool:
     async def test_invoke_tool(self, client: AgenticPlatformClient) -> None:
         # List tools to find one we can invoke

@@ -38,8 +38,8 @@ def _init_registry():
                     "base_url": "https://langfuse.test",
                 },
             },
-            "gateway": {
-                "backend": "agentic_primitives_gateway.primitives.gateway.noop.NoopGatewayProvider",
+            "llm": {
+                "backend": "agentic_primitives_gateway.primitives.llm.noop.NoopLLMProvider",
                 "config": {},
             },
             "tools": {

@@ -240,7 +240,7 @@ class TestAgentCheckpointIntegration:
         # Resume (mocked LLM)
         mock_response = {"content": "resumed!", "stop_reason": "end_turn"}
         with patch("agentic_primitives_gateway.agents.runner.registry") as mock_reg:
-            mock_reg.gateway.route_request = AsyncMock(return_value=mock_response)
+            mock_reg.llm.route_request = AsyncMock(return_value=mock_response)
             mock_reg.memory.create_event = AsyncMock()
             mock_reg.observability.ingest_trace = AsyncMock()
 

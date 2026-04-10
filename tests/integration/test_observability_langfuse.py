@@ -72,8 +72,8 @@ def _init_registry():
                     "base_url": base_url,
                 },
             },
-            "gateway": {
-                "backend": "agentic_primitives_gateway.primitives.gateway.noop.NoopGatewayProvider",
+            "llm": {
+                "backend": "agentic_primitives_gateway.primitives.llm.noop.NoopLLMProvider",
                 "config": {},
             },
             "tools": {

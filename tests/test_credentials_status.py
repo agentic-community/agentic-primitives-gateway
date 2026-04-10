@@ -68,10 +68,10 @@ class TestDeriveRequiredCredentials:
         """Detects AWS requirement from Bedrock provider."""
         settings = SimpleNamespace(
             providers={
-                "gateway": {
+                "llm": {
                     "backends": {
                         "default": {
-                            "backend": "agentic_primitives_gateway.primitives.gateway.bedrock.BedrockConverseProvider",
+                            "backend": "agentic_primitives_gateway.primitives.llm.bedrock.BedrockConverseProvider",
                         }
                     }
                 }
@@ -217,7 +217,7 @@ class TestDeriveRequiredCredentials:
                         }
                     }
                 },
-                "gateway": {
+                "llm": {
                     "backends": {
                         "default": {
                             "backend": "some.BedrockConverseProvider",
@@ -382,7 +382,7 @@ class TestCredentialStatusEndpoint:
         # _derive_required_credentials inspects settings.providers as a dict,
         # so we patch it to return a raw dict with a Bedrock provider.
         mock_settings.providers = {
-            "gateway": {
+            "llm": {
                 "backends": {
                     "default": {
                         "backend": "some.path.BedrockConverseProvider",

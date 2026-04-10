@@ -10,7 +10,7 @@ from agentic_primitives_gateway.agents.tools.catalog import (
     ToolDefinition,
     build_tool_list,
     execute_tool,
-    to_gateway_tools,
+    to_llm_tools,
 )
 from agentic_primitives_gateway.agents.tools.delegation import MAX_AGENT_DEPTH, _build_agent_tools
 from agentic_primitives_gateway.models.agents import PrimitiveConfig
@@ -104,7 +104,7 @@ class TestToGatewayTools:
                 handler=AsyncMock(),
             )
         ]
-        result = to_gateway_tools(tools)
+        result = to_llm_tools(tools)
         assert result == [{"name": "t1", "description": "desc1", "input_schema": {"type": "object"}}]
 
 

@@ -36,7 +36,7 @@ class TestExportAgentBasic:
         code = export_agent(spec)
         assert "You are a helpful bot." in code
 
-    def test_contains_gateway_client(self):
+    def test_contains_platform_client(self):
         code = export_agent(_make_agent())
         assert "AgenticPlatformClient" in code
 
