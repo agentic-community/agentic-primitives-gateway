@@ -93,8 +93,6 @@ curl -H "X-Cred-Langfuse-Public-Key: pk-..." \
 | `fallback` | Try per-user OIDC credentials first, then fall back to server ambient. |
 | `always` | Always use server credentials (dev mode). |
 
-Backward compatible: `true` maps to `fallback`, `false` maps to `never`.
-
 ```yaml
 allow_server_credentials: fallback
 ```
@@ -329,20 +327,129 @@ enforcement:
 
 ## Preset Configs
 
-| File | Description |
-|------|-------------|
-| `local.yaml` | All noop/in-memory providers, no external deps |
-| `kitchen-sink.yaml` | All providers registered, agent team example, Cedar enforcement |
-| `agentcore.yaml` | All primitives backed by AWS Bedrock AgentCore |
-| `agentcore-redis.yaml` | AgentCore + Redis stores for multi-replica |
-| `milvus-langfuse.yaml` | mem0 + Milvus memory, Langfuse observability |
-| `agents-agentcore.yaml` | Agents with AgentCore backends |
-| `agents-mem0-langfuse.yaml` | Agents with mem0 memory, Langfuse tracing |
-| `agents-mixed.yaml` | Mixed providers per primitive |
-| `local-jwt.yaml` | Local providers with JWT authentication enabled |
-| `e2e-agentcore-strands.yaml` | All AgentCore providers, JWT auth, OIDC credentials, Cedar, Redis |
-| `e2e-selfhosted-langchain.yaml` | Self-hosted providers (mem0, Langfuse, Jupyter, Selenium), OIDC credentials |
-| `e2e-mixed.yaml` | Mixed providers for E2E testing |
+The four primary configs cover different deployment stages:
+
+| Config | Command | What it does |
+|---|---|---|
+| `quickstart.yaml` | `./run.sh` | Bedrock LLM + in-memory. No infra needed beyond AWS creds. |
+| `agentcore.yaml` | `./run.sh agentcore` | All AWS managed (AgentCore + Bedrock). Needs Redis. |
+| `selfhosted.yaml` | `./run.sh selfhosted` | Open-source backends (Milvus, Langfuse, Jupyter, Selenium). Needs Redis. |
+| `mixed.yaml` | `./run.sh mixed` | Both AgentCore + self-hosted backends + JWT + Cedar + credentials. |
+
+## Full Config Reference (mixed.yaml)
+
+The `mixed.yaml` config demonstrates every configuration feature. Each section is annotated below.
+
+### Authentication
+
+```yaml
+auth:
+  backend: jwt                           # "noop" (dev), "api_key", or "jwt"
+  jwt:
+    issuer: "${JWT_ISSUER}"              # OIDC issuer URL (required)
+    audience: "${JWT_AUDIENCE:-}"        # Expected audience (optional)
+    client_id: "${JWT_CLIENT_ID:=agentic-gateway}"  # Public client for UI OIDC flow
+    algorithms: ["RS256"]                # JWT signing algorithms
+    claims_mapping:
+      groups: "groups"                   # Claim name for group membership
+      scopes: "scope"                    # Claim name for scopes (admin check)
+```
+
+With `jwt` auth, all API requests (except `/healthz`, `/auth/config`, `/ui/`) require a valid JWT. The UI uses OIDC Authorization Code + PKCE flow to get tokens. `is_admin` checks for `"admin"` in either scopes or groups.
+
+### Cedar Policy Enforcement
+
+```yaml
+enforcement:
+  backend: "agentic_primitives_gateway.enforcement.cedar.CedarPolicyEnforcer"
+  config:
+    policy_refresh_interval: 5           # Seconds between policy reloads
+```
+
+Default-deny when active. Policies are loaded from the policy primitive provider and evaluated on every request. Exempt paths: `/healthz`, `/readyz`, `/ui/`, `/api/v1/policy`, `/auth/config`.
+
+### Providers (Multi-Backend)
+
+Each primitive has a `default` and a `backends` map. Both run simultaneously — switch per-request via `X-Provider-*` headers:
+
+```yaml
+providers:
+  memory:
+    default: "mem0"                      # Used when no override is specified
+    backends:
+      mem0:                              # Self-hosted: mem0 + Milvus vector store
+        backend: "agentic_primitives_gateway.primitives.memory.mem0_provider.Mem0MemoryProvider"
+        config:
+          vector_store:
+            provider: milvus
+            config:
+              collection_name: agentic_memories
+              url: "http://localhost:19530"
+              embedding_model_dims: 1024
+          llm:
+            provider: aws_bedrock
+            config:
+              model: us.anthropic.claude-sonnet-4-20250514-v1:0
+          embedder:
+            provider: aws_bedrock
+            config:
+              model: amazon.titan-embed-text-v2:0
+      agentcore:                         # AWS managed: AgentCore memory
+        backend: "agentic_primitives_gateway.primitives.memory.agentcore.AgentCoreMemoryProvider"
+        config:
+          region: "us-east-1"
+          memory_id: "${AGENTCORE_MEMORY_ID}"
+```
+
+Override at request time: `curl -H "X-Provider-Memory: agentcore" ...`
+
+The same multi-backend pattern applies to all primitives: observability (langfuse/agentcore), code_interpreter (jupyter/agentcore), browser (selenium_grid/agentcore), etc.
+
+### Credential Resolution
+
+```yaml
+allow_server_credentials: fallback       # "never", "fallback", or "always"
+
+credentials:
+  resolver: oidc                         # "noop" or "oidc"
+  oidc:
+    aws:
+      enabled: false                     # Resolve AWS creds from OIDC attributes?
+  writer:
+    backend: keycloak                    # Write credentials back to Keycloak
+    config:
+      admin_client_id: "${KC_ADMIN_CLIENT_ID}"    # Service account client
+      admin_client_secret: "${KC_ADMIN_CLIENT_SECRET}"
+  cache:
+    ttl_seconds: 300                     # Cache resolved credentials for 5min
+    max_entries: 10000
+```
+
+**Resolution order:** explicit headers (`X-Cred-*`) → OIDC user attributes (`apg.*`) → server ambient credentials.
+
+The `oidc` resolver reads `apg.{service}.{key}` attributes from the user's identity provider profile. For example, if user Alice has `apg.langfuse.public_key` in Keycloak, the Langfuse provider gets her key automatically. The Settings page in the UI writes credentials back via the `keycloak` writer.
+
+### Agent and Team Stores
+
+```yaml
+agents:
+  store:
+    backend: redis                       # "file" or "redis"
+    config:
+      redis_url: "redis://localhost:6379/0"
+
+teams:
+  store:
+    backend: redis
+    config:
+      redis_url: "redis://localhost:6379/0"
+```
+
+File stores persist to JSON (single-replica). Redis stores enable multi-replica deployments where any pod can serve any request.
+
+### Environment Variable Expansion
+
+All config values support `${VAR}`, `${VAR:=default}` (set if unset), and `${VAR:-default}` (use default but don't set) syntax. This makes configs portable across environments without editing YAML.
 
 ## Hot Reload
 

@@ -1,113 +1,166 @@
 # Quickstart
 
-Get the gateway running locally in under 2 minutes.
+Get the gateway running and chat with an agent in under 2 minutes.
 
 ## Prerequisites
 
 - Python 3.11+
-- Node.js 18+ (for the web UI, optional)
+- AWS credentials configured (`aws configure` or environment variables)
+- Access to Amazon Bedrock models in your AWS region
 
-## Install
+## Install & Run
 
 ```bash
-# Clone and install
 git clone <repo-url>
 cd agentic-primitives-gateway
-pip install -e ".[dev]"
+pip install -e .
+./run.sh
 ```
 
-## Run with Local Config
+The gateway starts at `http://localhost:8000` with Bedrock for LLM and in-memory storage.
 
-The `local.yaml` config uses in-memory/noop providers -- no external services needed:
+## Declarative Agent
 
-```bash
-./run.sh local
-# or:
-AGENTIC_PRIMITIVES_GATEWAY_CONFIG_FILE=configs/local.yaml \
-  uvicorn agentic_primitives_gateway.main:app --reload --port 8000
+The quickstart config defines an **assistant agent** in YAML — no Python code needed:
+
+```yaml
+# In configs/quickstart.yaml
+agents:
+  specs:
+    assistant:
+      model: "us.anthropic.claude-sonnet-4-20250514-v1:0"
+      system_prompt: "You are a helpful assistant with long-term memory..."
+      primitives:
+        memory:
+          enabled: true
+      max_turns: 20
 ```
 
-The gateway starts at `http://localhost:8000`.
+The gateway runs the full LLM tool-call loop server-side: the agent receives your message, decides whether to use memory tools (remember, recall, search), executes them, and returns the response.
 
-!!! note "Authentication"
-    The default `local.yaml` config uses **noop auth** — full access with no credentials needed, ideal for local development. For production deployments, configure JWT/OIDC auth via a config like `configs/local-jwt.yaml`. You can also use API key auth:
-
-    ```bash
-    curl -H "Authorization: Bearer sk-dev-key" http://localhost:8000/api/v1/agents
-    ```
-
-## Verify It Works
+## Chat with the Agent
 
 ```bash
-# Health check
-curl http://localhost:8000/healthz
-# {"status":"ok"}
-
-# List providers
-curl http://localhost:8000/api/v1/providers
-# {"memory":{"default":"in_memory","available":["in_memory"]}, ...}
+curl -X POST http://localhost:8000/api/v1/agents/assistant/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Hello! Remember that my favorite color is blue."}'
 ```
 
-## Store and Retrieve a Memory
+```bash
+curl -X POST http://localhost:8000/api/v1/agents/assistant/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message": "What is my favorite color?"}'
+```
+
+## Use from Any Framework
+
+The gateway is a REST API — use it from any language or framework.
+
+### curl
 
 ```bash
-# Store
+# Call the LLM directly
+curl -X POST http://localhost:8000/api/v1/llm/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model": "us.anthropic.claude-sonnet-4-20250514-v1:0",
+       "messages": [{"role": "user", "content": "What is 2+2?"}]}'
+
+# Store a memory
 curl -X POST http://localhost:8000/api/v1/memory/my-namespace \
   -H "Content-Type: application/json" \
-  -d '{"key": "greeting", "content": "Hello, world!"}'
+  -d '{"key": "fact", "content": "The sky is blue."}'
 
-# Retrieve
-curl http://localhost:8000/api/v1/memory/my-namespace/greeting
-```
-
-## Chat with an Agent
-
-Use the kitchen-sink config which includes pre-configured agents:
-
-```bash
-AGENTIC_PRIMITIVES_GATEWAY_CONFIG_FILE=configs/kitchen-sink.yaml \
-  uvicorn agentic_primitives_gateway.main:app --reload --port 8000
-```
-
-```bash
-# List agents
-curl http://localhost:8000/api/v1/agents | python3 -m json.tool
-
-# Chat
-curl -X POST http://localhost:8000/api/v1/agents/research-assistant/chat \
+# Search memory
+curl -X POST http://localhost:8000/api/v1/memory/my-namespace/search \
   -H "Content-Type: application/json" \
-  -d '{"message": "Hello! Remember that my name is Alice."}'
+  -d '{"query": "what color is the sky"}'
 ```
+
+### Python (no framework)
+
+```python
+from agentic_primitives_gateway_client import AgenticPlatformClient, Memory
+
+client = AgenticPlatformClient("http://localhost:8000", aws_from_environment=True)
+memory = Memory(client, namespace="agent:my-agent")
+
+await memory.remember("api-limit", "100 requests per minute")
+results = await memory.search("rate limiting")
+```
+
+### LangChain
+
+```python
+from agentic_primitives_gateway_client import AgenticPlatformClient, Memory
+from langchain_core.tools import tool
+
+client = AgenticPlatformClient("http://localhost:8000", aws_from_environment=True)
+memory = Memory(client, namespace="agent:my-agent")
+
+@tool
+async def remember(key: str, content: str) -> str:
+    """Store information in long-term memory."""
+    return await memory.remember(key, content)
+
+# Pass to any LangChain agent
+```
+
+### Strands
+
+```python
+from agentic_primitives_gateway_client import AgenticPlatformClient
+from strands import Agent
+
+client = AgenticPlatformClient("http://localhost:8000", aws_from_environment=True)
+tools = client.get_tools_sync(["memory"], namespace="agent:my-agent")
+agent = Agent(model="us.anthropic.claude-sonnet-4-20250514-v1:0", tools=tools)
+```
+
+See `examples/quickstart/` for complete runnable examples.
 
 ## Open the Web UI
 
-If you've built the UI:
+Build and open the web UI for a visual dashboard, agent chat, and team management:
 
 ```bash
-cd ui && npm install && npm run build
+cd ui && npm install && npm run build && cd ..
 ```
 
-Then visit `http://localhost:8000/ui/` for the dashboard, agent chat, and API explorer.
+Visit `http://localhost:8000/ui/` — you'll see the Dashboard with health status and the assistant agent ready to chat.
 
-For development with hot reload:
+For UI development with hot reload:
 
 ```bash
 cd ui && npm run dev
 # Opens at http://localhost:5173/ui/
 ```
 
-## Run Tests
+## Verify Health
 
 ```bash
-# Server tests (893+)
-python -m pytest tests/ -v
+curl http://localhost:8000/healthz
+# {"status":"ok"}
 
-# Client tests (100)
-cd client && python -m pytest tests/ -v
+curl http://localhost:8000/api/v1/providers
+# {"memory":{"default":"in_memory","available":["in_memory"]}, "llm":{"default":"bedrock", ...}}
 ```
+
+## Configurations
+
+The gateway ships with four configurations for different stages:
+
+| Config | Command | What it does |
+|---|---|---|
+| **quickstart** | `./run.sh` | Bedrock LLM + in-memory. No infra needed. |
+| **agentcore** | `./run.sh agentcore` | All AWS managed (AgentCore + Bedrock). Needs Redis. |
+| **selfhosted** | `./run.sh selfhosted` | Open-source backends (Milvus, Langfuse, Jupyter, Selenium). Needs Redis. |
+| **mixed** | `./run.sh mixed` | Both AgentCore + self-hosted. JWT auth + Cedar + credentials. |
+
+See [Configuration Guide](configuration.md) for details on each config and environment variables.
 
 ## Next Steps
 
-- [Configuration Guide](configuration.md) -- YAML config, environment variables, provider routing
-- [Architecture](../concepts/architecture.md) -- understand how it all fits together
-- [Agents](../concepts/agents.md) -- declarative agents with tool calling
+- [Configuration Guide](configuration.md) — YAML config, environment variables, provider routing
+- [Architecture](../concepts/architecture.md) — understand how it all fits together
+- [Agents](../concepts/agents.md) — declarative agents with tool calling
+- [Primitives](../concepts/primitives.md) — memory, browser, code execution, and more

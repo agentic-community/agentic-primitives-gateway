@@ -6,7 +6,11 @@ The gateway includes a React SPA served at `/ui/` with dashboard, agent manageme
 
 ### Dashboard (`/ui/`)
 
-Shows system health, readiness checks, and available providers per primitive. A **connection status indicator** (green/yellow/red dot) appears under the APG title in the sidebar, reflecting the current health check state.
+Shows system health, readiness checks, and available providers per primitive. Features:
+
+- **Connection status indicator** -- green/yellow/red dot under the APG title in the sidebar, reflecting the current health check state
+- **Tri-state provider health** -- each provider shows `ok` (green), `reachable` (yellow, needs user credentials), or `down` (red). Only `down` providers are considered unhealthy.
+- **Credential status banner** -- when OIDC credential resolution is active, the dashboard shows a banner indicating whether user credentials are configured, what credential types are required by active providers (e.g., AWS, Langfuse), and the server credential fallback mode (`never`/`fallback`/`always`)
 
 ### Agent List (`/ui/agents`)
 
@@ -14,6 +18,7 @@ Shows system health, readiness checks, and available providers per primitive. A 
 - **Create** new agents with the form (model, system prompt, primitives selector, **per-primitive provider dropdown** when multiple providers are available)
 - **Edit** existing agents inline (click "Edit" to expand the form)
 - **Delete** agents
+- **Export** agents as standalone Python scripts (click "Export" to download)
 - **Chat** with any agent (click "Chat" to navigate)
 
 ### Agent Chat (`/ui/agents/{name}/chat`)
@@ -35,9 +40,10 @@ Interactive streaming chat with an agent. Features:
 ### Team List (`/ui/teams`)
 
 - View all configured teams with their planner, synthesizer, and workers
-- **Create** new teams
-- **Edit** existing teams
+- **Create** new teams (includes shared memory namespace field)
+- **Edit** existing teams (shared memory checkbox to enable/disable `shared_memory_namespace`)
 - **Delete** teams
+- **Export** teams as standalone Python scripts (click "Export" to download)
 - **Run** any team (click "Run" to navigate)
 
 ### Team Run (`/ui/teams/{name}/run`)

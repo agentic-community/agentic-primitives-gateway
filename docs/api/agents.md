@@ -76,6 +76,7 @@ Each chat uses a `session_id` to track conversation history. Multiple sessions c
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/{name}/sessions` | List all sessions for this agent |
+| `POST` | `/{name}/sessions/cleanup` | Delete old sessions, keeping most recent N |
 | `GET` | `/{name}/sessions/{session_id}` | Get conversation history |
 | `GET` | `/{name}/sessions/{session_id}/status` | Check if a background run is active (`"running"` or `"idle"`) |
 | `GET` | `/{name}/sessions/{session_id}/stream` | SSE reconnect stream |
@@ -139,13 +140,53 @@ curl http://localhost:8000/api/v1/agents/my-agent/sessions/my-session/status
 
 Returns `"running"` if a background task is actively processing this session, `"idle"` otherwise. The UI uses this to show a "working in the background" indicator and poll for completion.
 
+## Export
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/{name}/export` | Export agent as a standalone Python script |
+
+### Export Agent
+
+```bash
+curl http://localhost:8000/api/v1/agents/my-agent/export -o my-agent.py
+```
+
+Generates a self-contained Python script that uses `agentic-primitives-gateway-client` for primitive calls (memory, browser, code interpreter) and raw `boto3` Bedrock `converse()` for the LLM tool-call loop. The exported script:
+
+- Includes all tool definitions matching the agent's enabled primitives
+- Generates sub-agent delegation code if the agent uses agent-as-tool
+- Generates shared memory pool tools if `shared_namespaces` is configured
+- Handles JWT token refresh automatically
+- Manages browser/code_interpreter sessions with lazy initialization and cleanup
+
+The response has `Content-Type: text/x-python` and `Content-Disposition: attachment`.
+
+## Session Cleanup
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/{name}/sessions/cleanup` | Delete old sessions, keeping the most recent N |
+
+### Cleanup Sessions
+
+```bash
+curl -X POST "http://localhost:8000/api/v1/agents/my-agent/sessions/cleanup?keep=5"
+```
+
+```json
+{"deleted": 12, "kept": 5}
+```
+
+Deletes old sessions sorted by last activity, preserving the `keep` most recent ones (default: 5).
+
 ## Introspection
 
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/{name}/tools` | List tools available to this agent with provider info |
 | `GET` | `/{name}/memory` | Introspect memory stores (namespaces + contents) |
-| `GET` | `/tool-catalog` | List all primitives and their available tools |
+| `GET` | `/tool-catalog` | List all primitives and their available tools with input schemas |
 
 ### List Agent Tools
 
@@ -160,5 +201,32 @@ curl http://localhost:8000/api/v1/agents/my-agent/tools
     {"name": "remember", "description": "Store information...", "primitive": "memory", "provider": "in_memory"},
     {"name": "recall", "description": "Retrieve a memory...", "primitive": "memory", "provider": "in_memory"}
   ]
+}
+```
+
+### Tool Catalog
+
+```bash
+curl http://localhost:8000/api/v1/agents/tool-catalog
+```
+
+Returns all available primitives and their tools, including JSON Schema `input_schema` for each tool. Clients can use this to dynamically build framework-specific tool wrappers.
+
+```json
+{
+  "primitives": {
+    "memory": [
+      {"name": "remember", "description": "Store information in long-term memory.", "input_schema": {"type": "object", "properties": {"key": {"type": "string"}, "content": {"type": "string"}}, "required": ["key", "content"]}},
+      {"name": "recall", "description": "Retrieve a memory by its exact key.", "input_schema": {"type": "object", "properties": {"key": {"type": "string"}}, "required": ["key"]}}
+    ],
+    "code_interpreter": [...],
+    "browser": [...],
+    "tools": [...],
+    "identity": [...],
+    "shared_memory": [...],
+    "task_board": [...],
+    "agent_management": [...],
+    "agents": []
+  }
 }
 ```

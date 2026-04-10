@@ -49,7 +49,23 @@ teams:
       workers: ["researcher", "coder"]  # Agent names that do the work
       global_max_turns: 100        # Safety limit across all agents
       global_timeout_seconds: 300  # Wall-clock timeout
+      shared_memory_namespace: "team:{team_name}:shared"  # Optional shared memory
 ```
+
+### Fields
+
+| Field | Description | Default |
+|-------|-------------|---------|
+| `name` | Unique identifier | required |
+| `description` | Human-readable description | `""` |
+| `planner` | Agent name for task decomposition | required |
+| `synthesizer` | Agent name for result synthesis | required |
+| `workers` | Agent names that execute tasks | required |
+| `max_concurrent` | Max workers running simultaneously | `None` (unlimited) |
+| `global_max_turns` | Safety limit across all agents | `100` |
+| `global_timeout_seconds` | Wall-clock timeout for the entire run | `300` |
+| `shared_memory_namespace` | Namespace for team-scoped shared memory | `None` (disabled) |
+| `checkpointing_enabled` | Enable durable checkpoint persistence | `false` |
 
 Each named agent (`planner`, `synthesizer`, `researcher`, `coder`) must exist in the agent store with its own model, system prompt, and primitives.
 
@@ -282,6 +298,59 @@ teams:
       global_timeout_seconds: 300
 ```
 
+## Shared Memory
+
+Teams support shared memory for inter-agent communication during a run. When `shared_memory_namespace` is set on the team spec, all workers receive additional tools:
+
+| Tool | Description |
+|------|-------------|
+| `share_finding(key, content)` | Store a finding in the team's shared namespace |
+| `read_shared(key)` | Read a specific shared finding by key |
+| `search_shared(query)` | Search shared findings by semantic similarity |
+| `list_shared()` | List all findings in the shared namespace |
+
+The `{team_name}` placeholder in the namespace is expanded at runtime. Shared memory is scoped per user (`{namespace}:u:{user_id}`).
+
+This is **Level 1** shared memory (team-scoped, single namespace). For **Level 2** (agent-level pools via `shared_namespaces`), see [Agents](agents.md#shared-memory-pools).
+
+### Example
+
+```yaml
+teams:
+  specs:
+    research-team:
+      shared_memory_namespace: "team:{team_name}:shared"
+      workers: ["researcher", "coder"]
+```
+
+The researcher can call `share_finding(key="framework-list", content="FastAPI, Django, Flask")`, and the coder can then call `read_shared(key="framework-list")` or `search_shared(query="frameworks")` to access the shared findings.
+
+## Dependency-Aware Execution
+
+Tasks can declare dependencies on other tasks via the `depends_on` field. A task is only available for a worker to claim when all its dependencies have status `done`. This enables multi-wave execution:
+
+```
+Wave 1: Research frameworks     (no dependencies)
+Wave 2: Benchmark FastAPI       (depends on: research)
+         Benchmark Django        (depends on: research)
+         Benchmark Flask         (depends on: research)
+Wave 3: Compare results         (depends on: all benchmarks)
+```
+
+Tasks within the same wave run in parallel. The worker loop polls the task board and only sees tasks whose dependencies are satisfied.
+
+## Export
+
+Teams can be exported as standalone Python scripts via `GET /api/v1/teams/{name}/export`. The generated script includes the planner, all worker agents with their primitive tools, and the synthesizer. It handles dependency-aware wave execution, per-task browser/code_interpreter session isolation, shared memory, and includes a live-updating terminal task board (via `rich` if available).
+
+See the [Teams API Reference](../api/teams.md#export) for details.
+
+## Task Retry
+
+Individual failed tasks within a completed team run can be retried without re-running the entire team. `POST /api/v1/teams/{name}/runs/{id}/tasks/{task_id}/retry` resets the task to `in_progress`, recovers partial tokens from the event store, and re-executes the assigned worker. Returns an SSE stream.
+
+See the [Teams API Reference](../api/teams.md#task-retry) for details.
+
 ## Background Runs & Persistence
 
 **Background execution:** Streaming team runs execute in a background `asyncio.Task`. If the client disconnects, the run completes independently (workers finish their tasks, synthesizer produces the response). All events are recorded for later replay.
@@ -315,6 +384,7 @@ If a stream drops, clients can reconnect to `GET /api/v1/teams/{name}/runs/{run_
 | `GET` | `/api/v1/teams/{name}` | Get team spec |
 | `PUT` | `/api/v1/teams/{name}` | Update team |
 | `DELETE` | `/api/v1/teams/{name}` | Delete team |
+| `GET` | `/api/v1/teams/{name}/export` | Export as standalone Python script |
 | `POST` | `/api/v1/teams/{name}/run` | Run team (non-streaming) |
 | `POST` | `/api/v1/teams/{name}/run/stream` | Run team (SSE streaming, background task) |
 | `GET` | `/api/v1/teams/{name}/runs` | List all runs |
@@ -324,3 +394,4 @@ If a stream drops, clients can reconnect to `GET /api/v1/teams/{name}/runs/{run_
 | `GET` | `/api/v1/teams/{name}/runs/{id}/stream` | SSE reconnect stream |
 | `DELETE` | `/api/v1/teams/{name}/runs/{id}/cancel` | Cancel active run |
 | `DELETE` | `/api/v1/teams/{name}/runs/{id}` | Delete run data |
+| `POST` | `/api/v1/teams/{name}/runs/{id}/tasks/{task_id}/retry` | Retry a failed task (SSE) |

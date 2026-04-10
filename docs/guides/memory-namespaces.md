@@ -61,7 +61,7 @@ Child namespaces:    agent:research-assistant:abc123 (has memories)
                      agent:research-assistant:def456 (has memories)
 ```
 
-This handles backward compatibility when memories were stored before the knowledge/session split.
+This handles cases where memories were stored in session-scoped namespaces before the knowledge/session split.
 
 !!! warning "Multi-tenancy safety"
     The child search uses `namespace + ":"` as the prefix (with trailing colon). This prevents `agent:bot` from matching `agent:bot-2`'s memories.

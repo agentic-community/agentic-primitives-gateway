@@ -138,6 +138,38 @@ The meta-agent assesses the task, creates tailored specialists with focused syst
 
 See [Agent Delegation Guide](../guides/agent-delegation.md) for more details.
 
+## Shared Memory Pools
+
+Agents can participate in shared memory pools via `PrimitiveConfig.shared_namespaces`. This enables knowledge sharing between agents without requiring a team:
+
+```yaml
+researcher:
+  primitives:
+    memory:
+      enabled: true
+      namespace: "agent:{agent_name}"
+      shared_namespaces: ["findings", "references"]
+```
+
+When `shared_namespaces` is configured, the agent gets additional tools:
+
+| Tool | Description |
+|------|-------------|
+| `share_to(pool, key, content)` | Store a finding in a named shared pool |
+| `read_from_pool(pool, key)` | Read a specific finding from a pool |
+| `search_pool(pool, query)` | Search a shared pool by semantic similarity |
+| `list_pool(pool)` | List all findings in a pool |
+
+Each pool resolves to a user-scoped namespace (`{pool_name}:u:{user_id}`), so multiple users sharing the same agent have isolated pools.
+
+This is **Level 2** shared memory (agent-level pools). For **Level 1** (team-scoped shared memory), see [Teams](teams.md).
+
+## Export
+
+Agents can be exported as standalone Python scripts via `GET /api/v1/agents/{name}/export`. The generated script uses `agentic-primitives-gateway-client` for primitive calls and raw `boto3` Bedrock `converse()` for the LLM loop. It includes all tool definitions, sub-agent delegation code, shared memory pool tools, JWT token refresh, and session management.
+
+See the [Agents API Reference](../api/agents.md#export) for details.
+
 ## Memory Namespaces
 
 The `namespace` field controls where memories are stored. See [Memory Namespaces Guide](../guides/memory-namespaces.md).
@@ -173,9 +205,11 @@ If a stream drops (server restart, network error), clients can reconnect to `GET
 | `GET` | `/api/v1/agents/{name}` | Get agent spec |
 | `PUT` | `/api/v1/agents/{name}` | Update agent |
 | `DELETE` | `/api/v1/agents/{name}` | Delete agent |
+| `GET` | `/api/v1/agents/{name}/export` | Export as standalone Python script |
 | `POST` | `/api/v1/agents/{name}/chat` | Chat (non-streaming) |
 | `POST` | `/api/v1/agents/{name}/chat/stream` | Chat (SSE streaming, background task) |
 | `GET` | `/api/v1/agents/{name}/sessions` | List sessions |
+| `POST` | `/api/v1/agents/{name}/sessions/cleanup` | Delete old sessions (keep most recent N) |
 | `GET` | `/api/v1/agents/{name}/sessions/{id}` | Get conversation history |
 | `GET` | `/api/v1/agents/{name}/sessions/{id}/status` | Check run status |
 | `DELETE` | `/api/v1/agents/{name}/sessions/{id}` | Delete session |

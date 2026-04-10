@@ -2,9 +2,29 @@
 
 Pre-built examples showing different agent framework integrations and provider configurations.
 
+## Quickstart
+
+The fastest way to get started. Four examples showing the same agent built with different tools, all using the `configs/quickstart.yaml` config (Bedrock LLM + in-memory storage):
+
+| File | Description |
+|------|-------------|
+| `quickstart/plain_python.py` | Pure Python with `agentic-primitives-gateway-client` |
+| `quickstart/with_langchain.py` | LangChain integration |
+| `quickstart/with_strands.py` | Strands Agents integration |
+| `quickstart/with_curl.sh` | Shell script using curl |
+
+```bash
+# Start the gateway with quickstart config
+AGENTIC_PRIMITIVES_GATEWAY_CONFIG_FILE=configs/quickstart.yaml \
+  uvicorn agentic_primitives_gateway.main:app --port 8000
+
+# Run any of the examples
+cd examples/quickstart && python plain_python.py
+```
+
 ## E2E Consolidated Examples
 
-These three examples each demonstrate the **full gateway feature set** — all primitives, JWT auth, Redis stores, Cedar enforcement, declarative agents, and teams. Start here.
+These three examples each demonstrate the **full gateway feature set** -- all primitives, JWT auth, Redis stores, Cedar enforcement, declarative agents, and teams. Start here after the quickstart.
 
 | Directory | Framework | Providers | Description |
 |-----------|-----------|-----------|-------------|
@@ -34,14 +54,29 @@ Each E2E example includes:
 
 ## Configuration Presets
 
+### Primary Configs (start here)
+
 | Config | Use Case |
 |--------|----------|
-| `configs/e2e-agentcore-strands.yaml` | **E2E**: All AgentCore + JWT + Redis + Cedar + agents + teams |
-| `configs/e2e-selfhosted-langchain.yaml` | **E2E**: Self-hosted stack + JWT + Redis + Cedar + agents + teams |
-| `configs/e2e-mixed.yaml` | **E2E**: Mixed providers + JWT + Redis + Cedar + agents + teams |
+| `configs/quickstart.yaml` | **Quickstart**: Bedrock LLM + in-memory storage, no external dependencies |
+| `configs/agentcore.yaml` | **AgentCore**: Everything on AWS Bedrock AgentCore |
+| `configs/selfhosted.yaml` | **Self-hosted**: mem0 + Langfuse + Jupyter + Selenium + Redis |
+| `configs/mixed.yaml` | **Mixed**: Both AgentCore and self-hosted providers with JWT auth + Cedar |
+
+### E2E Configs (full feature set)
+
+| Config | Use Case |
+|--------|----------|
+| `configs/e2e-agentcore-strands.yaml` | All AgentCore + JWT + Redis + Cedar + agents + teams |
+| `configs/e2e-selfhosted-langchain.yaml` | Self-hosted stack + JWT + Redis + Cedar + agents + teams |
+| `configs/e2e-mixed.yaml` | Mixed providers + JWT + Redis + Cedar + agents + teams |
+
+### Additional Configs
+
+| Config | Use Case |
+|--------|----------|
 | `configs/local.yaml` | Local development (all noop/in-memory) |
 | `configs/kitchen-sink.yaml` | All providers + agents + teams + Cedar enforcement |
-| `configs/agentcore.yaml` | Everything on AWS Bedrock AgentCore |
 | `configs/agentcore-redis.yaml` | AgentCore + Redis stores for multi-replica |
 | `configs/local-jwt.yaml` | AgentCore + Redis + JWT authentication |
 | `configs/milvus-langfuse.yaml` | mem0+Milvus memory, Langfuse observability |

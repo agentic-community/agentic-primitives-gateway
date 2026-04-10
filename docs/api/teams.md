@@ -24,9 +24,28 @@ curl -X POST http://localhost:8000/api/v1/teams \
     "synthesizer": "synthesizer",
     "workers": ["researcher", "coder"],
     "global_max_turns": 100,
-    "global_timeout_seconds": 300
+    "global_timeout_seconds": 300,
+    "shared_memory_namespace": "team:{team_name}:shared"
   }'
 ```
+
+The `shared_memory_namespace` field enables team-scoped shared memory. When set, all workers receive `share_finding`, `read_shared`, `search_shared`, and `list_shared` tools that read/write to the same memory namespace. The `{team_name}` placeholder is expanded at runtime.
+
+## Export
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/{name}/export` | Export team as a standalone Python script |
+
+### Export Team
+
+```bash
+curl http://localhost:8000/api/v1/teams/research-team/export -o research-team.py
+```
+
+Generates a self-contained Python script that includes the planner, all worker agents, and the synthesizer. Uses `agentic-primitives-gateway-client` for primitive calls and `boto3` Bedrock `converse()` for LLM loops. The exported script handles dependency-aware task execution (tasks with `depends_on` wait for their dependencies), per-task session isolation for browser/code_interpreter, shared memory namespace support, and a live-updating task board (using `rich` if available).
+
+The response has `Content-Type: text/x-python` and `Content-Disposition: attachment`.
 
 ## Run
 
@@ -175,3 +194,17 @@ curl http://localhost:8000/api/v1/teams/research-team/runs/abc123/status
 ```
 
 Returns `"running"` if a background task is actively executing this run, `"idle"` otherwise. After a server restart, stale `"running"` statuses in Redis are detected and reported as `"idle"`.
+
+## Task Retry
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/{name}/runs/{id}/tasks/{task_id}/retry` | Retry a single failed task (SSE streaming) |
+
+### Retry a Failed Task
+
+```bash
+curl -N -X POST http://localhost:8000/api/v1/teams/research-team/runs/abc123/tasks/t1/retry
+```
+
+Resets the failed task to `in_progress`, recovers partial tokens from the event store as resume context, and re-executes the assigned worker agent. Returns an SSE stream of events for the retry. Useful for recovering from transient failures without re-running the entire team.
