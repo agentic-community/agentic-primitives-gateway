@@ -49,7 +49,7 @@ def _make_spec(
     )
 
 
-def _mock_gateway_response(content: str = "Hello", stop_reason: str = "end_turn", tool_calls: list | None = None):
+def _mock_llm_response(content: str = "Hello", stop_reason: str = "end_turn", tool_calls: list | None = None):
     resp: dict[str, Any] = {
         "model": "test-model",
         "content": content,
@@ -82,13 +82,13 @@ class TestRunMaxDepth:
 
 class TestRunBasic:
     async def test_run_simple_response(self) -> None:
-        gateway = AsyncMock()
-        gateway.route_request.return_value = _mock_gateway_response("I am a bot")
+        llm_mock = AsyncMock()
+        llm_mock.route_request.return_value = _mock_llm_response("I am a bot")
 
         runner = AgentRunner()
         spec = _make_spec()
         with patch(f"{_RUNNER_MOD}.registry") as mock_reg:
-            mock_reg.gateway = gateway
+            mock_reg.llm = llm_mock
             mock_reg.memory = AsyncMock()
             result = await runner.run(spec, message="hi")
 
@@ -97,14 +97,14 @@ class TestRunBasic:
         assert result.agent_name == "test-agent"
 
     async def test_run_with_tool_call(self) -> None:
-        gateway = AsyncMock()
-        gateway.route_request.side_effect = [
-            _mock_gateway_response(
+        llm_mock = AsyncMock()
+        llm_mock.route_request.side_effect = [
+            _mock_llm_response(
                 "Let me check.",
                 stop_reason="tool_use",
                 tool_calls=[{"id": "tc-1", "name": "memory_search", "input": {"query": "test"}}],
             ),
-            _mock_gateway_response("Done."),
+            _mock_llm_response("Done."),
         ]
 
         runner = AgentRunner()
@@ -115,7 +115,7 @@ class TestRunBasic:
             patch(f"{_RUNNER_MOD}.registry") as mock_reg,
             patch(f"{_RUNNER_MOD}.execute_tool", new_callable=AsyncMock) as mock_exec,
         ):
-            mock_reg.gateway = gateway
+            mock_reg.llm = llm_mock
             mock_reg.memory = AsyncMock()
             mock_reg.memory.list_memories.return_value = []
             mock_exec.return_value = "search results"
@@ -126,8 +126,8 @@ class TestRunBasic:
         assert "memory_search" in result.tools_called
 
     async def test_run_max_turns_reached(self) -> None:
-        gateway = AsyncMock()
-        gateway.route_request.return_value = _mock_gateway_response(
+        llm_mock = AsyncMock()
+        llm_mock.route_request.return_value = _mock_llm_response(
             "still going",
             stop_reason="tool_use",
             tool_calls=[{"id": "tc-1", "name": "memory_search", "input": {"query": "q"}}],
@@ -142,7 +142,7 @@ class TestRunBasic:
             patch(f"{_RUNNER_MOD}.registry") as mock_reg,
             patch(f"{_RUNNER_MOD}.execute_tool", new_callable=AsyncMock) as mock_exec,
         ):
-            mock_reg.gateway = gateway
+            mock_reg.llm = llm_mock
             mock_reg.memory = AsyncMock()
             mock_reg.memory.list_memories.return_value = []
             mock_exec.return_value = "result"
@@ -154,13 +154,13 @@ class TestRunBasic:
 
 class TestRunWithAutoMemory:
     async def test_auto_memory_stores_turn(self) -> None:
-        gateway = AsyncMock()
-        gateway.route_request.return_value = _mock_gateway_response("response")
+        llm_mock = AsyncMock()
+        llm_mock.route_request.return_value = _mock_llm_response("response")
 
         runner = AgentRunner()
         spec = _make_spec(auto_memory=True)
         with patch(f"{_RUNNER_MOD}.registry") as mock_reg:
-            mock_reg.gateway = gateway
+            mock_reg.llm = llm_mock
             mock_reg.memory = AsyncMock()
             mock_reg.memory.get_last_turns.return_value = []
             mock_reg.memory.list_memories.return_value = []
@@ -172,13 +172,13 @@ class TestRunWithAutoMemory:
 
 class TestRunWithAutoTrace:
     async def test_auto_trace_logs(self) -> None:
-        gateway = AsyncMock()
-        gateway.route_request.return_value = _mock_gateway_response("response")
+        llm_mock = AsyncMock()
+        llm_mock.route_request.return_value = _mock_llm_response("response")
 
         runner = AgentRunner()
         spec = _make_spec(auto_trace=True)
         with patch(f"{_RUNNER_MOD}.registry") as mock_reg:
-            mock_reg.gateway = gateway
+            mock_reg.llm = llm_mock
             mock_reg.memory = AsyncMock()
             mock_reg.observability = AsyncMock()
             await runner.run(spec, message="hi")
@@ -197,7 +197,7 @@ class TestRunStream:
         runner = AgentRunner()
         spec = _make_spec()
         with patch(f"{_RUNNER_MOD}.registry") as mock_reg:
-            mock_reg.gateway.route_request_stream = mock_stream
+            mock_reg.llm.route_request_stream = mock_stream
             mock_reg.memory = AsyncMock()
             events = []
             async for event in runner.run_stream(spec, message="hi"):
@@ -230,7 +230,7 @@ class TestRunStream:
             patch(f"{_RUNNER_MOD}.registry") as mock_reg,
             patch(f"{_RUNNER_MOD}.execute_tool", new_callable=AsyncMock) as mock_exec,
         ):
-            mock_reg.gateway.route_request_stream = mock_stream
+            mock_reg.llm.route_request_stream = mock_stream
             mock_reg.memory = AsyncMock()
             mock_reg.memory.list_memories.return_value = []
             mock_exec.return_value = "search result"
@@ -255,7 +255,7 @@ class TestRunStream:
             patch(f"{_RUNNER_MOD}.registry") as mock_reg,
             patch(f"{_RUNNER_MOD}.execute_tool", new_callable=AsyncMock) as mock_exec,
         ):
-            mock_reg.gateway.route_request_stream = mock_stream
+            mock_reg.llm.route_request_stream = mock_stream
             mock_reg.memory = AsyncMock()
             mock_reg.memory.list_memories.return_value = []
             mock_exec.return_value = "result"
@@ -611,7 +611,7 @@ class TestExecToolsStreaming:
                 )
             ],
         )
-        ctx.gateway_tools = [{"name": "memory_search"}]
+        ctx.llm_tools = [{"name": "memory_search"}]
 
         tool_calls = [{"id": "tc-1", "name": "memory_search", "input": {"query": "q"}}]
 
@@ -658,7 +658,7 @@ class TestInitContextMemoryInjection:
             knowledge_ns="ns",
             depth=0,
             prev_overrides={},
-            gateway_tools=[{"name": "tool1"}],
+            llm_tools=[{"name": "tool1"}],
         )
         request = AgentRunner._build_request(ctx)
         assert request["max_tokens"] == 500

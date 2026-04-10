@@ -3,16 +3,16 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from agentic_primitives_gateway.primitives.gateway.base import GatewayProvider
+from agentic_primitives_gateway.primitives.llm.base import LLMProvider
 
 logger = logging.getLogger(__name__)
 
 
-class NoopGatewayProvider(GatewayProvider):
+class NoopLLMProvider(LLMProvider):
     """No-op gateway provider that returns placeholder values."""
 
     def __init__(self, **kwargs: Any) -> None:
-        logger.info("NoopGatewayProvider initialized")
+        logger.info("NoopLLMProvider initialized")
 
     async def route_request(self, model_request: dict[str, Any]) -> dict[str, Any]:
         logger.debug("noop route_request: %s", model_request)

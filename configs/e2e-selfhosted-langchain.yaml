@@ -124,11 +124,11 @@ providers:
           browser: "${SELENIUM_BROWSER:=chrome}"
 
   # Gateway: Bedrock (AWS — the only non-self-hosted component)
-  gateway:
+  llm:
     default: "bedrock"
     backends:
       bedrock:
-        backend: "agentic_primitives_gateway.primitives.gateway.bedrock.BedrockConverseProvider"
+        backend: "agentic_primitives_gateway.primitives.llm.bedrock.BedrockConverseProvider"
         config:
           region: "${AWS_REGION:=us-east-1}"
           default_model: "us.anthropic.claude-sonnet-4-20250514-v1:0"

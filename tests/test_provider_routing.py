@@ -30,8 +30,8 @@ def _init_multi_provider_registry() -> None:
                 "backend": "agentic_primitives_gateway.primitives.observability.noop.NoopObservabilityProvider",
                 "config": {},
             },
-            "gateway": {
-                "backend": "agentic_primitives_gateway.primitives.gateway.noop.NoopGatewayProvider",
+            "llm": {
+                "backend": "agentic_primitives_gateway.primitives.llm.noop.NoopLLMProvider",
                 "config": {},
             },
             "tools": {
@@ -76,7 +76,7 @@ class TestProviderDiscovery:
         expected = {
             "memory",
             "observability",
-            "gateway",
+            "llm",
             "tools",
             "identity",
             "code_interpreter",
@@ -192,22 +192,4 @@ class TestProviderRouting:
                 headers={"x-provider-memory": "secondary"},
             ).status_code
             == 404
-        )
-
-
-class TestLegacyConfigCompat:
-    def test_legacy_single_provider_format(self) -> None:
-        """Legacy config with 'backend' key should still work."""
-        from agentic_primitives_gateway.config import PrimitiveProvidersConfig
-
-        cfg = PrimitiveProvidersConfig.model_validate(
-            {
-                "backend": "agentic_primitives_gateway.primitives.memory.in_memory.InMemoryProvider",
-                "config": {},
-            }
-        )
-        assert cfg.default == "default"
-        assert "default" in cfg.backends
-        assert (
-            cfg.backends["default"].backend == "agentic_primitives_gateway.primitives.memory.in_memory.InMemoryProvider"
         )

@@ -659,7 +659,7 @@ class TestClientStubs:
             assert exc_info.value.status_code == 501
 
     @pytest.mark.asyncio
-    async def test_gateway_stub(self, make_client) -> None:
+    async def test_llm_stub(self, make_client) -> None:
         async with make_client() as client:
             with pytest.raises(AgenticPlatformError) as exc_info:
                 await client.completions({"model": "test"})

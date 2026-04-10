@@ -210,7 +210,7 @@ class TestResume:
         # Mock the LLM to return a final response
         mock_response = {"content": "resumed response", "stop_reason": "end_turn"}
         with patch("agentic_primitives_gateway.agents.runner.registry") as mock_registry:
-            mock_registry.gateway.route_request = AsyncMock(return_value=mock_response)
+            mock_registry.llm.route_request = AsyncMock(return_value=mock_response)
             mock_registry.memory.create_event = AsyncMock()
             mock_registry.observability.ingest_trace = AsyncMock()
 

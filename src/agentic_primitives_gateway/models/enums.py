@@ -4,7 +4,7 @@ from enum import StrEnum
 class Primitive(StrEnum):
     MEMORY = "memory"
     OBSERVABILITY = "observability"
-    GATEWAY = "gateway"
+    LLM = "llm"
     TOOLS = "tools"
     IDENTITY = "identity"
     CODE_INTERPRETER = "code_interpreter"

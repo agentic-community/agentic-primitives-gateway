@@ -108,7 +108,7 @@ class TestRunAgentWithToolsStream:
             yield {"type": "message_stop", "stop_reason": "end_turn"}
 
         with patch("agentic_primitives_gateway.agents.team_agent_loop.registry") as mock_reg:
-            mock_reg.gateway.route_request_stream = mock_stream
+            mock_reg.llm.route_request_stream = mock_stream
             events: list[dict[str, Any]] = []
             async for event in run_agent_with_tools_stream(spec, "hello", [], "planner"):
                 events.append(event)
@@ -131,7 +131,7 @@ class TestRunAgentWithToolsStream:
             yield {"type": "message_stop", "stop_reason": "end_turn"}
 
         with patch("agentic_primitives_gateway.agents.team_agent_loop.registry") as mock_reg:
-            mock_reg.gateway.route_request_stream = mock_stream
+            mock_reg.llm.route_request_stream = mock_stream
             events: list[dict[str, Any]] = []
             async for event in run_agent_with_tools_stream(spec, "hello", [], "worker"):
                 events.append(event)
@@ -171,7 +171,7 @@ class TestRunAgentWithToolsStream:
                 "agentic_primitives_gateway.agents.team_agent_loop.execute_tool", new_callable=AsyncMock
             ) as mock_exec,
         ):
-            mock_reg.gateway.route_request_stream = mock_stream
+            mock_reg.llm.route_request_stream = mock_stream
             mock_exec.return_value = "tool result"
 
             events: list[dict[str, Any]] = []
@@ -211,7 +211,7 @@ class TestRunAgentWithToolsStream:
                 "agentic_primitives_gateway.agents.team_agent_loop.execute_tool", new_callable=AsyncMock
             ) as mock_exec,
         ):
-            mock_reg.gateway.route_request_stream = mock_stream
+            mock_reg.llm.route_request_stream = mock_stream
             mock_exec.return_value = "result"
 
             events: list[dict[str, Any]] = []
@@ -243,7 +243,7 @@ class TestRunAgentWithToolsStream:
             yield {"type": "message_stop", "stop_reason": "end_turn"}
 
         with patch("agentic_primitives_gateway.agents.team_agent_loop.registry") as mock_reg:
-            mock_reg.gateway.route_request_stream = mock_stream
+            mock_reg.llm.route_request_stream = mock_stream
             async for _ in run_agent_with_tools_stream(spec, "continue", [], "worker", resume_hint="partial text"):
                 pass
 

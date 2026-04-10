@@ -23,8 +23,8 @@ class TestNoopPolicyEnforcer:
         enforcer = NoopPolicyEnforcer()
         result = await enforcer.authorize(
             principal='Agent::"test"',
-            action="gateway:completions",
-            resource="gateway/completions",
+            action="llm:completions",
+            resource="llm/completions",
             context={"ip": "127.0.0.1"},
         )
         assert result is True

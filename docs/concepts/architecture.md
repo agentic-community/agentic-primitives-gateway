@@ -101,6 +101,12 @@ The `credentials/` subsystem resolves per-user service credentials from OIDC use
 
 **Checkpoint integration:** OIDC-resolved credentials are captured in checkpoint data via `serialize_auth_context()`. On recovery, `restore_auth_context()` restores them into contextvars. Providers work unchanged.
 
+The credential status endpoint (`GET /api/v1/credentials/status`) reports the active resolution source, required credential types for active providers, and the server credential fallback mode.
+
+## Authenticated Provider Status
+
+The `GET /api/v1/providers/status` endpoint runs behind the full middleware stack (auth + credential resolution + policy enforcement). Unlike `/readyz` (which runs healthchecks in thread pools without user context), this endpoint runs each provider's `healthcheck()` on the main event loop with the authenticated user's resolved credentials in context. Providers that show `reachable` on `/readyz` may show `ok` here if the user has valid credentials.
+
 ## Agent Subsystem
 
 Agents sit above primitives as an orchestration layer:
@@ -109,7 +115,7 @@ Agents sit above primitives as an orchestration layer:
 AgentRunner.run(spec, message)
   → _init_context()       # overrides, tools, memory context
   → while loop:
-      → registry.gateway.route_request(...)  # LLM call
+      → registry.llm.route_request(...)  # LLM call
       → _exec_tools_parallel(...)            # tool execution
   → _finalize()           # cleanup, store turn, trace
 ```
@@ -120,6 +126,8 @@ Key design decisions:
 - **Tool handlers** are bound with `functools.partial` to inject namespace/session_id
 - **Agent-as-tool** delegation allows agents to call other agents (depth-limited)
 - **Provider overrides** are saved/restored around sub-agent calls
+- **Shared memory pools** (`PrimitiveConfig.shared_namespaces`) inject pool-based tools at build time
+- **Export** generates standalone Python scripts with the full tool-call loop
 
 ## Team Subsystem
 
@@ -127,10 +135,17 @@ Teams add a coordination layer on top of agents:
 
 ```
 TeamRunner.run(team_spec, message)
-  → Phase 1: Planner decomposes into tasks
+  → Phase 1: Planner decomposes into tasks (with dependency graphs)
   → Phase 2: Workers execute tasks concurrently (with replanning)
   → Phase 3: Synthesizer combines results
 ```
+
+Key features:
+
+- **Shared memory** (`shared_memory_namespace`) -- workers can share findings via a team-scoped namespace
+- **Dependency-aware execution** -- tasks with `depends_on` wait for dependencies before becoming available
+- **Task retry** -- individual failed tasks can be retried without re-running the entire team
+- **Export** -- teams can be exported as standalone Python scripts with dependency-wave execution
 
 See [Teams](teams.md) for the full replanning loop documentation.
 
@@ -205,6 +220,7 @@ src/agentic_primitives_gateway/
 ├── agents/
 │   ├── runner.py         # AgentRunner + _RunContext
 │   ├── namespace.py      # Knowledge namespace resolution
+│   ├── export.py         # Export agents/teams as standalone Python scripts
 │   ├── store.py          # AgentStore ABC + FileAgentStore
 │   ├── base_store.py     # Generic store base classes
 │   ├── checkpoint.py     # Checkpoint model + CheckpointStore
@@ -231,7 +247,9 @@ src/agentic_primitives_gateway/
 └── routes/
     ├── _background.py    # BackgroundRunManager, EventStore, RedisEventStore
     ├── _helpers.py       # @handle_provider_errors, require_principal, reconnect_event_generator
-    ├── agents.py         # Agent CRUD, chat, sessions, reconnect, cancel
-    ├── teams.py          # Team CRUD, runs, events, reconnect, cancel
+    ├── agents.py         # Agent CRUD, chat, sessions, export, reconnect, cancel
+    ├── teams.py          # Team CRUD, runs, export, events, reconnect, cancel, task retry
+    ├── credentials.py    # Credential read/write/delete/status
+    ├── health.py         # Liveness, readiness, auth config, authenticated provider status
     └── ...               # Other routers
 ```

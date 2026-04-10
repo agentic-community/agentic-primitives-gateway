@@ -23,17 +23,17 @@ class TestApplyOverrides:
         set_provider_overrides({})
 
     def test_merges_with_existing(self) -> None:
-        set_provider_overrides({"gateway": "bedrock"})
+        set_provider_overrides({"llm": "bedrock"})
         spec = AgentSpec(
             name="test",
             model="test-model",
             provider_overrides={"memory": "mem0"},
         )
         prev = AgentRunner._apply_overrides(spec)
-        assert prev == {"gateway": "bedrock"}
+        assert prev == {"llm": "bedrock"}
         # Both should be active
         assert get_provider_override("memory") == "mem0"
-        assert get_provider_override("gateway") == "bedrock"
+        assert get_provider_override("llm") == "bedrock"
         # Clean up
         set_provider_overrides({})
 
@@ -51,22 +51,22 @@ class TestApplyOverrides:
         set_provider_overrides({})
 
     def test_no_overrides_is_noop(self) -> None:
-        set_provider_overrides({"gateway": "bedrock"})
+        set_provider_overrides({"llm": "bedrock"})
         spec = AgentSpec(name="test", model="test-model")
         AgentRunner._apply_overrides(spec)
         # Previous state preserved
-        assert get_provider_override("gateway") == "bedrock"
+        assert get_provider_override("llm") == "bedrock"
         # Clean up
         set_provider_overrides({})
 
 
 class TestRestoreOverrides:
     def test_restores_previous_state(self) -> None:
-        original = {"gateway": "bedrock", "memory": "in_memory"}
+        original = {"llm": "bedrock", "memory": "in_memory"}
         set_provider_overrides({"memory": "mem0", "browser": "selenium_grid"})
         AgentRunner._restore_overrides(original)
         assert get_provider_override("memory") == "in_memory"
-        assert get_provider_override("gateway") == "bedrock"
+        assert get_provider_override("llm") == "bedrock"
         assert get_provider_override("browser") is None
         # Clean up
         set_provider_overrides({})

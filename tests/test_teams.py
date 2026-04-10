@@ -14,7 +14,7 @@ from agentic_primitives_gateway.agents.team_store import FileTeamStore
 from agentic_primitives_gateway.main import app
 from agentic_primitives_gateway.models.agents import AgentSpec
 from agentic_primitives_gateway.models.teams import TeamSpec
-from agentic_primitives_gateway.primitives.gateway.base import GatewayProvider
+from agentic_primitives_gateway.primitives.llm.base import LLMProvider
 from agentic_primitives_gateway.primitives.tasks.in_memory import InMemoryTasksProvider
 from agentic_primitives_gateway.routes.agents import set_agent_store
 from agentic_primitives_gateway.routes.teams import set_team_store
@@ -22,7 +22,7 @@ from agentic_primitives_gateway.routes.teams import set_team_store
 # ── Mock gateway ─────────────────────────────────────────────────────
 
 
-class MockGatewayProvider(GatewayProvider):
+class MockLLMProvider(LLMProvider):
     def __init__(self) -> None:
         self._responses: list[dict[str, Any]] = []
         self._call_index = 0
@@ -228,7 +228,7 @@ def test_delete_team(client: TestClient, team_store: FileTeamStore) -> None:
 
 @pytest.mark.asyncio
 async def test_team_runner_full_run(tmp_path: Any) -> None:
-    """Test the full team run lifecycle with mocked gateway."""
+    """Test the full team run lifecycle with mocked LLM."""
     # Set up stores
     agent_store = FileAgentStore(path=str(tmp_path / "agents.json"))
     team_store = FileTeamStore(path=str(tmp_path / "teams.json"))
@@ -254,7 +254,7 @@ async def test_team_runner_full_run(tmp_path: Any) -> None:
     # 1. Planner: creates a task via tool call, then ends
     # 2. Worker: completes the task
     # 3. Synthesizer: produces final response
-    mock_gw = MockGatewayProvider()
+    mock_gw = MockLLMProvider()
     mock_gw.set_responses(
         [
             # Planner turn 1: call create_task
@@ -299,7 +299,7 @@ async def test_team_runner_full_run(tmp_path: Any) -> None:
         patch("agentic_primitives_gateway.agents.tools.handlers.registry") as mock_handlers_reg,
     ):
         for m in (mock_reg, mock_loop_reg, mock_prompts_reg):
-            m.gateway = mock_gw
+            m.llm = mock_gw
             m.tasks = tasks_provider
         mock_handlers_reg.tasks = tasks_provider
 
@@ -327,7 +327,7 @@ async def test_team_runner_stream(tmp_path: Any) -> None:
 
     team_spec = TeamSpec(name="stream-team", planner="planner", synthesizer="synth", workers=["worker"])
 
-    mock_gw = MockGatewayProvider()
+    mock_gw = MockLLMProvider()
     mock_gw.set_responses(
         [
             # Planner creates a task
@@ -363,7 +363,7 @@ async def test_team_runner_stream(tmp_path: Any) -> None:
         patch("agentic_primitives_gateway.agents.tools.handlers.registry") as mock_handlers_reg,
     ):
         for m in (mock_reg, mock_loop_reg, mock_prompts_reg):
-            m.gateway = mock_gw
+            m.llm = mock_gw
             m.tasks = tasks_provider
         mock_handlers_reg.tasks = tasks_provider
 

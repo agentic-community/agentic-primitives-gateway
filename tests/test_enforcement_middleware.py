@@ -43,11 +43,11 @@ class TestResolveAction:
     def test_memory_delete(self):
         assert _resolve_action(real_app, "DELETE", "/api/v1/memory/my-ns/key1") == "memory:delete_memory"
 
-    def test_gateway_completions(self):
-        assert _resolve_action(real_app, "POST", "/api/v1/gateway/completions") == "gateway:route_completion"
+    def test_llm_completions(self):
+        assert _resolve_action(real_app, "POST", "/api/v1/llm/completions") == "llm:route_completion"
 
-    def test_gateway_models(self):
-        assert _resolve_action(real_app, "GET", "/api/v1/gateway/models") == "gateway:list_models"
+    def test_llm_models(self):
+        assert _resolve_action(real_app, "GET", "/api/v1/llm/models") == "llm:list_models"
 
     def test_tools_invoke(self):
         assert _resolve_action(real_app, "POST", "/api/v1/tools/my-tool/invoke") == "tools:invoke_tool"
@@ -114,7 +114,7 @@ class TestResolveAction:
         primitives_with_rules = {action.split(":")[0] for _, _, action in rules}
         expected = {
             "memory",
-            "gateway",
+            "llm",
             "tools",
             "identity",
             "code_interpreter",
@@ -168,8 +168,8 @@ class TestResolveResource:
     def test_memory_resource(self):
         assert _resolve_resource("/api/v1/memory/my-ns") == "memory/my-ns"
 
-    def test_gateway_resource(self):
-        assert _resolve_resource("/api/v1/gateway/completions") == "gateway/completions"
+    def test_llm_resource(self):
+        assert _resolve_resource("/api/v1/llm/completions") == "llm/completions"
 
     def test_non_api_path(self):
         assert _resolve_resource("/healthz") == "/healthz"

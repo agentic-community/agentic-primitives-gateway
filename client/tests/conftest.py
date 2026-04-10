@@ -66,7 +66,7 @@ def _mock_handler(request: httpx.Request) -> httpx.Response:
 
     # Stub endpoints → 501
     for prefix in (
-        "/api/v1/gateway",
+        "/api/v1/llm",
         "/api/v1/browser",
     ):
         if path.startswith(prefix):
@@ -91,7 +91,7 @@ def _handle_a2a(method: str, path: str, request: httpx.Request) -> httpx.Respons
             200,
             json={
                 "name": "Test Gateway",
-                "description": "Mock gateway",
+                "description": "Mock LLM",
                 "version": "0.1.0",
                 "supported_interfaces": [
                     {"url": "http://test/a2a", "protocol_binding": "http+json", "protocol_version": "0.2"}

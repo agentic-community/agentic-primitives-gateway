@@ -8,7 +8,7 @@ from typing import Any
 
 from agentic_primitives_gateway.context import get_boto3_session
 from agentic_primitives_gateway.primitives._sync import SyncRunnerMixin
-from agentic_primitives_gateway.primitives.gateway.base import GatewayProvider
+from agentic_primitives_gateway.primitives.llm.base import LLMProvider
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +72,7 @@ async def _parse_bedrock_stream(
             }
 
 
-class BedrockConverseProvider(SyncRunnerMixin, GatewayProvider):
+class BedrockConverseProvider(SyncRunnerMixin, LLMProvider):
     """Gateway provider using the Bedrock Converse API.
 
     Supports tool_use: pass tools in the request dict, get tool_calls back
@@ -81,7 +81,7 @@ class BedrockConverseProvider(SyncRunnerMixin, GatewayProvider):
 
     Provider config example::
 
-        backend: agentic_primitives_gateway.primitives.gateway.bedrock.BedrockConverseProvider
+        backend: agentic_primitives_gateway.primitives.llm.bedrock.BedrockConverseProvider
         config:
           region: "us-east-1"
           default_model: "us.anthropic.claude-sonnet-4-20250514-v1:0"
@@ -282,7 +282,7 @@ def _to_bedrock_messages(
       - {"role": "user/assistant", "content": "text"}
       - {"role": "assistant", "content": "text", "tool_calls": [...]}
       - {"tool_results": [{"tool_use_id": "...", "content": "..."}]}  (batched)
-      - {"tool_result": {"tool_use_id": "...", "content": "..."}}     (legacy single)
+      - {"tool_result": {"tool_use_id": "...", "content": "..."}}     (single format)
 
     Bedrock Converse requires content blocks:
       - Text: [{"text": "..."}]

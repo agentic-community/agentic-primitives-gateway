@@ -1,16 +1,19 @@
-## All primitives backed by AWS Bedrock AgentCore + Bedrock Converse for LLM.
-## AWS credentials are passed through from the client per-request.
+## AgentCore — all primitives backed by AWS managed services.
 ##
-## Required:
-##   pip install -e ".[agentcore]"
+## Uses Bedrock AgentCore for memory, identity, browser, code interpreter,
+## observability, tools, evaluations. Bedrock Converse for LLM inference.
+## Redis for task boards and agent/team stores (required for teams).
 ##
-## Usage:
+## Prerequisites:
+##   - AWS credentials (aws configure, env vars, Pod Identity, or IRSA)
+##   - Access to Amazon Bedrock models and AgentCore in your region
+##   - An AgentCore memory resource (create in AWS console, export AGENTCORE_MEMORY_ID)
+##   - Redis running at localhost:6379 (or set REDIS_URL)
+##     docker run -d --name redis -p 6379:6379 redis:7-alpine
+##
+## Install & run:
+##   pip install -e ".[agentcore,redis]"
 ##   ./run.sh agentcore
-##
-## Requires:
-##   - AWS credentials on the client side (Pod Identity, IRSA, env vars, etc.)
-##   - AGENTCORE_MEMORY_ID env var set to a valid memory resource ID
-##     (create one in the AgentCore console first)
 
 providers:
   memory:
@@ -55,11 +58,11 @@ providers:
           region: "${AWS_REGION:=us-east-1}"
           service_name: "agentic-primitives-gateway"
 
-  gateway:
+  llm:
     default: "bedrock"
     backends:
       bedrock:
-        backend: "agentic_primitives_gateway.primitives.gateway.bedrock.BedrockConverseProvider"
+        backend: "agentic_primitives_gateway.primitives.llm.bedrock.BedrockConverseProvider"
         config:
           region: "${AWS_REGION:=us-east-1}"
           default_model: "us.anthropic.claude-sonnet-4-20250514-v1:0"
@@ -96,7 +99,7 @@ providers:
         config:
           redis_url: "${REDIS_URL:=redis://localhost:6379/0}"
 
-allow_server_credentials: true
+allow_server_credentials: fallback
 
 agents:
   store:

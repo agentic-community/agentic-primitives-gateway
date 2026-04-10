@@ -5,7 +5,7 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 
-class GatewayProvider(ABC):
+class LLMProvider(ABC):
     """Abstract base class for LLM gateway providers."""
 
     @abstractmethod

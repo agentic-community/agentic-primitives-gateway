@@ -16,17 +16,164 @@ The Agentic Primitives Gateway solves this by extracting these infrastructure co
 
 **Per-request routing enables gradual migration.** With header-based provider routing (`X-Provider-Memory: mem0` vs `X-Provider-Memory: agentcore`), operators can run both backends simultaneously and migrate agents one at a time. No big-bang cutover. No feature flags inside agent code.
 
-**Credential pass-through preserves identity.** The gateway does not use shared service credentials. Each request carries the caller's own AWS credentials, Langfuse keys, or service tokens via headers. The gateway forwards them to backends. This means each agent authenticates with its own identity -- critical for audit trails, access control, and blast radius containment.
+**Credential pass-through preserves identity.** The gateway does not use shared service credentials. Each request carries the caller's own credentials, keys, or service tokens via headers. The gateway forwards them to backends. This means each agent authenticates with its own identity -- critical for audit trails, access control, and blast radius containment.
 
 **Policy enforcement is transparent to agents.** Agents don't implement authorization checks. The `PolicyEnforcementMiddleware` evaluates every request against Cedar policies before it reaches the route handler. An agent that isn't permitted to execute code gets a 403 -- it doesn't need to know why or how the policy was authored. Operators manage policies via the `/api/v1/policy` CRUD API independently of agent code.
 
-**The primitives are the right abstraction layer.** Memory, identity, code execution, browser automation, observability, gateway (LLM routing), tools, policy, and evaluations are the nine capabilities that recur across every agent system. They are stable enough to standardize (the operations don't change when backends change) but varied enough in implementation that abstraction pays for itself. Adding a tenth primitive means implementing one ABC and registering it in config -- the middleware, metrics, routing, and enforcement all work automatically.
+**Primitives as abstractions.** Memory, identity, code execution, browser automation, observability, LLM routing, tools, policy, and evaluations are capabilities that recur across every agent system. They are stable enough to standardize (the operations don't change when backends change) but varied enough in implementation that abstraction pays for itself. Adding a new primitive means implementing one ABC and registering it in config -- the middleware, metrics, routing, and enforcement all work automatically.
 
 **Framework-agnostic by design.** The gateway is a REST API. Any agent framework (LangChain, Strands, CrewAI, custom) in any language (Python, TypeScript, Go, Rust) can call it. The Python client library is a convenience, not a requirement. This avoids the lock-in problem where infrastructure abstractions are coupled to a specific framework's plugin system.
 
 ## How It Works
 
 Agentic Primitives Gateway is a FastAPI service. Agent developers call it via REST. Platform operators configure backends via YAML. Requests can dynamically select which backend to use via header-based provider routing.
+
+## Quickstart
+
+```bash
+# Prerequisites: Python 3.11+, AWS credentials (aws configure)
+git clone <repo-url>
+cd agentic-primitives-gateway
+pip install -e .
+./run.sh
+```
+
+The gateway starts at `http://localhost:8000` with Bedrock for LLM and in-memory storage.
+
+The quickstart config includes a **declarative agent** — an assistant with memory defined entirely in YAML (no Python code). The gateway runs the LLM tool-call loop server-side: the agent receives a message, decides whether to use tools (remember, recall, search_memory), executes them via the gateway's primitives, and returns a response. You can create, edit, and chat with agents via the REST API or the web UI.
+
+**Declarative agents** — defined in the config YAML, no code needed:
+
+```yaml
+# In configs/quickstart.yaml
+agents:
+  specs:
+    assistant:
+      model: "us.anthropic.claude-sonnet-4-20250514-v1:0"
+      system_prompt: "You are a helpful assistant with long-term memory..."
+      primitives:
+        memory:
+          enabled: true
+      max_turns: 20
+```
+
+The gateway runs the full LLM tool-call loop: the agent decides when to use memory tools, the gateway executes them, and returns the final response. No agent framework needed.
+
+**curl** — it's just a REST API:
+
+```bash
+# Chat with the declarative agent (LLM + memory tool loop runs server-side)
+curl -X POST http://localhost:8000/api/v1/agents/assistant/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Hello! Remember that my favorite color is blue."}'
+
+# The agent remembers across turns
+curl -X POST http://localhost:8000/api/v1/agents/assistant/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message": "What is my favorite color?"}'
+
+# Call the LLM directly
+curl -X POST http://localhost:8000/api/v1/llm/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model": "us.anthropic.claude-sonnet-4-20250514-v1:0",
+       "messages": [{"role": "user", "content": "What is 2+2?"}]}'
+
+# Store and search memory directly
+curl -X POST http://localhost:8000/api/v1/memory/my-namespace \
+  -H "Content-Type: application/json" \
+  -d '{"key": "fact", "content": "The sky is blue."}'
+```
+
+**Python** — use the gateway client with any framework or none:
+
+```python
+from agentic_primitives_gateway_client import AgenticPlatformClient, Memory
+
+client = AgenticPlatformClient("http://localhost:8000", aws_from_environment=True)
+memory = Memory(client, namespace="agent:my-agent")
+
+# Store and search — works with any backend (in-memory, Milvus, AgentCore)
+await memory.remember("api-limit", "100 requests per minute")
+results = await memory.search("rate limiting")
+```
+
+**LangChain** — wrap gateway primitives as tools:
+
+```python
+from agentic_primitives_gateway_client import AgenticPlatformClient, Memory
+from langchain_core.tools import tool
+
+client = AgenticPlatformClient("http://localhost:8000", aws_from_environment=True)
+memory = Memory(client, namespace="agent:my-agent")
+
+@tool
+async def remember(key: str, content: str) -> str:
+    """Store information in long-term memory."""
+    return await memory.remember(key, content)
+
+@tool
+async def search_memory(query: str) -> str:
+    """Search memory for relevant information."""
+    return await memory.search(query)
+
+# Pass to any LangChain agent — the gateway handles the backend
+```
+
+**Strands** — auto-build tools from the gateway's catalog:
+
+```python
+from agentic_primitives_gateway_client import AgenticPlatformClient
+from strands import Agent
+
+client = AgenticPlatformClient("http://localhost:8000", aws_from_environment=True)
+tools = client.get_tools_sync(["memory"], namespace="agent:my-agent")
+
+agent = Agent(model="us.anthropic.claude-sonnet-4-20250514-v1:0", tools=tools)
+response = agent("Remember that Python was created by Guido van Rossum, then recall it")
+```
+
+**Any framework** — the gateway is a REST API. These examples use Python, but any language works. See `examples/quickstart/` for complete runnable scripts.
+
+Open the web UI at `http://localhost:8000/ui/` (after `cd ui && npm install && npm run build`).
+
+### Configurations
+
+| Config | Command | Prerequisites | What you get |
+|---|---|---|---|
+| **quickstart** | `./run.sh` | AWS creds only | Bedrock LLM + in-memory storage. Chat with agents immediately. |
+| **agentcore** | `./run.sh agentcore` | AWS creds + Redis + AgentCore memory ID | All AWS managed: memory, browser, code, identity, tools, observability. |
+| **selfhosted** | `./run.sh selfhosted` | AWS creds + Redis + Milvus + Langfuse | Open-source backends: mem0/Milvus, Langfuse, Jupyter, Selenium. |
+| **mixed** | `./run.sh mixed` | All of above + OIDC provider | Both AgentCore + self-hosted providers. JWT auth, Cedar, credentials. |
+
+**AgentCore prerequisites:**
+
+```bash
+pip install -e ".[agentcore,redis]"
+docker run -d --name redis -p 6379:6379 redis:7-alpine
+# Create an AgentCore memory resource in AWS console, then:
+export AGENTCORE_MEMORY_ID=memory_xxxx
+./run.sh agentcore
+```
+
+**Self-hosted prerequisites:**
+
+```bash
+pip install -e ".[mem0,langfuse,jupyter,selenium,redis]"
+docker run -d --name redis -p 6379:6379 redis:7-alpine
+docker run -d --name milvus -p 19530:19530 milvusdb/milvus:latest standalone
+docker run -d --name selenium -p 4444:4444 selenium/standalone-chrome
+# Start Langfuse (https://langfuse.com/docs/deployment/self-host)
+export LANGFUSE_PUBLIC_KEY=pk-lf-... LANGFUSE_SECRET_KEY=sk-lf-...
+./run.sh selfhosted
+```
+
+**Mixed prerequisites:**
+
+```bash
+pip install -e ".[agentcore,mem0,langfuse,jupyter,selenium,redis,jwt,cedar]"
+# All of selfhosted + agentcore + an OIDC provider (Keycloak, Cognito, Auth0)
+JWT_ISSUER=https://keycloak.example.com/realms/my-realm ./run.sh mixed
+```
 
 ## Architecture
 
@@ -50,7 +197,7 @@ Agentic Primitives Gateway is a FastAPI service. Agent developers call it via RE
 |  +----+----+ +----+----+ | Routes  | +----+----+ +----+----+          |
 |       |           |      +----+----+      |           |               |
 |  +----+----+ +----+----+     |       +----+----+ +----+----+          |
-|  |Observ.  | |Gateway  |     |       | Policy  | | Evals   |          |
+|  |Observ.  | |  LLM    |     |       | Policy  | | Evals   |          |
 |  | Routes  | | Routes  |     |       | Routes  | | Routes  |          |
 |  +----+----+ +----+----+     |       +----+----+ +----+----+          |
 |       |           |           |       |         | |         |          |
@@ -83,7 +230,7 @@ Agentic Primitives Gateway is a FastAPI service. Agent developers call it via RE
 +-----+-------+-------+-------+-------+--------+-------+------+---------+
       |       |       |       |       |        |       |      |
  +----v---+ +-v-------+ +v------+ +v----+ +v-----+ +v------+ +v------+ +v------+ +v----------+
- | Memory | |Identity | |Code   | |Brwsr| |Obsrv.| |Gateway| |Policy | | Evals | |  Tools   |
+ | Memory | |Identity | |Code   | |Brwsr| |Obsrv.| | LLM   | |Policy | | Evals | |  Tools   |
  |--------| |---------| |Interp | |-----| |------| |-------| |-------| |-------| |----------|
  | Noop   | |Noop     | |Noop   | |Noop | |Noop  | |Noop   | |Noop   | |Noop   | | Noop     |
  | InMem  | |AgntCore | |AgntCr | |Agnt | |Lang  | |Bedrock| |Agnt   | |Agnt   | | AgntCore |
@@ -102,12 +249,10 @@ Agentic Primitives Gateway is a FastAPI service. Agent developers call it via RE
 | **Code Interpreter** | Sandboxed code execution sessions with execution history | `NoopCodeInterpreterProvider`, `AgentCoreCodeInterpreterProvider`, `JupyterCodeInterpreterProvider` |
 | **Browser** | Cloud-based browser automation | `NoopBrowserProvider`, `AgentCoreBrowserProvider`, `SeleniumGridBrowserProvider` |
 | **Observability** | Trace/log ingestion, LLM generation tracking, evaluation scoring, session management | `NoopObservabilityProvider`, `LangfuseObservabilityProvider`, `AgentCoreObservabilityProvider` |
-| **Gateway** | LLM request routing with tool_use support | `NoopGatewayProvider`, `BedrockConverseProvider` |
+| **LLM** | LLM request routing with tool_use support | `NoopLLMProvider`, `BedrockConverseProvider` |
 | **Tools** | Tool registration, invocation, search, and MCP server management | `NoopToolsProvider`, `AgentCoreGatewayProvider`, `MCPRegistryProvider` |
 | **Policy** | Cedar-based policy engine and policy management, optional policy generation | `NoopPolicyProvider`, `AgentCorePolicyProvider` |
 | **Evaluations** | LLM-as-a-judge evaluator management and evaluation, optional online eval configs | `NoopEvaluationsProvider`, `AgentCoreEvaluationsProvider` |
-
-All nine primitives are fully implemented and wired to their respective providers.
 
 **Agents** sit above the primitives as a declarative orchestration layer. An agent is defined by a spec (system prompt, model, enabled primitives/tools, hooks) and the gateway runs the LLM tool-call loop internally. No external agent framework needed. Key agent capabilities:
 - **Token streaming** — `POST /api/v1/agents/{name}/chat/stream` returns SSE events for real-time token delivery
@@ -158,7 +303,7 @@ Example response:
   "code_interpreter": {"default": "noop", "available": ["noop", "agentcore"]},
   "browser": {"default": "noop", "available": ["noop", "agentcore"]},
   "observability": {"default": "noop", "available": ["noop"]},
-  "gateway": {"default": "noop", "available": ["noop"]},
+  "llm": {"default": "noop", "available": ["noop"]},
   "tools": {"default": "noop", "available": ["noop"]}
 }
 ```
@@ -350,7 +495,7 @@ Browser interaction endpoints return 400 if the session is not found or the oper
 
 Trace retrieval, updates, scoring, session management, and flush endpoints return 501 if not supported by the configured provider. The `LangfuseObservabilityProvider` supports all operations. The `AgentCoreObservabilityProvider` supports trace retrieval, LLM generation logging, and flush.
 
-### Gateway (`/api/v1/gateway`)
+### LLM (`/api/v1/llm`)
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -358,7 +503,7 @@ Trace retrieval, updates, scoring, session management, and flush endpoints retur
 | `GET` | `/models` | List available models. |
 
 **Available backends:**
-- `NoopGatewayProvider` -- returns empty responses (dev/test)
+- `NoopLLMProvider` -- returns empty responses (dev/test)
 - `BedrockConverseProvider` -- AWS Bedrock Converse API with full tool_use support. Config: `region`, `default_model`. Uses per-request AWS credentials via `get_boto3_session()`.
 
 ### Tools (`/api/v1/tools`)
@@ -665,7 +810,7 @@ Examples of auto-discovered actions:
 | `POST /api/v1/memory/{namespace}` | `store_memory` | `memory:store_memory` |
 | `POST /api/v1/memory/{namespace}/search` | `search_memories` | `memory:search_memories` |
 | `GET /api/v1/memory/{namespace}/{key}` | `retrieve_memory` | `memory:retrieve_memory` |
-| `POST /api/v1/gateway/completions` | `route_completion` | `gateway:route_completion` |
+| `POST /api/v1/llm/completions` | `route_completion` | `llm:route_completion` |
 | `POST /api/v1/tools/{name}/invoke` | `invoke_tool` | `tools:invoke_tool` |
 | `POST /api/v1/agents/{name}/chat` | `chat_with_agent` | `agents:chat_with_agent` |
 
@@ -868,8 +1013,6 @@ Configuration is loaded from three sources in order of priority:
 | `fallback` | Try per-user OIDC credentials first, then fall back to server ambient credentials. |
 | `always` | Always use server credentials (dev mode). |
 
-Backward compatible: `true` maps to `fallback`, `false` maps to `never`.
-
 Credential resolution order:
 
 1. **Explicit headers** (`X-AWS-*`, `X-Cred-*`) -- always win
@@ -979,11 +1122,11 @@ providers:
           region: "us-east-1"
           service_name: "agentic-primitives-gateway"
 
-  gateway:
+  llm:
     default: "noop"
     backends:
       noop:
-        backend: "agentic_primitives_gateway.primitives.gateway.noop.NoopGatewayProvider"
+        backend: "agentic_primitives_gateway.primitives.llm.noop.NoopLLMProvider"
         config: {}
 
   tools:
@@ -1003,19 +1146,6 @@ providers:
 Each backend entry has:
 - `backend` -- fully qualified dotted path to the provider class
 - `config` -- dict passed as `**kwargs` to the provider constructor
-
-### Legacy Single-Provider Format
-
-For backward compatibility, the legacy single-provider format is still supported:
-
-```yaml
-providers:
-  tools:
-    backend: "agentic_primitives_gateway.primitives.tools.noop.NoopToolsProvider"
-    config: {}
-```
-
-When this format is detected (a `backend` key without a `backends` key), it is automatically converted to the multi-provider format with a single backend named `"default"`.
 
 ### Agents Configuration
 
@@ -1067,11 +1197,16 @@ agents:
 
 The coordinator gets `call_researcher(message)` and `call_coder(message)` tools. Sub-agents run their own full tool-call loops. Depth is tracked to prevent infinite recursion (`MAX_AGENT_DEPTH=3`).
 
-Pre-built agent configs are in `configs/`:
-- `agents-agentcore.yaml` -- all primitives backed by AgentCore
-- `agents-mem0-langfuse.yaml` -- mem0 + Milvus memory, Langfuse tracing, Selenium Grid browser
-- `agents-mixed.yaml` -- mem0/Langfuse for memory/observability, AgentCore for code/browser/identity/tools
-- `kitchen-sink.yaml` -- all providers + coordinator/researcher/coder agent team example
+Pre-built configs ship in `configs/`:
+
+| Config | Description |
+|---|---|
+| `quickstart.yaml` | Bedrock LLM + in-memory. No infra needed. |
+| `agentcore.yaml` | All AWS managed (AgentCore + Bedrock). Needs Redis. |
+| `selfhosted.yaml` | Open-source backends (Milvus, Langfuse, Jupyter, Selenium). Needs Redis. |
+| `mixed.yaml` | Both backends per primitive + JWT auth + Cedar + credential resolution. |
+
+The `mixed.yaml` config is the fully-annotated reference showing every configuration feature: multi-backend providers, JWT auth, Cedar enforcement, OIDC credential resolution, Redis stores, declarative agents, and teams. See the [Configuration Guide](docs/getting-started/configuration.md) for a section-by-section walkthrough.
 
 ---
 
@@ -1089,7 +1224,7 @@ Requests can select which named backend to use at runtime via HTTP headers. This
 | `X-Provider-Code-Interpreter` | Code Interpreter only | Override the provider for code interpreter operations. |
 | `X-Provider-Browser` | Browser only | Override the provider for browser operations. |
 | `X-Provider-Observability` | Observability only | Override the provider for observability operations. |
-| `X-Provider-Gateway` | Gateway only | Override the provider for gateway operations. |
+| `X-Provider-LLM` | LLM only | Override the provider for LLM operations. |
 | `X-Provider-Tools` | Tools only | Override the provider for tools operations. |
 
 ### Resolution Order
@@ -1326,13 +1461,13 @@ observability:
 
 AWS-managed observability using ADOT (AWS Distro for OpenTelemetry) to send traces to CloudWatch/X-Ray. Supports trace ingestion, LLM generation logging, and flush.
 
-### Gateway
+### LLM
 
 #### Bedrock Converse
 
 ```yaml
-gateway:
-  backend: "agentic_primitives_gateway.primitives.gateway.bedrock.BedrockConverseProvider"
+llm:
+  backend: "agentic_primitives_gateway.primitives.llm.bedrock.BedrockConverseProvider"
   config:
     region: "us-east-1"
     default_model: "us.anthropic.claude-sonnet-4-20250514-v1:0"
@@ -1507,30 +1642,28 @@ Every provider must:
 ### Prerequisites
 
 - Python 3.11+
+- AWS credentials configured (`aws configure` or environment variables)
 
 ### Install and run
 
 ```bash
-# Install the server with dev dependencies
-pip install -e ".[dev]"
-
-# Run with default in-memory providers
-uvicorn agentic_primitives_gateway.main:app --reload
-
-# Or with a config file
-AGENTIC_PRIMITIVES_GATEWAY_CONFIG_FILE=config.yaml uvicorn agentic_primitives_gateway.main:app --reload
+pip install -e .
+./run.sh              # quickstart (Bedrock + in-memory)
+./run.sh agentcore    # all AWS managed
+./run.sh selfhosted   # open-source backends
+./run.sh mixed        # both backends + auth + policies
 ```
 
-Open http://localhost:8000/docs for the Swagger UI.
+See [Quickstart](#quickstart) for prerequisites per config. Open http://localhost:8000/docs for the Swagger UI, or http://localhost:8000/ui/ for the web dashboard.
 
 ### Run tests
 
 ```bash
 pip install -e ".[dev]"
-pytest tests/ -v
+python -m pytest tests/ -v
 ```
 
-The test suite contains 1350+ unit/system tests plus integration tests covering all primitives, provider routing, and AWS credential pass-through.
+The test suite contains 1800+ unit/system tests plus integration tests covering all primitives, provider routing, and credential pass-through.
 
 ---
 
@@ -1736,11 +1869,11 @@ providers:
       #   backend: "agentic_primitives_gateway.primitives.browser.agentcore.AgentCoreBrowserProvider"
       #   config:
       #     region: "us-east-1"
-  gateway:
+  llm:
     default: "noop"
     backends:
       noop:
-        backend: "agentic_primitives_gateway.primitives.gateway.noop.NoopGatewayProvider"
+        backend: "agentic_primitives_gateway.primitives.llm.noop.NoopLLMProvider"
         config: {}
   tools:
     default: "noop"
@@ -1990,7 +2123,7 @@ agentic-primitives-gateway/
 │   │   ├── code_interpreter.py     # /api/v1/code-interpreter/* (8 endpoints)
 │   │   ├── browser.py              # /api/v1/browser/* (11 endpoints)
 │   │   ├── observability.py        # /api/v1/observability/* (11 endpoints)
-│   │   ├── gateway.py              # /api/v1/gateway/* (2 endpoints)
+│   │   ├── llm.py                  # /api/v1/llm/* (2 endpoints)
 │   │   ├── tools.py                # /api/v1/tools/* (9 endpoints)
 │   │   ├── policy.py               # /api/v1/policy/* (12 endpoints)
 │   │   ├── evaluations.py          # /api/v1/evaluations/* (8 endpoints)
@@ -2022,7 +2155,7 @@ agentic-primitives-gateway/
 │   │   └── middleware.py           # Starlette middleware: maps requests → Cedar principals/actions/resources
 │   ├── models/                     # Pydantic request/response models per primitive
 │   │   ├── agents.py               # AgentSpec, ChatResponse, ToolArtifact, *MemoryResponse, *ToolsResponse
-│   │   └── ...                     # One file per primitive (memory, identity, gateway, etc.)
+│   │   └── ...                     # One file per primitive (memory, identity, llm, etc.)
 │   └── primitives/
 │       ├── base.py                 # Re-exports all provider ABCs
 │       ├── _sync.py                # SyncRunnerMixin (shared executor helper for sync backends)
@@ -2049,7 +2182,7 @@ agentic-primitives-gateway/
 │       │   ├── noop.py
 │       │   ├── langfuse.py         # Langfuse (SDK v3)
 │       │   └── agentcore.py        # AWS AgentCore via OpenTelemetry
-│       ├── gateway/
+│       ├── llm/
 │       │   ├── noop.py
 │       │   └── bedrock.py          # AWS Bedrock Converse API (tool_use + converse_stream)
 │       ├── policy/
@@ -2072,7 +2205,7 @@ agentic-primitives-gateway/
 │   │   └── api/                    # client.ts (REST + SSE streaming), types.ts
 │   └── vite.config.ts              # Dev proxy to :8000, prod build to static/
 ├── client/                         # Standalone Python client (separate package: agentic-primitives-gateway-client)
-├── tests/                          # Server tests: 1350+ unit/system + integration
+├── tests/                          # Server tests: 1800+ unit/system + integration
 ├── client/tests/                   # Client tests: 100 tests
 ├── configs/                        # YAML presets (local, agentcore, kitchen-sink, agents-*, milvus-langfuse)
 ├── examples/                       # Example agents (langchain, strands)

@@ -7,14 +7,6 @@ from agentic_primitives_gateway.models.enums import ServerCredentialMode
 
 
 class TestServerCredentialMode:
-    def test_bool_true_becomes_fallback(self):
-        s = Settings(allow_server_credentials=True)
-        assert s.allow_server_credentials == ServerCredentialMode.FALLBACK
-
-    def test_bool_false_becomes_never(self):
-        s = Settings(allow_server_credentials=False)
-        assert s.allow_server_credentials == ServerCredentialMode.NEVER
-
     def test_string_fallback(self):
         s = Settings(allow_server_credentials="fallback")
         assert s.allow_server_credentials == ServerCredentialMode.FALLBACK

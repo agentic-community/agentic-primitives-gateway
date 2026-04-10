@@ -5,7 +5,7 @@ from agentic_primitives_gateway.agents.tools.catalog import (
     ToolDefinition,
     build_tool_list,
     execute_tool,
-    to_gateway_tools,
+    to_llm_tools,
 )
 from agentic_primitives_gateway.agents.tools.delegation import (
     MAX_AGENT_DEPTH,
@@ -19,5 +19,5 @@ __all__ = [
     "_build_agent_tools",
     "build_tool_list",
     "execute_tool",
-    "to_gateway_tools",
+    "to_llm_tools",
 ]

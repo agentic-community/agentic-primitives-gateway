@@ -39,8 +39,8 @@ async def test_reload_keeps_old_on_bad_class_path():
                 "backend": "agentic_primitives_gateway.primitives.observability.noop.NoopObservabilityProvider",
                 "config": {},
             },
-            "gateway": {
-                "backend": "agentic_primitives_gateway.primitives.gateway.noop.NoopGatewayProvider",
+            "llm": {
+                "backend": "agentic_primitives_gateway.primitives.llm.noop.NoopLLMProvider",
                 "config": {},
             },
             "tools": {
@@ -82,8 +82,8 @@ async def test_reload_keeps_old_on_type_mismatch():
                 "backend": "agentic_primitives_gateway.primitives.observability.noop.NoopObservabilityProvider",
                 "config": {},
             },
-            "gateway": {
-                "backend": "agentic_primitives_gateway.primitives.gateway.noop.NoopGatewayProvider",
+            "llm": {
+                "backend": "agentic_primitives_gateway.primitives.llm.noop.NoopLLMProvider",
                 "config": {},
             },
             "tools": {

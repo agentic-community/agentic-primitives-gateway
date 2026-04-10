@@ -63,11 +63,11 @@ providers:
         backend: "agentic_primitives_gateway.primitives.browser.noop.NoopBrowserProvider"
         config: {}
 
-  gateway:
+  llm:
     default: "noop"
     backends:
       noop:
-        backend: "agentic_primitives_gateway.primitives.gateway.noop.NoopGatewayProvider"
+        backend: "agentic_primitives_gateway.primitives.llm.noop.NoopLLMProvider"
         config: {}
 
   tools:

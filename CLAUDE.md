@@ -1,6 +1,6 @@
 # Agentic Primitives Gateway
 
-FastAPI service providing pluggable primitives (memory, observability, gateway, tools, identity, code_interpreter, browser, policy, evaluations) for AI agent infrastructure. Includes a declarative agents subsystem that runs LLM tool-call loops server-side. Separate async Python client in `client/`.
+FastAPI service providing pluggable primitives (memory, observability, llm, tools, identity, code_interpreter, browser, policy, evaluations) for AI agent infrastructure. Includes a declarative agents subsystem that runs LLM tool-call loops server-side. Separate async Python client in `client/`.
 
 ## Project Structure
 
@@ -33,7 +33,7 @@ FastAPI service providing pluggable primitives (memory, observability, gateway, 
     - `checkpoint_utils.py` — `serialize_auth_context()`, `restore_auth_context()`, `apply_provider_overrides()`, `restore_provider_overrides()` — shared between AgentRunner and TeamRunner
     - `tools/` — Tool system package
       - `handlers.py` — Handler functions per primitive (memory, browser, code_interpreter, tools, identity)
-      - `catalog.py` — `ToolDefinition`, `_TOOL_CATALOG`, `build_tool_list`, `to_gateway_tools`, `execute_tool`
+      - `catalog.py` — `ToolDefinition`, `_TOOL_CATALOG`, `build_tool_list`, `to_llm_tools`, `execute_tool`
       - `delegation.py` — Agent-as-tool delegation (`_build_agent_tools`, `MAX_AGENT_DEPTH`)
 - `ui/` — React + Vite + TypeScript + Tailwind CSS web UI
   - `src/components/` — Reusable components (ChatMessage, ToolCallBlock, SubAgentBlock, ArtifactBlock, MemoryPanel, ToolsPanel, CollapsibleSection, etc.)
@@ -44,9 +44,9 @@ FastAPI service providing pluggable primitives (memory, observability, gateway, 
   - Production build outputs to `src/agentic_primitives_gateway/static/`
   - FastAPI serves the built SPA at `/ui/` with client-side routing fallback
 - `client/` — Separate `agentic-primitives-gateway-client` package (httpx-based, no server dependency)
-- `tests/` — Server unit/system tests (pytest, async); 1650+ tests
+- `tests/` — Server unit/system tests (pytest, async); 1800+ tests
 - `client/tests/` — Client unit tests (100 tests)
-- `configs/` — YAML presets (local, local-jwt, agentcore, agentcore-redis, kitchen-sink, milvus-langfuse, agents-agentcore, agents-mem0-langfuse, agents-mixed, e2e-agentcore-strands, e2e-selfhosted-langchain, e2e-mixed)
+- `configs/` — YAML presets: **quickstart** (Bedrock + in-memory), **agentcore** (all AWS managed), **selfhosted** (open-source backends), **production** (selfhosted + auth + policies), plus specialized configs (local, kitchen-sink, e2e variants)
 - `examples/` — Example agents (langchain, strands)
 - `deploy/helm/` — Kubernetes Helm chart
 
@@ -72,14 +72,16 @@ cd client && pip install -e ".[dev]"
 python -m pytest tests/ -v
 
 # Run locally
-./run.sh local
-# or: AGENTIC_PRIMITIVES_GATEWAY_CONFIG_FILE=configs/local.yaml uvicorn agentic_primitives_gateway.main:app --reload
+./run.sh                # quickstart (Bedrock + in-memory)
+./run.sh agentcore      # all AWS managed
+./run.sh selfhosted     # open-source backends (Milvus, Langfuse, Jupyter, Selenium)
+./run.sh mixed     # both AgentCore + self-hosted + JWT auth + Cedar + credential resolution
 ```
 
 ## Test Commands
 
 ```bash
-# All server tests (1650+ unit/system + integration)
+# All server tests (1800+ unit/system + integration)
 python -m pytest tests/ -v
 
 # All client tests (100 tests)
@@ -104,7 +106,7 @@ pre-commit run --all-files # Run all hooks on entire repo
 - **Provider pattern** — New backends implement the primitive's ABC, get registered in config YAML. Provider classes are referenced by fully-qualified dotted path.
 - **Request-scoped context** — AWS credentials, service credentials (`X-Cred-{Service}-{Key}`), and provider overrides (`X-Provider-*`) are stored per-request in contextvars.
 - **MetricsProxy** — All provider instances are wrapped transparently for Prometheus instrumentation.
-- **Config normalization** — Legacy single-provider format (`backend` + `config`) auto-converts to multi-provider format (`default` + `backends`).
+- **Config normalization** — Single-provider format (`backend` + `config`) auto-converts to multi-provider format (`default` + `backends`).
 - **SyncRunnerMixin** — `primitives/_sync.py` provides a shared `_run_sync` method. All providers wrapping synchronous client libraries inherit from it instead of duplicating the executor boilerplate.
 - **Client is independent** — `client/` has no imports from the server package. It's a thin HTTP wrapper; validation happens server-side.
 - **Enforcement is NOT a primitive** — `enforcement/` is a separate subsystem (like `agents/`) that evaluates requests against policies at the middleware level. `PolicyEnforcementMiddleware` maps requests to Cedar principals/actions/resources and delegates to a `PolicyEnforcer` implementation. Default is `NoopPolicyEnforcer` (all allowed). `CedarPolicyEnforcer` uses `cedarpy` for local evaluation with background policy refresh from `registry.policy`. Default-deny when Cedar is active: no loaded policies = all denied.
@@ -120,7 +122,7 @@ pre-commit run --all-files # Run all hooks on entire repo
 - **Provider overrides in runner** — `_apply_overrides`/`_restore_overrides` save and restore the parent's provider overrides around sub-agent execution so each agent uses its own configured providers.
 - **Knowledge vs session namespace** — `agents/namespace.py` provides `resolve_knowledge_namespace()` which strips `{session_id}` from the template. Memory tools use the agent-scoped namespace; conversation history uses `(actor_id, session_id)` directly.
 - **Route error handling** — `routes/_helpers.py` provides `@handle_provider_errors(detail, not_found=)` decorator to convert `NotImplementedError` → 501 and `KeyError` → 404. Used on ~31 endpoints; endpoints with Pydantic request bodies use manual try/except (FastAPI signature inspection limitation). Also provides `require_principal()` extracted from duplicated `_principal()` functions in agents/teams routes.
-- **BedrockConverseProvider** — `primitives/gateway/bedrock.py` translates between internal message format and Bedrock Converse API. Supports tool_use and streaming via `converse_stream()`. Uses `SyncRunnerMixin` + `get_boto3_session()`.
+- **BedrockConverseProvider** — `primitives/llm/bedrock.py` translates between internal message format and Bedrock Converse API. Supports tool_use and streaming via `converse_stream()`. Uses `SyncRunnerMixin` + `get_boto3_session()`.
 - **SeleniumGridBrowserProvider** — `primitives/browser/selenium_grid.py` provides self-hosted browser automation via Selenium WebDriver.
 - **JupyterCodeInterpreterProvider** — `primitives/code_interpreter/jupyter.py` provides code execution via Jupyter Server or Enterprise Gateway. Uses WebSocket for execution and kernel-based file I/O (works without the Contents REST API).
 - **AgentCorePolicyProvider** — `primitives/policy/agentcore.py` provides Cedar-based policy management via `bedrock-agentcore-control`. Supports engine CRUD, policy CRUD, and policy generation. Uses `SyncRunnerMixin` + `get_boto3_session()`.
@@ -139,7 +141,7 @@ pre-commit run --all-files # Run all hooks on entire repo
 - **Shared route helpers** — `routes/_helpers.py` provides `require_principal()` (extracted from duplicated `_principal()` functions in agents/teams routes) and `@handle_provider_errors` decorator. `routes/_background.py` provides `reconnect_event_generator()` shared by both SSE reconnect endpoints.
 - **Credentials is NOT a primitive** — `credentials/` is a separate subsystem (like `auth/`, `enforcement/`). `CredentialResolutionMiddleware` resolves per-user credentials from OIDC user attributes and populates the same contextvars that `X-Cred-*` headers populate. Providers work unchanged. Resolution priority: explicit headers → OIDC-resolved → server ambient. Default is `NoopCredentialResolver` (no per-user resolution).
 - **Convention-based credential mapping** — All gateway credentials use `apg.{service}.{key}` naming (e.g. `apg.langfuse.public_key`). The OIDC resolver auto-discovers all `apg.*` attributes from the user and maps them to `service_credentials[service][key]`. No explicit attribute mapping config is needed.
-- **ServerCredentialMode** — `allow_server_credentials` is now a three-way enum (`never`/`fallback`/`always`). Backward-compat: `true` → `fallback`, `false` → `never`. Validator in Settings handles migration.
+- **ServerCredentialMode** — `allow_server_credentials` is a three-way enum (`never`/`fallback`/`always`).
 - **Keycloak credential writer** — Uses the Admin REST API via a service account (requires `manage-users` + `manage-realm` roles). Auto-declares new `apg.*` attributes in Keycloak's User Profile config. Falls back to Account API if admin creds unavailable. Only reads/writes `apg.*` attributes.
 - **Credential resolver Admin API mode** — When admin credentials are configured, the OIDC resolver reads user attributes directly from the Keycloak Admin API instead of userinfo. This bypasses the need for protocol mappers. Falls back to userinfo when admin creds are unavailable.
 

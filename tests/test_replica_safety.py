@@ -82,7 +82,7 @@ def _override_settings(
     prim_names = (
         "memory",
         "observability",
-        "gateway",
+        "llm",
         "tools",
         "identity",
         "code_interpreter",

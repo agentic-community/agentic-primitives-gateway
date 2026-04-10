@@ -100,11 +100,11 @@ providers:
       #   config:
       #     region: "us-east-1"
 
-  gateway:
+  llm:
     default: "noop"
     backends:
       noop:
-        backend: "agentic_primitives_gateway.primitives.gateway.noop.NoopGatewayProvider"
+        backend: "agentic_primitives_gateway.primitives.llm.noop.NoopLLMProvider"
         config: {}
 
   tools:

@@ -52,8 +52,8 @@ def live_server() -> str:
                 "backend": "agentic_primitives_gateway.primitives.observability.noop.NoopObservabilityProvider",
                 "config": {},
             },
-            "gateway": {
-                "backend": "agentic_primitives_gateway.primitives.gateway.noop.NoopGatewayProvider",
+            "llm": {
+                "backend": "agentic_primitives_gateway.primitives.llm.noop.NoopLLMProvider",
                 "config": {},
             },
             "tools": {
@@ -159,9 +159,9 @@ class TestRequestIdAcrossEndpoints:
         )
         assert r.headers["x-request-id"] == "obs-log"
 
-    def test_gateway_completions(self, live_server: str) -> None:
+    def test_llm_completions(self, live_server: str) -> None:
         r = httpx.post(
-            f"{live_server}/api/v1/gateway/completions",
+            f"{live_server}/api/v1/llm/completions",
             json={"model": "m", "messages": [{"role": "user", "content": "hi"}]},
             headers={"x-request-id": "gw-comp"},
         )

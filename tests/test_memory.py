@@ -192,13 +192,13 @@ class TestObservabilityEndpoints:
 class TestGatewayEndpoints:
     def test_completions(self, client: TestClient) -> None:
         resp = client.post(
-            "/api/v1/gateway/completions",
+            "/api/v1/llm/completions",
             json={"model": "test-model", "messages": [{"role": "user", "content": "hi"}]},
         )
         assert resp.status_code == 200
 
     def test_list_models(self, client: TestClient) -> None:
-        resp = client.get("/api/v1/gateway/models")
+        resp = client.get("/api/v1/llm/models")
         assert resp.status_code == 200
         assert resp.json()["models"] == []
 

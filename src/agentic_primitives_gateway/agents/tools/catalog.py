@@ -726,7 +726,7 @@ def build_tool_list(
     return tools
 
 
-def to_gateway_tools(tools: list[ToolDefinition]) -> list[dict[str, Any]]:
+def to_llm_tools(tools: list[ToolDefinition]) -> list[dict[str, Any]]:
     """Convert ToolDefinitions to the dict format for route_request."""
     return [{"name": t.name, "description": t.description, "input_schema": t.input_schema} for t in tools]
 

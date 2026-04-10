@@ -12,8 +12,8 @@ from agentic_primitives_gateway.primitives.base import (
     BrowserProvider,
     CodeInterpreterProvider,
     EvaluationsProvider,
-    GatewayProvider,
     IdentityProvider,
+    LLMProvider,
     MemoryProvider,
     ObservabilityProvider,
     PolicyProvider,
@@ -28,7 +28,7 @@ PRIMITIVES = tuple(Primitive)
 _EXPECTED_TYPES: dict[str, type] = {
     Primitive.MEMORY: MemoryProvider,
     Primitive.OBSERVABILITY: ObservabilityProvider,
-    Primitive.GATEWAY: GatewayProvider,
+    Primitive.LLM: LLMProvider,
     Primitive.TOOLS: ToolsProvider,
     Primitive.IDENTITY: IdentityProvider,
     Primitive.CODE_INTERPRETER: CodeInterpreterProvider,
@@ -199,8 +199,8 @@ class ProviderRegistry:
         return provider
 
     @property
-    def gateway(self) -> GatewayProvider:
-        provider: GatewayProvider = self.get_primitive(Primitive.GATEWAY).get()
+    def llm(self) -> LLMProvider:
+        provider: LLMProvider = self.get_primitive(Primitive.LLM).get()
         return provider
 
     @property

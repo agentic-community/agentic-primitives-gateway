@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from agentic_primitives_gateway.primitives.gateway.bedrock import (
+from agentic_primitives_gateway.primitives.llm.bedrock import (
     BedrockConverseProvider,
     _from_bedrock_response,
     _to_bedrock_messages,
@@ -13,7 +13,7 @@ from agentic_primitives_gateway.primitives.gateway.bedrock import (
     _to_bedrock_tools,
 )
 
-_PATCH_PREFIX = "agentic_primitives_gateway.primitives.gateway.bedrock"
+_PATCH_PREFIX = "agentic_primitives_gateway.primitives.llm.bedrock"
 
 
 # ── _to_bedrock_messages ─────────────────────────────────────────────

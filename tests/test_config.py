@@ -55,23 +55,7 @@ class TestExpandVars:
 
 
 class TestPrimitiveProvidersConfig:
-    """Tests for legacy → multi-provider config normalization."""
-
-    def test_legacy_single_provider_format(self):
-        cfg = PrimitiveProvidersConfig(
-            **{
-                "backend": "some.module.ClassName",
-                "config": {"key": "value"},
-            }
-        )
-        assert cfg.default == "default"
-        assert "default" in cfg.backends
-        assert cfg.backends["default"].backend == "some.module.ClassName"
-        assert cfg.backends["default"].config == {"key": "value"}
-
-    def test_legacy_format_without_config(self):
-        cfg = PrimitiveProvidersConfig(**{"backend": "some.module.ClassName"})
-        assert cfg.backends["default"].config == {}
+    """Tests for multi-provider config."""
 
     def test_multi_provider_format_passthrough(self):
         cfg = PrimitiveProvidersConfig(

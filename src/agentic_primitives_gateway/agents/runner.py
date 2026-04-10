@@ -26,7 +26,7 @@ from agentic_primitives_gateway.agents.tools import (
     ToolDefinition,
     build_tool_list,
     execute_tool,
-    to_gateway_tools,
+    to_llm_tools,
 )
 from agentic_primitives_gateway.context import get_authenticated_principal
 from agentic_primitives_gateway.models.agents import AgentSpec, ChatResponse, ToolArtifact
@@ -51,7 +51,7 @@ class _RunContext:
     prev_overrides: dict[str, str]
     session_ctx: dict[str, str] = field(default_factory=dict)
     tools: list[ToolDefinition] = field(default_factory=list)
-    gateway_tools: list[dict[str, Any]] | None = None
+    llm_tools: list[dict[str, Any]] | None = None
     messages: list[dict[str, Any]] = field(default_factory=list)
     turns_used: int = 0
     tools_called: list[str] = field(default_factory=list)
@@ -115,9 +115,9 @@ class AgentRunner:
                     spec.name,
                     ctx.turns_used,
                     len(ctx.messages),
-                    len(ctx.gateway_tools) if ctx.gateway_tools else 0,
+                    len(ctx.llm_tools) if ctx.llm_tools else 0,
                 )
-                response = await registry.gateway.route_request(request_dict)
+                response = await registry.llm.route_request(request_dict)
 
                 stop_reason = response.get("stop_reason", "end_turn")
                 tool_calls = response.get("tool_calls")
@@ -185,7 +185,7 @@ class AgentRunner:
                 turn_tool_calls: list[dict[str, Any]] = []
                 stop_reason = "end_turn"
 
-                async for event in registry.gateway.route_request_stream(request_dict):
+                async for event in registry.llm.route_request_stream(request_dict):
                     etype = event.get("type")
                     if etype == "content_delta":
                         turn_content += event["delta"]
@@ -259,7 +259,7 @@ class AgentRunner:
             depth=depth,
             prev_overrides=prev_overrides,
             tools=tools,
-            gateway_tools=to_gateway_tools(tools) if tools else None,
+            llm_tools=to_llm_tools(tools) if tools else None,
         )
 
         # Load conversation history
@@ -294,8 +294,8 @@ class AgentRunner:
         }
         if ctx.spec.max_tokens is not None:
             request_dict["max_tokens"] = ctx.spec.max_tokens
-        if ctx.gateway_tools:
-            request_dict["tools"] = ctx.gateway_tools
+        if ctx.llm_tools:
+            request_dict["tools"] = ctx.llm_tools
         return request_dict
 
     # ── Session management ───────────────────────────────────────────
@@ -321,7 +321,7 @@ class AgentRunner:
                     agent_runner=self,
                     agent_depth=ctx.depth,
                 )
-                ctx.gateway_tools = to_gateway_tools(ctx.tools) if ctx.tools else None
+                ctx.llm_tools = to_llm_tools(ctx.tools) if ctx.tools else None
 
     # ── Non-streaming tool execution ─────────────────────────────────
 
@@ -673,7 +673,7 @@ class AgentRunner:
             prev_overrides=prev_overrides,
             session_ctx=data.get("session_ctx", {}),
             tools=tools,
-            gateway_tools=to_gateway_tools(tools) if tools else None,
+            llm_tools=to_llm_tools(tools) if tools else None,
             messages=data.get("messages", []),
             turns_used=data.get("turns_used", 0),
             tools_called=data.get("tools_called", []),
@@ -740,7 +740,7 @@ class AgentRunner:
 
                 await self._checkpoint(ctx, original_message)
 
-                response = await registry.gateway.route_request(request_dict)
+                response = await registry.llm.route_request(request_dict)
                 stop_reason = response.get("stop_reason", "end_turn")
                 tool_calls = response.get("tool_calls")
                 turn_content = response.get("content", "")

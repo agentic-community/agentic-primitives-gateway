@@ -1,6 +1,6 @@
 """End-to-end tests for TeamRunner.
 
-Uses the real InMemoryTasksProvider and mocks only the gateway (LLM responses)
+Uses the real InMemoryTasksProvider and mocks only the LLM responses
 so the full plan → execute → synthesize cycle runs against a real task board.
 """
 
@@ -22,7 +22,7 @@ from agentic_primitives_gateway.models.tasks import TaskStatus
 from agentic_primitives_gateway.models.teams import TeamRunPhase, TeamSpec
 from agentic_primitives_gateway.registry import registry
 
-_GATEWAY_MOD = "agentic_primitives_gateway.agents.team_agent_loop.registry.gateway"
+_GATEWAY_MOD = "agentic_primitives_gateway.agents.team_agent_loop.registry.llm"
 
 
 # ── Helpers ──────────────────────────────────────────────────────────
@@ -69,7 +69,7 @@ def _tool_call(name: str, input_data: dict[str, Any]) -> dict[str, Any]:
 
 
 def _planner_response_with_tasks(tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Build a sequence of gateway responses for a planner that creates tasks."""
+    """Build a sequence of LLM responses for a planner that creates tasks."""
     responses = []
     for task in tasks:
         # Turn 1..N: tool_use to create each task

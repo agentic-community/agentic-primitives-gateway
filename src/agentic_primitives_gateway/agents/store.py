@@ -32,5 +32,5 @@ class FileAgentStore(AgentStore, FileSpecStore[AgentSpec]):
 
     @property
     def _agents(self) -> dict[str, AgentSpec]:
-        """Backward-compatible alias for ``_specs``."""
+        """Alias for ``_specs``."""
         return self._specs

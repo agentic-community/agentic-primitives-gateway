@@ -41,7 +41,7 @@ def _expand_vars(text: str) -> str:
     return text
 
 
-from pydantic import BaseModel, Field, field_validator, model_validator  # noqa: E402
+from pydantic import BaseModel, Field, model_validator  # noqa: E402
 from pydantic_settings import BaseSettings, SettingsConfigDict  # noqa: E402
 
 from agentic_primitives_gateway.models.enums import LogLevel, Primitive, ServerCredentialMode  # noqa: E402
@@ -53,17 +53,9 @@ class ProviderConfig(BaseModel):
 
 
 class PrimitiveProvidersConfig(BaseModel):
-    """Configuration for a single primitive that supports multiple backends.
+    """Configuration for a single primitive with named backends.
 
-    Supports two formats:
-
-    Legacy (single provider)::
-
-        memory:
-          backend: "...InMemoryProvider"
-          config: {}
-
-    Multi-provider::
+    Example::
 
         memory:
           default: "mem0"
@@ -82,8 +74,8 @@ class PrimitiveProvidersConfig(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def _normalize(cls, data: Any) -> Any:
+        """Allow shorthand: {backend: "...", config: {}} → full multi-provider format."""
         if isinstance(data, dict) and "backend" in data and "backends" not in data:
-            # Legacy single-provider format → convert to multi-provider
             return {
                 "default": "default",
                 "backends": {
@@ -113,11 +105,11 @@ _DEFAULTS: dict[str, dict[str, Any]] = {
             }
         },
     },
-    Primitive.GATEWAY: {
+    Primitive.LLM: {
         "default": "noop",
         "backends": {
             "noop": {
-                "backend": "agentic_primitives_gateway.primitives.gateway.noop.NoopGatewayProvider",
+                "backend": "agentic_primitives_gateway.primitives.llm.noop.NoopLLMProvider",
             }
         },
     },
@@ -183,7 +175,7 @@ _DEFAULTS: dict[str, dict[str, Any]] = {
 class ProvidersConfig(BaseModel):
     memory: PrimitiveProvidersConfig = PrimitiveProvidersConfig(**_DEFAULTS[Primitive.MEMORY])
     observability: PrimitiveProvidersConfig = PrimitiveProvidersConfig(**_DEFAULTS[Primitive.OBSERVABILITY])
-    gateway: PrimitiveProvidersConfig = PrimitiveProvidersConfig(**_DEFAULTS[Primitive.GATEWAY])
+    llm: PrimitiveProvidersConfig = PrimitiveProvidersConfig(**_DEFAULTS[Primitive.LLM])
     tools: PrimitiveProvidersConfig = PrimitiveProvidersConfig(**_DEFAULTS[Primitive.TOOLS])
     identity: PrimitiveProvidersConfig = PrimitiveProvidersConfig(**_DEFAULTS[Primitive.IDENTITY])
     code_interpreter: PrimitiveProvidersConfig = PrimitiveProvidersConfig(**_DEFAULTS[Primitive.CODE_INTERPRETER])
@@ -341,18 +333,6 @@ class Settings(BaseSettings):
     credentials: CredentialsConfig = CredentialsConfig()
     agents: AgentsConfig = AgentsConfig()
     teams: TeamsConfig = TeamsConfig()
-
-    @field_validator("allow_server_credentials", mode="before")
-    @classmethod
-    def _normalize_server_credentials(cls, v: object) -> ServerCredentialMode:
-        """Backward compat: ``true`` → FALLBACK, ``false`` → NEVER."""
-        if isinstance(v, bool):
-            return ServerCredentialMode.FALLBACK if v else ServerCredentialMode.NEVER
-        if isinstance(v, str):
-            return ServerCredentialMode(v)
-        if isinstance(v, ServerCredentialMode):
-            return v
-        return ServerCredentialMode.NEVER
 
     @staticmethod
     def config_file_path() -> str | None:

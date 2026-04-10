@@ -1,6 +1,6 @@
 # Agentic Primitives Gateway Client
 
-Python client for the Agentic Primitives Gateway API. Use this to interact with gateway primitives — memory, identity, code interpreter, browser, observability, gateway, and tools — from your agent code.
+Python client for the Agentic Primitives Gateway API. Use this to interact with gateway primitives — memory, identity, code interpreter, browser, observability, LLM, and tools — from your agent code.
 
 ## Installation
 
@@ -241,9 +241,9 @@ await client.ingest_log({
 traces = await client.query_traces({"trace_id": "abc-123", "limit": 10})
 ```
 
-### Gateway
+### LLM
 
-Route LLM requests through the platform's model gateway.
+Route LLM requests through the platform's LLM primitive.
 
 ```python
 # Send a completion request
@@ -664,7 +664,7 @@ Async context manager. All methods are `async`.
 | `ingest_trace()` | `trace` | `dict` | Ingest a trace |
 | `ingest_log()` | `log_entry` | `dict` | Ingest a log entry |
 | `query_traces()` | `filters=None` | `dict` | Query traces |
-| **Gateway** | | | |
+| **LLM** | | | |
 | `completions()` | `model_request` | `dict` | Route an LLM request |
 | `list_models()` | — | `dict` | List available models |
 | **Tools** | | | |

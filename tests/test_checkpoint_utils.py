@@ -199,7 +199,7 @@ class TestApplyProviderOverrides:
 
     def test_returns_previous_overrides(self) -> None:
         """apply_provider_overrides returns the previous state."""
-        set_provider_overrides({"memory": "mem0", "gateway": "bedrock"})
+        set_provider_overrides({"memory": "mem0", "llm": "bedrock"})
 
         spec = AgentSpec(
             name="test",
@@ -210,11 +210,11 @@ class TestApplyProviderOverrides:
         prev = apply_provider_overrides(spec)
 
         assert prev["memory"] == "mem0"
-        assert prev["gateway"] == "bedrock"
+        assert prev["llm"] == "bedrock"
 
     def test_applies_new_overrides(self) -> None:
         """Agent's overrides are applied (agent wins on conflict)."""
-        set_provider_overrides({"memory": "mem0", "gateway": "bedrock"})
+        set_provider_overrides({"memory": "mem0", "llm": "bedrock"})
 
         spec = AgentSpec(
             name="test",
@@ -229,7 +229,7 @@ class TestApplyProviderOverrides:
         # Agent adds new override
         assert get_provider_override("observability") == "langfuse"
         # Parent override preserved (not overridden by agent)
-        assert get_provider_override("gateway") == "bedrock"
+        assert get_provider_override("llm") == "bedrock"
 
     def test_no_overrides_on_spec(self) -> None:
         """When spec has no overrides, existing overrides are unchanged."""
@@ -273,7 +273,7 @@ class TestRestoreProviderOverrides:
         spec = AgentSpec(
             name="test",
             model="m",
-            provider_overrides={"memory": "in_memory", "gateway": "bedrock"},
+            provider_overrides={"memory": "in_memory", "llm": "bedrock"},
         )
         prev = apply_provider_overrides(spec)
 
@@ -285,7 +285,7 @@ class TestRestoreProviderOverrides:
 
         # Back to original
         assert get_provider_override("memory") == "mem0"
-        assert get_provider_override("gateway") is None
+        assert get_provider_override("llm") is None
 
     def test_restores_to_empty(self) -> None:
         """Restoring an empty dict clears all overrides."""

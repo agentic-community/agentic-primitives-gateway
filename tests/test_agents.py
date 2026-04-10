@@ -14,13 +14,13 @@ from fastapi.testclient import TestClient
 
 from agentic_primitives_gateway.agents.store import FileAgentStore
 from agentic_primitives_gateway.main import app
-from agentic_primitives_gateway.primitives.gateway.base import GatewayProvider
+from agentic_primitives_gateway.primitives.llm.base import LLMProvider
 from agentic_primitives_gateway.routes.agents import set_agent_store
 
 # ── Mock gateway provider ────────────────────────────────────────────
 
 
-class MockGatewayProvider(GatewayProvider):
+class MockLLMProvider(LLMProvider):
     """Gateway provider that returns configurable responses for testing."""
 
     def __init__(self) -> None:
@@ -64,9 +64,9 @@ def agent_store(tmp_path: Any) -> FileAgentStore:
 
 
 @pytest.fixture
-def mock_gateway(agent_store: FileAgentStore) -> MockGatewayProvider:
-    """Replace the gateway provider in the registry with our mock."""
-    mock = MockGatewayProvider()
+def mock_llm_provider(agent_store: FileAgentStore) -> MockLLMProvider:
+    """Replace the LLM provider in the registry with our mock."""
+    mock = MockLLMProvider()
     with patch("agentic_primitives_gateway.agents.runner.registry") as mock_registry:
         # We need the real registry for most things but mock gateway
         from agentic_primitives_gateway.registry import registry as real_registry
@@ -78,7 +78,7 @@ def mock_gateway(agent_store: FileAgentStore) -> MockGatewayProvider:
         mock_registry.identity = real_registry.identity
         mock_registry.code_interpreter = real_registry.code_interpreter
         mock_registry.browser = real_registry.browser
-        mock_registry.gateway = mock
+        mock_registry.llm = mock
         yield mock
 
 
@@ -175,13 +175,13 @@ class TestAgentChat:
     def test_simple_text_response(
         self,
         agent_client: TestClient,
-        mock_gateway: MockGatewayProvider,
+        mock_llm_provider: MockLLMProvider,
     ) -> None:
         # Create agent
         agent_client.post("/api/v1/agents", json=SAMPLE_AGENT)
 
         # Set mock to return a simple text response
-        mock_gateway.set_responses(
+        mock_llm_provider.set_responses(
             [
                 {
                     "model": "mock-model",
@@ -207,13 +207,13 @@ class TestAgentChat:
     def test_tool_call_loop(
         self,
         agent_client: TestClient,
-        mock_gateway: MockGatewayProvider,
+        mock_llm_provider: MockLLMProvider,
     ) -> None:
         # Create agent with memory tools
         agent_client.post("/api/v1/agents", json=SAMPLE_AGENT)
 
         # Set mock: first call returns tool_use, second returns text
-        mock_gateway.set_responses(
+        mock_llm_provider.set_responses(
             [
                 {
                     "model": "mock-model",
@@ -250,14 +250,14 @@ class TestAgentChat:
     def test_max_turns_safety(
         self,
         agent_client: TestClient,
-        mock_gateway: MockGatewayProvider,
+        mock_llm_provider: MockLLMProvider,
     ) -> None:
         # Create agent with max_turns=2
         agent = {**SAMPLE_AGENT, "max_turns": 2}
         agent_client.post("/api/v1/agents", json=agent)
 
         # Set mock to always return tool_use (infinite loop)
-        mock_gateway.set_responses(
+        mock_llm_provider.set_responses(
             [
                 {
                     "model": "mock-model",
@@ -289,10 +289,10 @@ class TestAgentChat:
     def test_chat_with_session_id(
         self,
         agent_client: TestClient,
-        mock_gateway: MockGatewayProvider,
+        mock_llm_provider: MockLLMProvider,
     ) -> None:
         agent_client.post("/api/v1/agents", json=SAMPLE_AGENT)
-        mock_gateway.set_responses(
+        mock_llm_provider.set_responses(
             [
                 {
                     "model": "mock-model",

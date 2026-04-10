@@ -14,7 +14,7 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 from agentic_primitives_gateway.agents.checkpoint import CheckpointStore
-from agentic_primitives_gateway.agents.tools import ToolDefinition, execute_tool, to_gateway_tools
+from agentic_primitives_gateway.agents.tools import ToolDefinition, execute_tool, to_llm_tools
 from agentic_primitives_gateway.models.agents import AgentSpec
 from agentic_primitives_gateway.registry import registry
 
@@ -64,7 +64,7 @@ async def run_agent_with_tools(
 
     Returns the final text content from the agent.
     """
-    gateway_tools = to_gateway_tools(tools) if tools else None
+    llm_tools = to_llm_tools(tools) if tools else None
     messages: list[dict[str, Any]] = [{"role": "user", "content": message}]
     content = ""
 
@@ -77,10 +77,10 @@ async def run_agent_with_tools(
         }
         if spec.max_tokens is not None:
             request_dict["max_tokens"] = spec.max_tokens
-        if gateway_tools:
-            request_dict["tools"] = gateway_tools
+        if llm_tools:
+            request_dict["tools"] = llm_tools
 
-        response = await registry.gateway.route_request(request_dict)
+        response = await registry.llm.route_request(request_dict)
         stop_reason = response.get("stop_reason", "end_turn")
         tool_calls = response.get("tool_calls")
         turn_content = response.get("content", "")
@@ -139,7 +139,7 @@ async def run_agent_with_tools_stream(
             the model continues from where it left off.
     """
     invocation_id = uuid.uuid4().hex[:12]
-    gateway_tools = to_gateway_tools(tools) if tools else None
+    llm_tools = to_llm_tools(tools) if tools else None
     messages: list[dict[str, Any]] = [{"role": "user", "content": message}]
     content = ""
 
@@ -174,15 +174,15 @@ async def run_agent_with_tools_stream(
         }
         if spec.max_tokens is not None:
             request_dict["max_tokens"] = spec.max_tokens
-        if gateway_tools:
-            request_dict["tools"] = gateway_tools
+        if llm_tools:
+            request_dict["tools"] = llm_tools
 
         logger.info(
             "Agent[%s] stream turn %d: %d messages, %d tools",
             spec.name,
             _turn + 1,
             len(messages),
-            len(gateway_tools) if gateway_tools else 0,
+            len(llm_tools) if llm_tools else 0,
         )
 
         # Stream LLM response
@@ -190,7 +190,7 @@ async def run_agent_with_tools_stream(
         tool_calls: list[dict[str, Any]] = []
         stop_reason = "end_turn"
 
-        async for chunk in registry.gateway.route_request_stream(request_dict):
+        async for chunk in registry.llm.route_request_stream(request_dict):
             parsed = _process_stream_chunk(chunk, tool_calls, role_label, invocation_id)
             if parsed is None:
                 continue

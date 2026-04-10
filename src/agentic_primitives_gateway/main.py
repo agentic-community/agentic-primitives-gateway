@@ -46,9 +46,9 @@ from agentic_primitives_gateway.routes import (
     code_interpreter,
     credentials,
     evaluations,
-    gateway,
     health,
     identity,
+    llm,
     memory,
     observability,
     policy,
@@ -121,7 +121,7 @@ def _warn_replica_unsafe_config() -> None:
     for prim_name in (
         "memory",
         "observability",
-        "gateway",
+        "llm",
         "tools",
         "identity",
         "code_interpreter",
@@ -398,7 +398,7 @@ async def metrics() -> Response:
 app.include_router(health.router)
 app.include_router(memory.router)
 app.include_router(observability.router)
-app.include_router(gateway.router)
+app.include_router(llm.router)
 app.include_router(tools.router)
 app.include_router(identity.router)
 app.include_router(code_interpreter.router)
