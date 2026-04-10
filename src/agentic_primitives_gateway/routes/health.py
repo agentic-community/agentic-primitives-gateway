@@ -68,7 +68,7 @@ async def _check_provider(primitive: str, provider_name: str) -> tuple[str, str,
     if done:
         try:
             result = task.result()
-            # Providers can return bool (legacy) or str ("ok"/"reachable")
+            # Providers can return bool or str ("ok"/"reachable")
             status = result if isinstance(result, str) else "ok" if result else "down"
         except Exception:
             logger.debug("Healthcheck failed: %s", key, exc_info=True)

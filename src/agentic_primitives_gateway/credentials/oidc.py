@@ -56,7 +56,7 @@ class OidcCredentialResolver(CredentialResolver):
         admin_client_id: str | None = None,
         admin_client_secret: str | None = None,
         cache: CredentialCache | None = None,
-        # Legacy kwargs accepted but ignored
+        # Extra kwargs accepted but ignored
         **_kwargs: Any,
     ) -> None:
         self._cache = cache or CredentialCache()

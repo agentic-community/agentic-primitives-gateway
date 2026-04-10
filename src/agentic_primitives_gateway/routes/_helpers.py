@@ -38,7 +38,7 @@ def require_user_scoped(value: str, principal: AuthenticatedPrincipal) -> None:
     User-scoped values contain ``:u:{user_id}``.  If the embedded user_id
     does not match ``principal.id`` and the principal is not an admin, access
     is denied.  Values that do NOT contain the ``:u:`` marker are considered
-    unscoped (shared/legacy) and are allowed through.
+    unscoped (shared) and are allowed through.
     """
     idx = value.find(_USER_SCOPE_SEP)
     if idx == -1:
