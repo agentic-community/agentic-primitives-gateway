@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CONFIG_DIR="$SCRIPT_DIR/configs"
 
-CONFIG_NAME="${1:-local}"
+CONFIG_NAME="${1:-quickstart}"
 CONFIG_FILE="$CONFIG_DIR/$CONFIG_NAME.yaml"
 
 if [ ! -f "$CONFIG_FILE" ]; then
