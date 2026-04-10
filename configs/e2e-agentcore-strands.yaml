@@ -46,7 +46,7 @@
 ##
 ##   Step 3 — Verify:
 ##     curl -H "Authorization: Bearer <access-token>" \
-##       ${JWT_ISSUER}/protocol/openid-connect/userinfo
+##       https://keycloak.,,/realms/REALM/protocol/openid-connect/userinfo
 ##     → should return the apg.* attributes in the JSON response
 ##
 ##   The resolver auto-maps by convention:
