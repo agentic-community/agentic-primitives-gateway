@@ -1,0 +1,278 @@
+## Self-hosted — open-source backends for all primitives.
+##
+## Uses mem0 + Milvus for vector memory, Langfuse for observability,
+## Jupyter for code execution, Selenium Grid for browser automation,
+## and Bedrock for LLM inference (the only AWS-managed component).
+## Redis for task boards and agent/team stores.
+##
+## Prerequisites:
+##   - AWS credentials (for Bedrock LLM inference only)
+##   - Milvus vector database at localhost:19530
+##     docker run -d --name milvus -p 19530:19530 milvusdb/milvus:latest standalone
+##   - Langfuse at localhost:3000 (or set LANGFUSE_BASE_URL)
+##     https://langfuse.com/docs/deployment/self-host
+##   - Jupyter server at localhost:8888 (optional, for code execution)
+##     docker run -d --name jupyter -p 8888:8888 jupyter/minimal-notebook
+##   - Selenium Grid at localhost:4444 (optional, for browser automation)
+##     docker run -d --name selenium -p 4444:4444 selenium/standalone-chrome
+##   - Redis at localhost:6379 (required for teams)
+##     docker run -d --name redis -p 6379:6379 redis:7-alpine
+##
+## Install & run:
+##   pip install -e ".[mem0,langfuse,jupyter,selenium,redis]"
+##   ./run.sh selfhosted
+##
+## Environment variables:
+##   LANGFUSE_PUBLIC_KEY — Langfuse public key (from Langfuse project settings)
+##   LANGFUSE_SECRET_KEY — Langfuse secret key
+##   LANGFUSE_BASE_URL   — Langfuse URL (default: http://localhost:3000)
+##   AWS_REGION          — AWS region for Bedrock (default: us-east-1)
+
+allow_server_credentials: fallback
+
+providers:
+  # Memory: mem0 with Milvus vector store
+  memory:
+    default: "mem0"
+    backends:
+      mem0:
+        backend: "agentic_primitives_gateway.primitives.memory.mem0_provider.Mem0MemoryProvider"
+        config:
+          vector_store:
+            provider: milvus
+            config:
+              collection_name: agentic_memories
+              url: "http://${MILVUS_HOST:=localhost}:${MILVUS_PORT:=19530}"
+              token: ""
+              embedding_model_dims: 1024
+          llm:
+            provider: aws_bedrock
+            config:
+              model: us.anthropic.claude-sonnet-4-20250514-v1:0
+          embedder:
+            provider: aws_bedrock
+            config:
+              model: amazon.titan-embed-text-v2:0
+
+  # Observability: Langfuse
+  observability:
+    default: "langfuse"
+    backends:
+      langfuse:
+        backend: "agentic_primitives_gateway.primitives.observability.langfuse.LangfuseObservabilityProvider"
+        config:
+          public_key: "${LANGFUSE_PUBLIC_KEY:=}"
+          secret_key: "${LANGFUSE_SECRET_KEY:=}"
+          base_url: "${LANGFUSE_BASE_URL:=http://localhost:3000}"
+
+  # LLM: Bedrock Converse (the only AWS-managed component)
+  llm:
+    default: "bedrock"
+    backends:
+      bedrock:
+        backend: "agentic_primitives_gateway.primitives.llm.bedrock.BedrockConverseProvider"
+        config:
+          region: "${AWS_REGION:=us-east-1}"
+          default_model: "us.anthropic.claude-sonnet-4-20250514-v1:0"
+
+  # Code interpreter: Jupyter
+  code_interpreter:
+    default: "jupyter"
+    backends:
+      jupyter:
+        backend: "agentic_primitives_gateway.primitives.code_interpreter.jupyter.JupyterCodeInterpreterProvider"
+        config:
+          base_url: "${JUPYTER_URL:=http://localhost:8888}"
+          token: "${JUPYTER_TOKEN:=}"
+          kernel_name: "${JUPYTER_KERNEL:=python3}"
+          execution_timeout: 30.0
+
+  # Browser: Selenium Grid
+  browser:
+    default: "selenium_grid"
+    backends:
+      selenium_grid:
+        backend: "agentic_primitives_gateway.primitives.browser.selenium_grid.SeleniumGridBrowserProvider"
+        config:
+          hub_url: "${SELENIUM_HUB_URL:=http://localhost:4444}"
+          browser: "${SELENIUM_BROWSER:=chrome}"
+
+  # Tasks: Redis (required for teams)
+  tasks:
+    default: "redis"
+    backends:
+      redis:
+        backend: "agentic_primitives_gateway.primitives.tasks.redis.RedisTasksProvider"
+        config:
+          redis_url: "${REDIS_URL:=redis://localhost:6379/0}"
+
+agents:
+  store:
+    backend: redis
+    config:
+      redis_url: "${REDIS_URL:=redis://localhost:6379/0}"
+  specs:
+    research-assistant:
+      model: "us.anthropic.claude-sonnet-4-20250514-v1:0"
+      description: "A research assistant with memory, browser, and code execution"
+      system_prompt: |
+        You are a research assistant with long-term memory backed by Milvus
+        vector search and a self-hosted browser via Selenium Grid.
+
+        **Memory:** Use remember to store facts, search_memory to find them via
+        semantic similarity, recall for exact key lookup, list_memories to browse,
+        and forget to clean up. Always search memory before saying you don't know.
+
+        **Browser:** Use navigate to visit pages, read_page to extract content,
+        click and type_text for interaction, screenshot for visual inspection.
+      primitives:
+        memory:
+          enabled: true
+          namespace: "agent:{agent_name}"
+        browser:
+          enabled: true
+      max_turns: 100
+      hooks:
+        auto_memory: true
+        auto_trace: true
+    researcher:
+      model: "us.anthropic.claude-sonnet-4-20250514-v1:0"
+      description: "A focused researcher that searches memory and the web for information"
+      system_prompt: |
+        You are a focused researcher with web browsing capabilities and long-term memory.
+
+        **Research workflow:**
+        1. Always search_memory first — you may already have the answer from previous research.
+        2. If not in memory, browse the web. Use navigate to visit pages, read_page to extract content.
+        3. Store important findings with remember so you don't repeat work.
+
+        **Web browsing best practices:**
+        - For web searches, use DuckDuckGo (https://duckduckgo.com/?q=your+query) instead of Google.
+          Google often blocks automated browsers with CAPTCHAs.
+        - After navigating, always read_page first to understand the page before interacting.
+        - If you get a "NoSuchElementException" (element not found), read_page to see the current
+          page state, then try a different selector or approach.
+        - If you hit a CAPTCHA, access denied, or bot detection page, go back and try a different
+          website. Do not waste turns trying to bypass it.
+        - Prefer reading article content directly over clicking through complex navigation.
+        - If a site is paywalled or requires login, move on to another source.
+        - Use evaluate_js as a last resort to extract content when read_page doesn't capture it
+          (e.g., dynamically loaded content).
+
+        **Error handling:**
+        - If a tool call returns an error, do NOT retry the exact same call. Adjust your approach.
+        - If multiple sources fail, synthesize what you have rather than continuing to fail.
+        - Always store partial findings — something is better than nothing.
+      primitives:
+        memory:
+          enabled: true
+        browser:
+          enabled: true
+      max_turns: 100
+      hooks:
+        auto_memory: true
+        auto_trace: true
+    coder:
+      model: "us.anthropic.claude-sonnet-4-20250514-v1:0"
+      description: "A coding assistant with Jupyter kernel and persistent memory"
+      system_prompt: |
+        You are a coding assistant with a live Jupyter kernel. Write clean,
+        correct code. Execute it to verify results. State persists across calls —
+        variables, imports, and data frames survive between executions. Use memory
+        to store useful code snippets and results.
+      primitives:
+        memory:
+          enabled: true
+        code_interpreter:
+          enabled: true
+      max_turns: 100
+      hooks:
+        auto_memory: true
+        auto_trace: true
+    coordinator:
+      model: "us.anthropic.claude-sonnet-4-20250514-v1:0"
+      description: "A coordinator that delegates tasks to specialized agents"
+      system_prompt: |
+        You are a coordinator agent. You have access to specialized agents:
+        - call_researcher: for research and information gathering (has browser + memory)
+        - call_coder: for writing and running code (has Jupyter kernel + memory)
+        Delegate tasks to the appropriate agent. Synthesize their responses
+        into a coherent answer for the user.
+        IMPORTANT: When tasks can be done independently, call multiple agents
+        in parallel by making multiple tool calls in the same response.
+      primitives:
+        memory:
+          enabled: true
+        agents:
+          enabled: true
+          tools: ["researcher", "coder"]
+      hooks:
+        auto_memory: true
+        auto_trace: true
+    meta-agent:
+      model: "us.anthropic.claude-sonnet-4-20250514-v1:0"
+      description: "Creates specialized agents on the fly and delegates tasks to them"
+      system_prompt: |
+        You are a meta-agent. When you receive a task, you create specialized agents
+        tailored to the work and delegate to them.
+
+        Workflow:
+        1. Use list_primitives to see what capabilities are available
+        2. Use create_agent to build a specialist with the right primitives and a
+           focused system prompt. Only enable the primitives the agent actually needs.
+        3. Use delegate_to to send the agent its task
+        4. Use delete_agent to clean up ephemeral agents when done
+        5. Synthesize the results into a final response
+
+        Design each agent's system prompt to be specific and actionable.
+        You can create multiple agents and delegate to them in parallel when tasks
+        are independent.
+      primitives:
+        memory:
+          enabled: true
+        agent_management:
+          enabled: true
+      hooks:
+        auto_memory: true
+        auto_trace: true
+    planner:
+      model: "us.anthropic.claude-sonnet-4-20250514-v1:0"
+      description: "Decomposes requests into tasks for team execution"
+      system_prompt: |
+        You are a task planner for a team of specialized agents. Your job is to
+        decompose requests into multiple concrete tasks and assign each to the
+        right team member. You MUST create tasks for ALL workers when the request
+        involves their specialties. Always create at least one task per relevant
+        worker. Think carefully about what each worker can do and create tasks
+        that fully utilize the team. Where possible, write parallel tasks,
+        for instance: if the task is to evaluate 3 things, write out a task for each
+        evaluation.
+      primitives: {}
+      hooks:
+        auto_memory: false
+        auto_trace: false
+    synthesizer:
+      model: "us.anthropic.claude-sonnet-4-20250514-v1:0"
+      description: "Synthesizes team results into coherent responses"
+      system_prompt: |
+        You are a synthesizer. Given the results of multiple completed tasks,
+        produce a clear, comprehensive response that addresses the original request.
+      primitives: {}
+      hooks:
+        auto_memory: false
+        auto_trace: false
+
+teams:
+  store:
+    backend: redis
+    config:
+      redis_url: "${REDIS_URL:=redis://localhost:6379/0}"
+  specs:
+    research-team:
+      description: "A team that researches topics and writes code collaboratively"
+      planner: "planner"
+      synthesizer: "synthesizer"
+      workers: ["researcher", "coder"]
+      shared_memory_namespace: "team:{team_name}"
+      global_max_turns: 100
+      global_timeout_seconds: 300

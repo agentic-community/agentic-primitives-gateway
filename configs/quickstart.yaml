@@ -1,0 +1,51 @@
+## Quickstart — minimal config to get started in under 2 minutes.
+##
+## Uses Bedrock for LLM inference and in-memory storage for memory.
+## No Redis, no JWT auth, no Cedar enforcement, no external services.
+## Agents can chat and remember things, but browser/code/tools are noop.
+##
+## Prerequisites:
+##   - AWS credentials configured (aws configure, env vars, or IAM role)
+##   - Access to Amazon Bedrock models in your region
+##
+## Install & run:
+##   pip install -e .
+##   ./run.sh quickstart
+
+allow_server_credentials: fallback
+
+providers:
+  llm:
+    default: "bedrock"
+    backends:
+      bedrock:
+        backend: "agentic_primitives_gateway.primitives.llm.bedrock.BedrockConverseProvider"
+        config:
+          region: "${AWS_REGION:=us-east-1}"
+          default_model: "us.anthropic.claude-sonnet-4-20250514-v1:0"
+
+  memory:
+    default: "in_memory"
+    backends:
+      in_memory:
+        backend: "agentic_primitives_gateway.primitives.memory.in_memory.InMemoryProvider"
+        config: {}
+
+agents:
+  specs:
+    assistant:
+      model: "us.anthropic.claude-sonnet-4-20250514-v1:0"
+      description: "A helpful assistant with memory"
+      system_prompt: |
+        You are a helpful assistant with long-term memory.
+        Use remember to store important information.
+        Use search_memory to find things you've stored before.
+        Use recall to retrieve a specific memory by key.
+      primitives:
+        memory:
+          enabled: true
+          namespace: "agent:{agent_name}"
+      max_turns: 20
+      hooks:
+        auto_memory: true
+        auto_trace: false
