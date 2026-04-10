@@ -85,8 +85,8 @@ def _init_registry(_skip_without_aws_credentials):
                     "agent_id": "integ-agent",
                 },
             },
-            "gateway": {
-                "backend": "agentic_primitives_gateway.primitives.gateway.noop.NoopGatewayProvider",
+            "llm": {
+                "backend": "agentic_primitives_gateway.primitives.llm.noop.NoopLLMProvider",
                 "config": {},
             },
             "tools": {

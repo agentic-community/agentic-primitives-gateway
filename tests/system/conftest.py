@@ -64,8 +64,8 @@ def _init_registry() -> None:
                         "agent_id": "test-agent",
                     },
                 },
-                "gateway": {
-                    "backend": ("agentic_primitives_gateway.primitives.gateway.noop.NoopGatewayProvider"),
+                "llm": {
+                    "backend": ("agentic_primitives_gateway.primitives.llm.noop.NoopLLMProvider"),
                     "config": {},
                 },
                 "tools": {
