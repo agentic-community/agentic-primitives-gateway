@@ -439,7 +439,10 @@ if _STATIC_DIR.exists():
     @app.get("/ui/{full_path:path}", include_in_schema=False)
     async def ui_spa(full_path: str) -> FileResponse:
         base = _STATIC_DIR.resolve()
-        candidate = (base / full_path).resolve()
+        normalized = os.path.normpath(full_path)
+        if normalized.startswith("..") or os.path.isabs(normalized):
+            return FileResponse(base / "index.html")
+        candidate = (base / normalized).resolve()
         try:
             candidate.relative_to(base)
         except ValueError:
