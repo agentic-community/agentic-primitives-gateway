@@ -73,6 +73,8 @@ See the [Quickstart Guide](https://agentic-community.github.io/agentic-primitive
 | **selfhosted** | `./run.sh selfhosted` | Open-source: mem0/Milvus, Langfuse, Jupyter, Selenium. Needs Redis. |
 | **mixed** | `./run.sh mixed` | Both backends + JWT auth + Cedar policies + OIDC credentials. |
 
+The **selfhosted** and **mixed** configs require open-source infrastructure (Milvus, Langfuse, Selenium, Jupyter, Redis). You can run these locally with Docker, or deploy them on Kubernetes using the [Agents on EKS](https://awslabs.github.io/ai-on-eks/docs/infra/agents-on-eks) infrastructure which provisions everything with a single command.
+
 See the [Configuration Guide](https://agentic-community.github.io/agentic-primitives-gateway/getting-started/configuration/) for a full reference of every config option.
 
 ## Architecture

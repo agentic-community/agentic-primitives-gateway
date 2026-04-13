@@ -5,6 +5,8 @@ JWT authentication, provider routing, and gradual migration between backends.
 
 ## Prerequisites
 
+The self-hosted infrastructure can be run locally with Docker, or deployed via the [Agents on EKS](https://awslabs.github.io/ai-on-eks/docs/infra/agents-on-eks) infrastructure which sets up Milvus, Langfuse, Selenium Grid, Jupyter, Redis, and Keycloak on Kubernetes.
+
 ```bash
 pip install agentic-primitives-gateway-client[aws] strands-agents langchain langchain-aws langgraph
 

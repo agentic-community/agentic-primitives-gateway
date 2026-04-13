@@ -5,6 +5,10 @@ Selenium Grid for browser, Jupyter for code execution, Bedrock for LLM.
 
 ## Prerequisites
 
+You can run the self-hosted infrastructure locally with Docker, or use the [Agents on EKS](https://awslabs.github.io/ai-on-eks/docs/infra/agents-on-eks) infrastructure from AI on EKS which deploys Milvus, Langfuse, Selenium Grid, Jupyter, and Redis on Kubernetes with a single command.
+
+**Local (Docker):**
+
 ```bash
 pip install agentic-primitives-gateway-client[aws] strands-agents langchain langchain-aws langgraph
 

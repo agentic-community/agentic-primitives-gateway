@@ -156,6 +156,8 @@ The gateway ships with four configurations for different stages:
 | **selfhosted** | `./run.sh selfhosted` | Open-source backends (Milvus, Langfuse, Jupyter, Selenium). Needs Redis. |
 | **mixed** | `./run.sh mixed` | Both AgentCore + self-hosted. JWT auth + Cedar + credentials. |
 
+The **selfhosted** and **mixed** configs require open-source infrastructure (Milvus, Langfuse, Selenium, Jupyter, Redis). You can run these locally with Docker, or deploy them on Kubernetes using the [Agents on EKS](https://awslabs.github.io/ai-on-eks/docs/infra/agents-on-eks) infrastructure which provisions all the required infrastructure with a single command.
+
 See [Configuration Guide](configuration.md) for details on each config and environment variables.
 
 ## Next Steps
