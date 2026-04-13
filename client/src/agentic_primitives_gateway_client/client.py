@@ -1394,15 +1394,15 @@ class AgenticPlatformClient:
         self._raise_for_status(resp)
         return self._json_dict(resp)
 
-    # ── Gateway ─────────────────────────────────────────────────────────
+    # ── LLM ──────────────────────────────────────────────────────────────
 
     async def completions(self, model_request: dict[str, Any]) -> dict[str, Any]:
-        resp = await self._post("/api/v1/gateway/completions", json=model_request)
+        resp = await self._post("/api/v1/llm/completions", json=model_request)
         self._raise_for_status(resp)
         return self._json_dict(resp)
 
     async def list_models(self) -> dict[str, Any]:
-        resp = await self._get("/api/v1/gateway/models")
+        resp = await self._get("/api/v1/llm/models")
         self._raise_for_status(resp)
         return self._json_dict(resp)
 
