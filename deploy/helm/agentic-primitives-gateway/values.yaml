@@ -1,7 +1,7 @@
 replicaCount: 1
 
 image:
-  repository: agentic-primitives-gateway
+  repository: public.ecr.aws/ai-registry/agentic-primitives-gateway/gateway
   tag: latest
   pullPolicy: IfNotPresent
 

@@ -210,11 +210,21 @@ cd ui && npm run build               # Production build
 
 ## Deploying
 
-```bash
-# Docker
-docker build -t agentic-primitives-gateway:latest .
+Prebuilt images are available on ECR Public:
 
-# Helm
+```bash
+docker pull public.ecr.aws/ai-registry/agentic-primitives-gateway/gateway:latest
+```
+
+Or build your own:
+
+```bash
+docker build -t agentic-primitives-gateway:latest .
+```
+
+Deploy with Helm:
+
+```bash
 cd deploy/helm
 helm install apg ./agentic-primitives-gateway -f my-values.yaml
 ```
