@@ -1,5 +1,7 @@
 # Agentic Primitives Gateway
 
+![logo](docs/images/logo.png)
+
 ## Why This Exists
 
 AI agents need infrastructure: memory to persist context across conversations, identity to authenticate with external services, sandboxed environments to execute code, browsers to navigate the web, observability to trace what happened and why, tools to extend their capabilities, policies to constrain what they're allowed to do, and evaluations to measure whether they're doing it well.
