@@ -438,7 +438,12 @@ if _STATIC_DIR.exists():
 
     @app.get("/ui/{full_path:path}", include_in_schema=False)
     async def ui_spa(full_path: str) -> FileResponse:
-        file_path = (_STATIC_DIR / full_path).resolve()
-        if file_path.is_file() and str(file_path).startswith(str(_STATIC_DIR.resolve())):
-            return FileResponse(file_path)
-        return FileResponse(_STATIC_DIR / "index.html")
+        base = _STATIC_DIR.resolve()
+        candidate = (base / full_path).resolve()
+        try:
+            candidate.relative_to(base)
+        except ValueError:
+            return FileResponse(base / "index.html")
+        if candidate.is_file():
+            return FileResponse(candidate)
+        return FileResponse(base / "index.html")
