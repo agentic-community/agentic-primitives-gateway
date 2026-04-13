@@ -61,21 +61,53 @@ def _make_annotations(input_schema: dict[str, Any]) -> dict[str, Any]:
     return annotations
 
 
+def _build_tool_spec(name: str, description: str, input_schema: dict[str, Any]) -> dict[str, Any]:
+    """Build a Bedrock-compatible tool spec from catalog data.
+
+    This format is understood by Strands, Bedrock converse, and other
+    frameworks that use the Bedrock tool calling convention.
+    """
+    properties = input_schema.get("properties", {})
+    required = input_schema.get("required", [])
+    spec_props: dict[str, Any] = {}
+    for prop_name, prop_def in properties.items():
+        spec_props[prop_name] = {
+            "description": prop_def.get("description", f"Parameter {prop_name}"),
+            "type": prop_def.get("type", "string"),
+        }
+    return {
+        "name": name,
+        "description": description,
+        "inputSchema": {
+            "json": {
+                "type": "object",
+                "properties": spec_props,
+                "required": required,
+            }
+        },
+    }
+
+
 def _set_tool_metadata(
     fn: Callable,
     name: str,
     description: str,
     input_schema: dict[str, Any],
 ) -> Callable:
-    """Set __name__, __doc__, and __annotations__ on a callable.
+    """Set tool metadata on a callable for framework compatibility.
 
-    The closures returned by the tool builders already have proper
-    signatures with typed parameters, so we just set metadata directly.
+    Sets standard Python metadata (__name__, __doc__, __annotations__)
+    plus ``tool_spec`` and ``tool_name`` for Bedrock-compatible frameworks
+    (Strands, etc.).
     """
     fn.__name__ = name
     fn.__qualname__ = name
     fn.__doc__ = description
     fn.__annotations__ = _make_annotations(input_schema)
+    # Bedrock-compatible tool spec (used by Strands and other frameworks)
+    fn.tool_spec = _build_tool_spec(name, description, input_schema)  # type: ignore[attr-defined]
+    fn.tool_name = name  # type: ignore[attr-defined]
+    fn.tool_type = "function"  # type: ignore[attr-defined]
     return fn
 
 
@@ -248,39 +280,115 @@ def _tools_tool_async(
 # ── Sync tool builders per primitive ──────────────────────────────────
 
 
+class _SyncMemoryClient:
+    """Sync HTTP client for memory operations.
+
+    The async ``AgenticPlatformClient`` uses httpx.AsyncClient which is
+    bound to an event loop. Calling it from sync code via
+    ``run_until_complete`` causes "Event loop is closed" errors because
+    httpx's connection pool cleanup conflicts with loop lifecycle.
+
+    This class uses a plain ``httpx.Client`` (sync) to avoid the issue.
+    """
+
+    def __init__(self, client: AgenticPlatformClient, namespace: str) -> None:
+        import httpx as _httpx
+
+        self._namespace = namespace
+        self._base_url = str(client._client.base_url)
+        self._headers = dict(client._headers)
+        self._http = _httpx.Client(base_url=self._base_url, timeout=30)
+
+    def _request(self, method: str, path: str, **kwargs: Any) -> Any:
+        resp = self._http.request(method, path, headers=self._headers, **kwargs)
+        if resp.status_code >= 400:
+            body = resp.json() if resp.headers.get("content-type", "").startswith("application/json") else {}
+            raise RuntimeError(f"HTTP {resp.status_code}: {body.get('detail', resp.text[:200])}")
+        return resp.json()
+
+    def store(self, key: str, content: str, source: str = "") -> str:
+        ns = self._namespace
+        metadata = {"source": source} if source else {}
+        self._request("POST", f"/api/v1/memory/{ns}", json={"key": key, "content": content, "metadata": metadata})
+        return f"Stored memory '{key}'"
+
+    def retrieve(self, key: str) -> str:
+        ns = self._namespace
+        try:
+            r = self._request("GET", f"/api/v1/memory/{ns}/{key}")
+            return r.get("content", "Not found")
+        except RuntimeError:
+            return f"No memory found for key '{key}'"
+
+    def search(self, query: str, top_k: int = 5) -> str:
+        ns = self._namespace
+        r = self._request("POST", f"/api/v1/memory/{ns}/search", json={"query": query, "top_k": top_k})
+        results = r.get("results", [])
+        if not results:
+            return "No relevant memories found."
+        lines = [f"Found {len(results)} memories:"]
+        for item in results:
+            rec = item.get("record", {})
+            score = item.get("score", 0)
+            lines.append(f"  [{rec.get('key', '?')}] (score: {score:.2f}) {rec.get('content', '')}")
+        return "\n".join(lines)
+
+    def list(self, limit: int = 20) -> str:
+        ns = self._namespace
+        r = self._request("GET", f"/api/v1/memory/{ns}", params={"limit": limit})
+        records = r.get("records", [])
+        if not records:
+            return "No memories stored."
+        lines = [f"{len(records)} memories:"]
+        for rec in records:
+            lines.append(f"  [{rec.get('key', '?')}] {rec.get('content', '')}")
+        return "\n".join(lines)
+
+    def forget(self, key: str) -> str:
+        ns = self._namespace
+        self._request("DELETE", f"/api/v1/memory/{ns}/{key}")
+        return f"Deleted memory '{key}'"
+
+
 def _memory_tool_sync(
     tool_name: str,
     memory: Memory,
 ) -> Callable[..., Any] | None:
-    """Return a sync callable for a memory tool."""
+    """Return a sync callable for a memory tool.
+
+    Uses ``_SyncMemoryClient`` with a sync httpx client to avoid
+    event loop conflicts from the async ``AgenticPlatformClient``.
+    """
+    sync = _SyncMemoryClient(memory._client, memory.namespace)
+
     if tool_name == "remember":
 
         def _remember(key: str, content: str, source: str = "") -> str:
-            return memory.remember_sync(key, content, source)
+            return sync.store(key, content, source)
 
         return _remember
     if tool_name == "recall":
 
         def _recall(key: str) -> str:
-            return memory.recall_sync(key)
+            return sync.retrieve(key)
 
         return _recall
     if tool_name == "search_memory":
 
         def _search(query: str, top_k: int = 5) -> str:
-            return memory.search_sync(query, top_k)
+            return sync.search(query, top_k)
 
         return _search
     if tool_name == "list_memories":
 
         def _list(limit: int = 20) -> str:
-            return memory.list_sync(limit)
+            return sync.list(limit)
 
         return _list
     if tool_name == "forget":
 
         def _forget(key: str) -> str:
-            return memory.forget_sync(key)
+            return sync.forget(key)
 
         return _forget
     return None
@@ -478,6 +586,12 @@ async def build_tools_async(
     if "tools" in primitives:
         helpers["tools"] = Tools(client)
 
+    # Track helpers on the client for session cleanup in client.close()
+    if hasattr(client, "_tool_helpers"):
+        for h in helpers.values():
+            if hasattr(h, "session_id"):
+                client._tool_helpers.append(h)
+
     # Build tool functions
     tools: list[Callable] = []
     for prim_name in primitives:
@@ -546,6 +660,12 @@ def build_tools_sync(
         helpers["identity"] = Identity(client)
     if "tools" in primitives:
         helpers["tools"] = Tools(client)
+
+    # Track helpers on the client for session cleanup in client.close_sync()
+    if hasattr(client, "_tool_helpers"):
+        for h in helpers.values():
+            if hasattr(h, "session_id"):
+                client._tool_helpers.append(h)
 
     # Build tool functions
     tools: list[Callable] = []

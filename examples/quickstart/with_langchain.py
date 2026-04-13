@@ -1,12 +1,12 @@
 """Quickstart: LangChain agent using gateway primitives.
 
-The gateway provides memory, browser, and code execution as tools.
-LangChain handles the agent loop. Swap "langchain" for any framework —
-the gateway tools are just async Python functions.
+The gateway provides memory as tools. LangChain handles the agent loop
+(including automatic tool call execution). Swap "langchain" for any
+framework — the gateway tools are just async Python functions.
 
 Prerequisites:
     pip install agentic-primitives-gateway-client[aws] langchain langchain-aws
-    # Gateway running at localhost:8000 (./run.sh selfhosted)
+    # Gateway running at localhost:8000 (./run.sh)
 
 Usage:
     python examples/quickstart/with_langchain.py
@@ -17,13 +17,27 @@ from __future__ import annotations
 import asyncio
 import os
 
+from langchain.agents import create_agent
 from langchain_aws import ChatBedrock
+from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tools import tool
 
 from agentic_primitives_gateway_client import AgenticPlatformClient, Memory
 
 GATEWAY_URL = os.environ.get("GATEWAY_URL", "http://localhost:8000")
+
+
+class ToolTracer(BaseCallbackHandler):
+    """Print tool calls as they happen, similar to Strands output."""
+
+    def on_tool_start(self, serialized, input_str, *, run_id, **kwargs):
+        name = serialized.get("name", "?")
+        print(f"  [tool] {name}")
+
+    def on_tool_end(self, output, *, run_id, **kwargs):
+        short = str(output)[:120]
+        print(f"  [result] {short}")
 
 
 async def main():
@@ -46,43 +60,61 @@ async def main():
         """Retrieve a specific memory by key."""
         return await memory.recall(key)
 
-    # Create LangChain agent
+    @tool
+    async def list_memories() -> str:
+        """List all stored memories. Use this to see everything you remember."""
+        records = await memory._client.list_memories(memory.namespace, limit=20)
+        items = records.get("records", [])
+        if not items:
+            return "No memories stored."
+        return "\n".join(f"- {r['key']}: {r['content']}" for r in items)
+
+    # Create LangChain agent with automatic tool execution
     llm = ChatBedrock(
         model_id="us.anthropic.claude-sonnet-4-20250514-v1:0",
         region_name="us-east-1",
     )
-    llm_with_tools = llm.bind_tools([remember, search_memory, recall])
+
+    agent = create_agent(
+        llm,
+        tools=[remember, search_memory, recall, list_memories],
+    )
+
+    system_prompt = "You are a helpful assistant. Use memory to remember and recall things."
 
     print("LangChain agent with gateway memory. Type 'quit' to exit.\n")
 
-    messages = [
-        SystemMessage(content="You are a helpful assistant. Use memory tools to remember and recall information.")
-    ]
-
     while True:
-        user_input = input("You: ").strip()
+        try:
+            user_input = input("You: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            break
         if not user_input or user_input.lower() in ("quit", "exit"):
             break
 
-        messages.append(HumanMessage(content=user_input))
-        response = await llm_with_tools.ainvoke(messages)
-        messages.append(response)
+        result = await agent.ainvoke(
+            {
+                "messages": [
+                    SystemMessage(content=system_prompt),
+                    HumanMessage(content=user_input),
+                ]
+            },
+            config={"callbacks": [ToolTracer()]},
+        )
 
-        # Handle tool calls
-        while response.tool_calls:
-            for tc in response.tool_calls:
-                tool_fn = {"remember": remember, "search_memory": search_memory, "recall": recall}[tc["name"]]
-                result = await tool_fn.ainvoke(tc["args"])
-                print(f"  [tool] {tc['name']} → {result[:80]}")
-                from langchain_core.messages import ToolMessage
-
-                messages.append(ToolMessage(content=result, tool_call_id=tc["id"]))
-            response = await llm_with_tools.ainvoke(messages)
-            messages.append(response)
-
-        print(f"\nAssistant: {response.content}\n")
-
-    await client.close()
+        # Extract the final AI response
+        for msg in reversed(result.get("messages", [])):
+            if hasattr(msg, "type") and msg.type == "ai" and msg.content:
+                content = msg.content
+                if isinstance(content, list):
+                    reply = " ".join(
+                        block.get("text", "") for block in content if isinstance(block, dict) and block.get("text")
+                    )
+                else:
+                    reply = str(content)
+                print(f"\nAssistant: {reply}\n")
+                break
 
 
 if __name__ == "__main__":

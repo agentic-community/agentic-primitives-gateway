@@ -62,7 +62,10 @@ async def create_team(request: CreateTeamRequest) -> TeamSpec:
     existing = await store.get(spec.name)
     if existing is not None:
         raise HTTPException(status_code=409, detail=f"Team '{spec.name}' already exists")
-    return await store.create(spec)
+    try:
+        return await store.create(spec)
+    except KeyError:
+        raise HTTPException(status_code=409, detail=f"Team '{spec.name}' already exists") from None
 
 
 @router.get("", response_model=TeamListResponse)

@@ -8,8 +8,18 @@ Minimal examples showing how to use the gateway from different perspectives. All
 |---|---|
 | `with_curl.sh` | Raw REST API calls — no SDK, no framework. Proves it's just HTTP. |
 | `plain_python.py` | Plain Python + boto3 + gateway client. No agent framework. |
-| `with_langchain.py` | LangChain agent using gateway memory as tools. |
 | `with_strands.py` | Strands agent using auto-built tools from the gateway catalog. |
+| `with_langchain.py` | LangChain agent with manual `@tool` wrappers around the `Memory` client. |
+
+## Three ways to build tools
+
+These examples demonstrate different integration depths:
+
+| Approach | Example | When to use |
+|---|---|---|
+| **REST API** | `with_curl.sh` | Any language, maximum control, no SDK needed |
+| **Auto-built tools** | `with_strands.py` | Fastest setup — `get_tools_sync(format="strands")` returns ready-to-use tools |
+| **Manual wrappers** | `with_langchain.py` | Full control over tool behavior — wrap `Memory` / `Observability` clients with framework-specific decorators |
 
 ## Key point
 

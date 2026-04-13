@@ -126,13 +126,52 @@ from agentic_primitives_gateway_client import AgenticPlatformClient
 from strands import Agent
 
 client = AgenticPlatformClient("http://localhost:8000", aws_from_environment=True)
-tools = client.get_tools_sync(["memory"], namespace="agent:my-agent")
+tools = client.get_tools_sync(["memory"], namespace="agent:my-agent", format="strands")
 
 agent = Agent(model="us.anthropic.claude-sonnet-4-20250514-v1:0", tools=tools)
 response = agent("Remember that Python was created by Guido van Rossum, then recall it")
 ```
 
 **Any framework** — the gateway is a REST API. These examples use Python, but any language works. See `examples/quickstart/` for complete runnable scripts.
+
+### Three Ways to Build Tools
+
+There are three approaches to integrating gateway primitives with your agent, from highest to lowest level:
+
+**1. Auto-built tools** (`get_tools_sync` / `get_tools`) — fastest setup. Fetches the tool catalog from the gateway and returns framework-ready callables. Use `format="strands"` or `format="langchain"` for native integration.
+
+```python
+# One line: tools are ready to pass to your agent
+tools = client.get_tools_sync(["memory", "browser"], namespace="agent:my-agent", format="strands")
+agent = Agent(model="...", tools=tools)
+```
+
+Best for: getting started quickly, using all tools from a primitive, standard tool behavior.
+
+**2. Manual `@tool` wrappers** — full control over tool behavior. Create your own tool functions that call the gateway client, with custom descriptions, error handling, and business logic.
+
+```python
+from langchain_core.tools import tool
+
+@tool
+async def remember(key: str, content: str) -> str:
+    """Store a fact. Keys should be descriptive (e.g., 'user-preference-color')."""
+    return await memory.remember(key, content)
+```
+
+Best for: custom tool descriptions, combining multiple API calls in one tool, adding validation or post-processing.
+
+**3. Primitive client objects** (`Memory`, `Browser`, `CodeInterpreter`) — lowest level. Use the typed client classes directly in your agent loop without wrapping them as tools.
+
+```python
+memory = Memory(client, namespace="agent:my-agent")
+context = await memory.recall_context(user_input)  # inject into system prompt
+await memory.store_turn(user_input, response)       # auto-store conversation
+```
+
+Best for: auto-memory (transparent storage), injecting context into prompts, non-tool workflows where you call primitives directly from your code.
+
+All three approaches use the same gateway and the same backend providers — you can mix them in a single agent.
 
 Open the web UI at `http://localhost:8000/ui/` (after `cd ui && npm install && npm run build`).
 

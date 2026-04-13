@@ -32,6 +32,13 @@ def _mock_redis() -> AsyncMock:
     async def hgetall(key):
         return store.get(key, {})
 
+    async def hsetnx(key, field, value):
+        bucket = store.setdefault(key, {})
+        if field in bucket:
+            return 0
+        bucket[field] = value
+        return 1
+
     async def hdel(key, field):
         if key in store and field in store[key]:
             del store[key][field]
@@ -42,6 +49,7 @@ def _mock_redis() -> AsyncMock:
         return True
 
     r.hset = AsyncMock(side_effect=hset)
+    r.hsetnx = AsyncMock(side_effect=hsetnx)
     r.hget = AsyncMock(side_effect=hget)
     r.hgetall = AsyncMock(side_effect=hgetall)
     r.hdel = AsyncMock(side_effect=hdel)

@@ -22,9 +22,21 @@ AGENTIC_PRIMITIVES_GATEWAY_CONFIG_FILE=configs/quickstart.yaml \
 cd examples/quickstart && python plain_python.py
 ```
 
+## Per-Config Examples
+
+Each primary config has matching Strands and LangChain examples that demonstrate the primitives available in that deployment:
+
+| Directory | Config | Primitives demonstrated |
+|---|---|---|
+| `agentcore/` | `./run.sh agentcore` | Memory, browser, code interpreter, observability — all via AgentCore |
+| `selfhosted/` | `./run.sh selfhosted` | Memory (mem0/Milvus), browser (Selenium), code (Jupyter), observability (Langfuse) |
+| `mixed/` | `./run.sh mixed` | Both backends + JWT auth + provider routing |
+
+Each directory contains `with_strands.py` and `with_langchain.py` plus a README with prerequisites.
+
 ## E2E Consolidated Examples
 
-These three examples each demonstrate the **full gateway feature set** -- all primitives, JWT auth, Redis stores, Cedar enforcement, declarative agents, and teams. Start here after the quickstart.
+These three examples each demonstrate the **full gateway feature set** -- all primitives, JWT auth, Redis stores, Cedar enforcement, declarative agents, and teams. Start here after the per-config examples.
 
 | Directory | Framework | Providers | Description |
 |-----------|-----------|-----------|-------------|

@@ -26,11 +26,11 @@ GATEWAY_URL = os.environ.get("GATEWAY_URL", "http://localhost:8000")
 def main():
     client = AgenticPlatformClient(GATEWAY_URL, aws_from_environment=True)
 
-    # Auto-build tools from the gateway's tool catalog
-    # These are sync callables with proper names, docstrings, and type hints
+    # Auto-build Strands-compatible tools from the gateway's tool catalog
     tools = client.get_tools_sync(
         ["memory"],
         namespace="agent:strands-demo",
+        format="strands",
     )
     print(f"Loaded {len(tools)} tools from gateway: {[t.__name__ for t in tools]}\n")
 
@@ -48,8 +48,9 @@ def main():
         if not user_input or user_input.lower() in ("quit", "exit"):
             break
 
-        response = agent(user_input)
-        print(f"\nAssistant: {response}\n")
+        print("Assistant: ", end="", flush=True)
+        agent(user_input)
+        print("\n")
 
 
 if __name__ == "__main__":

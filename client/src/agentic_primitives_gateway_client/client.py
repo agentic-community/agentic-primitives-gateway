@@ -44,8 +44,10 @@ With AWS credential pass-through for AgentCore backends::
 from __future__ import annotations
 
 import asyncio
+import atexit
 import logging
 import random
+import weakref
 from typing import Any
 
 import httpx
@@ -55,6 +57,56 @@ from agentic_primitives_gateway_client._build_info import BUILD_REF
 logger = logging.getLogger(__name__)
 
 
+def _wrap_tools(tools: list, format: str) -> list:
+    """Wrap plain tool functions for a specific framework.
+
+    Args:
+        tools: List of callables with tool_spec metadata.
+        format: ``"strands"`` or ``"langchain"``.
+    """
+    if format == "strands":
+        try:
+            from strands.tools.decorator import tool as strands_tool
+        except ImportError:
+            raise ImportError(
+                "strands-agents is required for format='strands'. Install with: pip install strands-agents"
+            ) from None
+        return [strands_tool(t) for t in tools]
+
+    if format == "langchain":
+        try:
+            from langchain_core.tools import StructuredTool
+        except ImportError:
+            raise ImportError(
+                "langchain-core is required for format='langchain'. Install with: pip install langchain-core"
+            ) from None
+        import inspect
+
+        wrapped = []
+        for t in tools:
+            if inspect.iscoroutinefunction(t):
+                # Async tool — pass as coroutine
+                wrapped.append(
+                    StructuredTool.from_function(
+                        coroutine=t,
+                        name=t.__name__,
+                        description=t.__doc__ or "",
+                    )
+                )
+            else:
+                # Sync tool
+                wrapped.append(
+                    StructuredTool.from_function(
+                        func=t,
+                        name=t.__name__,
+                        description=t.__doc__ or "",
+                    )
+                )
+        return wrapped
+
+    raise ValueError(f"Unknown tool format: {format!r}. Use 'strands' or 'langchain'.")
+
+
 class AgenticPlatformError(Exception):
     """Raised when the platform API returns an error response."""
 
@@ -62,6 +114,13 @@ class AgenticPlatformError(Exception):
         self.status_code = status_code
         self.detail = detail
         super().__init__(f"HTTP {status_code}: {detail}")
+
+
+def _atexit_cleanup(client_ref: weakref.ref) -> None:
+    """Clean up browser/code_interpreter sessions at interpreter exit."""
+    client = client_ref()
+    if client is not None and not client._closed:
+        client.close_sync()
 
 
 class AgenticPlatformClient:
@@ -144,6 +203,14 @@ class AgenticPlatformClient:
             timeout=timeout,
             **httpx_kwargs,
         )
+
+        # Track primitive helpers created by get_tools/get_tools_sync for cleanup
+        self._tool_helpers: list[Any] = []
+        self._closed = False
+
+        # Auto-cleanup sessions at interpreter exit
+        ref = weakref.ref(self)
+        atexit.register(_atexit_cleanup, ref)
 
         logger.info("agentic-primitives-gateway-client build=%s", BUILD_REF)
 
@@ -273,7 +340,44 @@ class AgenticPlatformClient:
         await self.close()
 
     async def close(self) -> None:
+        """Close the HTTP client and clean up any active sessions (browser, code_interpreter)."""
+        if self._closed:
+            return
+        self._closed = True
+        for helper in self._tool_helpers:
+            if hasattr(helper, "session_id") and helper.session_id:
+                try:
+                    await helper.close()
+                except Exception:
+                    logger.debug("Failed to close session for %s", type(helper).__name__, exc_info=True)
+        self._tool_helpers.clear()
         await self._client.aclose()
+
+    def close_sync(self) -> None:
+        """Synchronous close — cleans up sessions and closes the HTTP client.
+
+        Called automatically at interpreter exit via atexit. Safe to call
+        multiple times.
+        """
+        if self._closed:
+            return
+        self._closed = True
+        for helper in self._tool_helpers:
+            if hasattr(helper, "session_id") and helper.session_id:
+                try:
+                    if hasattr(helper, "close_sync"):
+                        helper.close_sync()
+                except Exception:
+                    logger.debug("Failed to close session for %s", type(helper).__name__, exc_info=True)
+        self._tool_helpers.clear()
+        try:
+            loop = asyncio.new_event_loop()
+            try:
+                loop.run_until_complete(self._client.aclose())
+            finally:
+                loop.close()
+        except Exception:
+            pass  # best-effort at shutdown
 
     def _raise_for_status(self, resp: httpx.Response) -> None:
         if resp.status_code >= 400:
@@ -1381,30 +1485,24 @@ class AgenticPlatformClient:
         *,
         namespace: str = "",
         session_id: str | None = None,
+        format: str | None = None,
     ) -> list[Any]:
         """Get async tool functions for the requested primitives.
 
-        Fetches the tool catalog from the gateway and returns plain async
-        callables with ``__name__``, ``__doc__``, and ``__annotations__``
-        set from the catalog. Pass them directly to any agent framework.
-
-        Example::
-
-            tools = await client.get_tools(
-                ["memory", "browser", "code_interpreter"],
-                namespace="agent:my-agent",
-            )
-            # tools is a list of async callables
-            agent = create_agent(model, tools=tools)
+        Fetches the tool catalog from the gateway and returns callables.
 
         Args:
             primitives: Primitive names (e.g. ``["memory", "browser"]``).
             namespace: Memory namespace (required if ``"memory"`` is included).
             session_id: Optional session ID for browser/code_interpreter.
+            format: Optional framework format. ``"strands"`` wraps with
+                ``@tool``, ``"langchain"`` returns ``StructuredTool``.
+                Default (None) returns plain async callables.
         """
         from agentic_primitives_gateway_client.tool_builder import build_tools_async
 
-        return await build_tools_async(self, primitives, namespace=namespace, session_id=session_id)
+        tools = await build_tools_async(self, primitives, namespace=namespace, session_id=session_id)
+        return _wrap_tools(tools, format) if format else tools
 
     def get_tools_sync(
         self,
@@ -1412,28 +1510,24 @@ class AgenticPlatformClient:
         *,
         namespace: str = "",
         session_id: str | None = None,
+        format: str | None = None,
     ) -> list[Any]:
         """Get sync tool functions for the requested primitives.
 
         Same as :meth:`get_tools` but returns synchronous callables.
 
-        Example::
-
-            tools = client.get_tools_sync(
-                ["memory", "browser", "code_interpreter"],
-                namespace="agent:my-agent",
-            )
-            # tools is a list of sync callables
-            agent = Agent(model=model, tools=tools)
-
         Args:
             primitives: Primitive names (e.g. ``["memory", "browser"]``).
             namespace: Memory namespace (required if ``"memory"`` is included).
             session_id: Optional session ID for browser/code_interpreter.
+            format: Optional framework format. ``"strands"`` wraps with
+                ``@tool``, ``"langchain"`` returns ``StructuredTool``.
+                Default (None) returns plain sync callables.
         """
         from agentic_primitives_gateway_client.tool_builder import build_tools_sync
 
-        return build_tools_sync(self, primitives, namespace=namespace, session_id=session_id)
+        tools = build_tools_sync(self, primitives, namespace=namespace, session_id=session_id)
+        return _wrap_tools(tools, format) if format else tools
 
     async def create_agent(self, spec: dict[str, Any]) -> dict[str, Any]:
         """Create a new agent.

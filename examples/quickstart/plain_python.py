@@ -66,8 +66,6 @@ async def main():
         # Store the turn in gateway memory
         await memory.store_turn(user_input, reply)
 
-    await client.close()
-
 
 if __name__ == "__main__":
     asyncio.run(main())

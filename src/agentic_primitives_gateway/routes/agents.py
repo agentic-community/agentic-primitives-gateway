@@ -70,7 +70,10 @@ async def create_agent(request: CreateAgentRequest) -> AgentSpec:
     existing = await store.get(spec.name)
     if existing is not None:
         raise HTTPException(status_code=409, detail=f"Agent '{spec.name}' already exists")
-    return await store.create(spec)
+    try:
+        return await store.create(spec)
+    except KeyError:
+        raise HTTPException(status_code=409, detail=f"Agent '{spec.name}' already exists") from None
 
 
 @router.get("", response_model=AgentListResponse)

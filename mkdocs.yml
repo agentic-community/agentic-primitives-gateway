@@ -58,6 +58,7 @@ nav:
     - Streaming: concepts/streaming.md
     - Policy Enforcement: concepts/policy.md
   - Guides:
+    - Building Tools: guides/building-tools.md
     - Adding a Provider: guides/adding-a-provider.md
     - Agent-as-Tool Delegation: guides/agent-delegation.md
     - Memory Namespaces: guides/memory-namespaces.md

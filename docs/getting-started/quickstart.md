@@ -112,7 +112,7 @@ from agentic_primitives_gateway_client import AgenticPlatformClient
 from strands import Agent
 
 client = AgenticPlatformClient("http://localhost:8000", aws_from_environment=True)
-tools = client.get_tools_sync(["memory"], namespace="agent:my-agent")
+tools = client.get_tools_sync(["memory"], namespace="agent:my-agent", format="strands")
 agent = Agent(model="us.anthropic.claude-sonnet-4-20250514-v1:0", tools=tools)
 ```
 

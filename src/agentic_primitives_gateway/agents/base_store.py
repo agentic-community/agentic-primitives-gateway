@@ -143,7 +143,10 @@ class FileSpecStore(SpecStore[T]):
         return builtins.list(self._specs.values())
 
     async def create(self, spec: T) -> T:
-        self._specs[spec.name] = spec  # type: ignore[attr-defined]
+        name = spec.name  # type: ignore[attr-defined]
+        if name in self._specs:
+            raise KeyError(f"{self._entity_label.capitalize()} already exists: {name}")
+        self._specs[name] = spec
         self._save()
         return spec
 
@@ -246,11 +249,13 @@ class RedisSpecStore(SpecStore[T]):
         return [self._spec_cls(**json.loads(v)) for v in all_raw.values()]
 
     async def create(self, spec: T) -> T:
-        await self._redis.hset(
+        created = await self._redis.hsetnx(
             self._redis_key,
             spec.name,  # type: ignore[attr-defined]
             json.dumps(spec.model_dump(), default=str),  # type: ignore[union-attr]
         )
+        if not created:
+            raise KeyError(f"{self._entity_label.capitalize()} already exists: {spec.name}")  # type: ignore[attr-defined]
         return spec
 
     async def update(self, name: str, updates: dict[str, Any]) -> T:
