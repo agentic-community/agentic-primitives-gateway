@@ -1,13 +1,7 @@
 name: Build Gateway Image
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'src/**'
-      - 'ui/**'
-      - 'docker/Dockerfile'
-      - '.github/workflows/build-gateway.yml'
+  workflow_call:
   workflow_dispatch:
 
 permissions:

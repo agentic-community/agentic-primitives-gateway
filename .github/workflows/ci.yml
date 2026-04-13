@@ -77,40 +77,12 @@ jobs:
       - run: cd client && pip install -e ".[dev]"
       - run: cd client && pytest tests/ -v
 
-  build-server:
-    name: Build server image
+  build-gateway:
+    name: Build gateway image
     needs: [test-server, test-client]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
-      - name: Stamp build ref
-        run: |
-          REF="sha-$(echo $GITHUB_SHA | head -c 7)"
-          echo "BUILD_REF=$REF" >> "$GITHUB_ENV"
-          printf 'from __future__ import annotations\n\nBUILD_REF = "%s"\n' "$REF" \
-            > src/agentic_primitives_gateway/_build_info.py
-      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
-        id: meta
-        with:
-          images: ghcr.io/${{ github.repository }}
-          tags: |
-            type=raw,value=latest
-            type=sha,prefix=sha-,format=short
-      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
-        with:
-          context: .
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+    uses: ./.github/workflows/build-gateway.yml
+    secrets: inherit
 
   build-client:
     name: Build & release client wheel

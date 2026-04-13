@@ -131,16 +131,12 @@ module = [
     "mem0.*",
     "bedrock_agentcore.*",
     "opentelemetry.*",
-    "aws_opentelemetry.*",
     "playwright.*",
     "langfuse.*",
-    "pymilvus.*",
-    "ddtrace.*",
     "boto3.*",
     "botocore.*",
     "amazon.*",
     "selenium.*",
-    "daytona_sdk.*",
     "websockets.*",
     "cedarpy.*",
     "jwt.*",
@@ -148,6 +144,8 @@ module = [
     "msal.*",
     "requests.*",
     "redis.*",
+    "strands.*",
+    "langchain_core.*",
 ]
 ignore_missing_imports = true
 

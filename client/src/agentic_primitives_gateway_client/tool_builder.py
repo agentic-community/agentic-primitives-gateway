@@ -316,7 +316,7 @@ class _SyncMemoryClient:
         ns = self._namespace
         try:
             r = self._request("GET", f"/api/v1/memory/{ns}/{key}")
-            return r.get("content", "Not found")
+            return str(r.get("content", "Not found"))
         except RuntimeError:
             return f"No memory found for key '{key}'"
 
