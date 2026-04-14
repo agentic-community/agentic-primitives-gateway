@@ -1,6 +1,6 @@
 site_name: Agentic Primitives Gateway
 site_description: Unified API for agent infrastructure primitives
-repo_url: https://github.com/your-org/agentic-primitives-gateway
+repo_url: https://github.com/agentic-community/agentic-primitives-gateway
 repo_name: agentic-primitives-gateway
 
 theme:
@@ -66,6 +66,14 @@ nav:
   - API Reference:
     - Overview: api/overview.md
     - Memory: api/memory.md
+    - Identity: api/identity.md
+    - Code Interpreter: api/code-interpreter.md
+    - Browser: api/browser.md
+    - Observability: api/observability.md
+    - LLM: api/llm.md
+    - Tools: api/tools.md
+    - Policy: api/policy.md
+    - Evaluations: api/evaluations.md
     - Agents: api/agents.md
     - Teams: api/teams.md
   - Examples:
