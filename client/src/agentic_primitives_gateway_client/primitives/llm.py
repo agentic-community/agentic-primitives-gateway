@@ -1,20 +1,20 @@
-"""Gateway helper for the Agentic Primitives Gateway client.
+"""LLM helper for the Agentic Primitives Gateway client.
 
-Provides a convenience wrapper around the gateway (LLM routing) endpoints.
+Provides a convenience wrapper around the LLM routing endpoints.
 
 Usage (async)::
 
-    from agentic_primitives_gateway_client import AgenticPlatformClient, Gateway
+    from agentic_primitives_gateway_client import AgenticPlatformClient, LLM
 
     client = AgenticPlatformClient("http://localhost:8000", ...)
-    gateway = Gateway(client)
+    llm = LLM(client)
 
-    result = await gateway.completions(model="...", messages=[...])
-    models = await gateway.list_models()
+    result = await llm.completions(model="...", messages=[...])
+    models = await llm.list_models()
 
 Usage (sync)::
 
-    result = gateway.completions_sync(model="...", messages=[...])
+    result = llm.completions_sync(model="...", messages=[...])
 """
 
 from __future__ import annotations
@@ -25,8 +25,8 @@ from typing import Any
 from agentic_primitives_gateway_client.client import AgenticPlatformClient
 
 
-class Gateway:
-    """Helper for the gateway primitive — LLM request routing."""
+class LLM:
+    """Helper for the LLM primitive — model request routing."""
 
     def __init__(self, client: AgenticPlatformClient) -> None:
         self._client = client
@@ -52,7 +52,7 @@ class Gateway:
         return await self._client.completions(request)
 
     async def list_models(self) -> list[dict[str, Any]]:
-        """List available models from the gateway backend."""
+        """List available models from the LLM backend."""
         result = await self._client.list_models()
         models: list[dict[str, Any]] = result.get("models", [])
         return models

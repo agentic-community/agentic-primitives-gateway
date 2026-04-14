@@ -5,10 +5,10 @@ from agentic_primitives_gateway_client.auth import (
 )
 from agentic_primitives_gateway_client.client import AgenticPlatformClient, AgenticPlatformError
 from agentic_primitives_gateway_client.primitives import (
+    LLM,
     Browser,
     CodeInterpreter,
     Evaluations,
-    Gateway,
     Identity,
     Memory,
     Observability,
@@ -17,12 +17,12 @@ from agentic_primitives_gateway_client.primitives import (
 )
 
 __all__ = [
+    "LLM",
     "AgenticPlatformClient",
     "AgenticPlatformError",
     "Browser",
     "CodeInterpreter",
     "Evaluations",
-    "Gateway",
     "Identity",
     "Memory",
     "Observability",

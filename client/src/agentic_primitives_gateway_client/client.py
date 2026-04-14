@@ -271,7 +271,7 @@ class AgenticPlatformClient:
 
         Args:
             primitive: One of 'memory', 'identity', 'code_interpreter',
-                'browser', 'observability', 'gateway', 'tools'.
+                'browser', 'observability', 'llm', 'tools'.
             name: The backend name as configured on the server.
         """
         header = f"x-provider-{primitive.replace('_', '-')}"
