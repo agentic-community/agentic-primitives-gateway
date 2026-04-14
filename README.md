@@ -139,7 +139,7 @@ See the [Configuration Guide](https://agentic-community.github.io/agentic-primit
 | **LLM** | LLM routing with tool_use support | Noop, Bedrock Converse |
 | **Tools** | Tool registration, discovery, and invocation (MCP) | Noop, AgentCore, MCP Registry |
 | **Policy** | Cedar policy engine and policy CRUD | Noop, AgentCore |
-| **Evaluations** | LLM-as-a-judge evaluator management and evaluation | Noop, AgentCore |
+| **Evaluations** | LLM-as-a-judge evaluator management and evaluation | Noop, Langfuse, AgentCore |
 
 See the [Primitives Guide](https://agentic-community.github.io/agentic-primitives-gateway/concepts/primitives/) for details on each primitive and its backends.
 

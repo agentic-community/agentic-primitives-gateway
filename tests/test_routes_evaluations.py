@@ -78,6 +78,29 @@ class TestEvaluate:
         assert data["results"][0]["label"] == "PASS"
 
 
+class TestScoreCRUD501:
+    """Score CRUD is not supported by the noop provider."""
+
+    def test_create_score_returns_501(self, client: TestClient) -> None:
+        resp = client.post(
+            "/api/v1/evaluations/scores",
+            json={"name": "accuracy", "value": 0.9},
+        )
+        assert resp.status_code == 501
+
+    def test_list_scores_returns_501(self, client: TestClient) -> None:
+        resp = client.get("/api/v1/evaluations/scores")
+        assert resp.status_code == 501
+
+    def test_get_score_returns_501(self, client: TestClient) -> None:
+        resp = client.get("/api/v1/evaluations/scores/fake-id")
+        assert resp.status_code == 501
+
+    def test_delete_score_returns_501(self, client: TestClient) -> None:
+        resp = client.delete("/api/v1/evaluations/scores/fake-id")
+        assert resp.status_code == 501
+
+
 class TestOnlineEvalConfig501:
     """Online eval configs are not supported by the noop provider."""
 

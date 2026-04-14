@@ -97,6 +97,14 @@ providers:
           hub_url: "${SELENIUM_HUB_URL:=http://localhost:4444}"
           browser: "${SELENIUM_BROWSER:=chrome}"
 
+  # Evaluations: Langfuse (score configs + scores)
+  evaluations:
+    default: "langfuse"
+    backends:
+      langfuse:
+        backend: "agentic_primitives_gateway.primitives.evaluations.langfuse.LangfuseEvaluationsProvider"
+        config: {}
+
   # Tasks: Redis (required for teams)
   tasks:
     default: "redis"

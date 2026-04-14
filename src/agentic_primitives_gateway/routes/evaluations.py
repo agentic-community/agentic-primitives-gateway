@@ -6,6 +6,7 @@ from agentic_primitives_gateway.models.enums import Primitive
 from agentic_primitives_gateway.models.evaluations import (
     CreateEvaluatorRequest,
     CreateOnlineEvalConfigRequest,
+    CreateScoreRequest,
     EvaluateRequest,
     UpdateEvaluatorRequest,
 )
@@ -76,6 +77,61 @@ async def evaluate(request: EvaluateRequest) -> Any:
         expected_output=request.expected_output,
         metadata=request.metadata or None,
     )
+
+
+# ── Scores (record/retrieve pre-computed scores) ─────────────────
+
+
+@router.post("/scores", status_code=201)
+async def create_score(request: CreateScoreRequest) -> Any:
+    try:
+        return await registry.evaluations.create_score(
+            name=request.name,
+            value=request.value,
+            trace_id=request.trace_id,
+            observation_id=request.observation_id,
+            comment=request.comment,
+            data_type=request.data_type,
+            config_id=request.config_id,
+            metadata=request.metadata or None,
+        )
+    except NotImplementedError:
+        raise HTTPException(status_code=501, detail="Score recording not supported by this provider") from None
+
+
+@router.get("/scores")
+@handle_provider_errors("Score listing not supported by this provider")
+async def list_scores(
+    trace_id: str | None = Query(default=None),
+    name: str | None = Query(default=None),
+    config_id: str | None = Query(default=None),
+    data_type: str | None = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    limit: int = Query(default=100, ge=1, le=1000),
+) -> Any:
+    return await registry.evaluations.list_scores(
+        trace_id=trace_id,
+        name=name,
+        config_id=config_id,
+        data_type=data_type,
+        page=page,
+        limit=limit,
+    )
+
+
+@router.get("/scores/{score_id}")
+@handle_provider_errors("Score retrieval not supported by this provider", not_found="Score not found")
+async def get_score(score_id: str) -> Any:
+    return await registry.evaluations.get_score(score_id)
+
+
+@router.delete("/scores/{score_id}")
+async def delete_score(score_id: str) -> Response:
+    try:
+        await registry.evaluations.delete_score(score_id)
+    except NotImplementedError:
+        raise HTTPException(status_code=501, detail="Score deletion not supported by this provider") from None
+    return Response(status_code=204)
 
 
 # ── Online evaluation configs ──────────────────────────────────────

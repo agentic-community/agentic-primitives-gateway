@@ -127,3 +127,54 @@ class TestSessionOwnershipStore:
         await store.set_owner("sess-1", "alice")
         await store.set_owner("sess-1", "bob")
         assert await store.get_owner("sess-1") == "bob"
+
+    @pytest.mark.asyncio
+    async def test_owned_session_ids(self, store: SessionOwnershipStore):
+        await store.set_owner("s1", "alice")
+        await store.set_owner("s2", "bob")
+        await store.set_owner("s3", "alice")
+        result = await store.owned_session_ids("alice")
+        assert result == {"s1", "s3"}
+
+
+class TestSessionOwnershipStoreRedis:
+    """Test Redis-backed paths of SessionOwnershipStore."""
+
+    @pytest.fixture
+    def store(self) -> SessionOwnershipStore:
+        from unittest.mock import AsyncMock
+
+        s = SessionOwnershipStore()
+        mock_redis = AsyncMock()
+        s.set_redis(mock_redis)
+        return s
+
+    @pytest.mark.asyncio
+    async def test_set_owner_writes_redis(self, store: SessionOwnershipStore):
+        await store.set_owner("sess-1", "alice")
+        store._redis.set.assert_called_once_with("session_owner:sess-1", "alice", ex=86400)
+
+    @pytest.mark.asyncio
+    async def test_get_owner_from_redis(self, store: SessionOwnershipStore):
+        store._redis.get.return_value = "alice"
+        owner = await store.get_owner("sess-1")
+        assert owner == "alice"
+        store._redis.get.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_delete_deletes_redis(self, store: SessionOwnershipStore):
+        await store.set_owner("sess-1", "alice")
+        await store.delete("sess-1")
+        store._redis.delete.assert_called_once_with("session_owner:sess-1")
+
+    @pytest.mark.asyncio
+    async def test_owned_session_ids_scans_redis(self, store: SessionOwnershipStore):
+        async def _scan_iter(match: str):
+            for k in ["session_owner:s1", "session_owner:s2"]:
+                yield k
+
+        store._redis.scan_iter = _scan_iter
+        store._redis.get.side_effect = lambda k: "alice" if "s1" in k else "bob"
+
+        result = await store.owned_session_ids("alice")
+        assert "s1" in result

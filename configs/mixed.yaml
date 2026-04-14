@@ -167,10 +167,13 @@ providers:
         config:
           region: "${AWS_REGION:=us-east-1}"
 
-  # Evaluations: AgentCore (no self-hosted equivalent)
+  # Evaluations: Langfuse (self-hosted) + AgentCore
   evaluations:
-    default: "agentcore"
+    default: "langfuse"
     backends:
+      langfuse:
+        backend: "agentic_primitives_gateway.primitives.evaluations.langfuse.LangfuseEvaluationsProvider"
+        config: {}
       agentcore:
         backend: "agentic_primitives_gateway.primitives.evaluations.agentcore.AgentCoreEvaluationsProvider"
         config:

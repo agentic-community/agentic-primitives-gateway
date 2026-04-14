@@ -118,6 +118,9 @@ providers:
       noop:
         backend: "agentic_primitives_gateway.primitives.evaluations.noop.NoopEvaluationsProvider"
         config: {}
+      langfuse:
+        backend: "agentic_primitives_gateway.primitives.evaluations.langfuse.LangfuseEvaluationsProvider"
+        config: {}
       agentcore:
         backend: "agentic_primitives_gateway.primitives.evaluations.agentcore.AgentCoreEvaluationsProvider"
         config:

@@ -8,7 +8,14 @@ class EvaluationsProvider(ABC):
     """Abstract base class for evaluations providers.
 
     Evaluations providers manage evaluator lifecycle, run evaluations against
-    agent outputs, and optionally support online evaluation configurations.
+    agent outputs, record scores, and optionally support online evaluation
+    configurations.
+
+    Two distinct operations:
+    - **evaluate**: Run an evaluation (e.g., LLM-as-a-judge) that computes
+      scores from input/output data. The provider does the scoring.
+    - **scores**: Record, retrieve, and manage pre-computed scores. The caller
+      provides the scores.
     """
 
     # ── Evaluator CRUD ─────────────────────────────────────────────────
@@ -43,7 +50,7 @@ class EvaluationsProvider(ABC):
         next_token: str | None = None,
     ) -> dict[str, Any]: ...
 
-    # ── Evaluate ───────────────────────────────────────────────────────
+    # ── Evaluate (compute scores) ──────────────────────────────────────
 
     @abstractmethod
     async def evaluate(
@@ -55,6 +62,40 @@ class EvaluationsProvider(ABC):
         expected_output: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]: ...
+
+    # ── Score CRUD (record/retrieve pre-computed scores) ───────────────
+
+    async def create_score(
+        self,
+        *,
+        name: str,
+        value: float | str,
+        trace_id: str | None = None,
+        observation_id: str | None = None,
+        comment: str | None = None,
+        data_type: str | None = None,
+        config_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        raise NotImplementedError
+
+    async def get_score(self, score_id: str) -> dict[str, Any]:
+        raise NotImplementedError
+
+    async def delete_score(self, score_id: str) -> None:
+        raise NotImplementedError
+
+    async def list_scores(
+        self,
+        *,
+        trace_id: str | None = None,
+        name: str | None = None,
+        config_id: str | None = None,
+        data_type: str | None = None,
+        page: int = 1,
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        raise NotImplementedError
 
     # ── Online evaluation configs (optional) ───────────────────────────
 

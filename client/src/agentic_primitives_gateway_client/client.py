@@ -1278,6 +1278,69 @@ class AgenticPlatformClient:
         self._raise_for_status(resp)
         return self._json_dict(resp)
 
+    # ── Evaluation Scores ────────────────────────────────────────────────
+
+    async def create_evaluation_score(
+        self,
+        name: str,
+        value: float | str,
+        trace_id: str | None = None,
+        observation_id: str | None = None,
+        comment: str | None = None,
+        data_type: str | None = None,
+        config_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {"name": name, "value": value}
+        if trace_id is not None:
+            body["trace_id"] = trace_id
+        if observation_id is not None:
+            body["observation_id"] = observation_id
+        if comment is not None:
+            body["comment"] = comment
+        if data_type is not None:
+            body["data_type"] = data_type
+        if config_id is not None:
+            body["config_id"] = config_id
+        if metadata:
+            body["metadata"] = metadata
+        resp = await self._post("/api/v1/evaluations/scores", json=body)
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def get_evaluation_score(self, score_id: str) -> dict[str, Any]:
+        resp = await self._get(f"/api/v1/evaluations/scores/{score_id}")
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def delete_evaluation_score(self, score_id: str) -> None:
+        resp = await self._delete(f"/api/v1/evaluations/scores/{score_id}")
+        if resp.status_code == 204:
+            return
+        self._raise_for_status(resp)
+
+    async def list_evaluation_scores(
+        self,
+        trace_id: str | None = None,
+        name: str | None = None,
+        config_id: str | None = None,
+        data_type: str | None = None,
+        page: int = 1,
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {"page": page, "limit": limit}
+        if trace_id:
+            params["trace_id"] = trace_id
+        if name:
+            params["name"] = name
+        if config_id:
+            params["config_id"] = config_id
+        if data_type:
+            params["data_type"] = data_type
+        resp = await self._get("/api/v1/evaluations/scores", params=params)
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
     async def create_online_eval_config(
         self,
         name: str,

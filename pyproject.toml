@@ -156,3 +156,9 @@ module = [
     "agentic_primitives_gateway.agents.session_registry",
 ]
 disable_error_code = ["misc"]
+
+[[tool.mypy.overrides]]
+module = [
+    "agentic_primitives_gateway.primitives.evaluations.langfuse",
+]
+disable_error_code = ["no-any-return", "call-arg"]

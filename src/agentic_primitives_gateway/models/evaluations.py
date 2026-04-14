@@ -55,6 +55,34 @@ class EvaluateResponse(BaseModel):
     evaluation_results: list[EvaluationResult] = Field(default_factory=list)
 
 
+class CreateScoreRequest(BaseModel):
+    name: str
+    value: float | str
+    trace_id: str | None = None
+    observation_id: str | None = None
+    comment: str | None = None
+    data_type: str | None = None
+    config_id: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ScoreInfo(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    score_id: str
+    name: str = ""
+    value: float | str | None = None
+    trace_id: str | None = None
+    comment: str | None = None
+    data_type: str | None = None
+
+
+class ListScoresResponse(BaseModel):
+    scores: list[ScoreInfo] = Field(default_factory=list)
+    page: int = 1
+    total_items: int | None = None
+
+
 class CreateOnlineEvalConfigRequest(BaseModel):
     name: str
     evaluator_ids: list[str]
