@@ -4,7 +4,7 @@
 
 Tool registration, discovery, invocation, and MCP server management. All endpoints require authentication.
 
-**Backends:** `NoopToolsProvider`, `AgentCoreGatewayProvider`, `MCPRegistryProvider`
+**Backends:** `NoopToolsProvider`, `AgentCoreGatewayProvider`, [`MCPRegistryProvider`](../guides/mcp-gateway-registry.md)
 
 ## Tool Operations
 
