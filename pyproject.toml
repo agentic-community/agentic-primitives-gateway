@@ -32,7 +32,7 @@ agentcore = [
     "playwright>=1.40.0",
 ]
 langfuse = [
-    "langfuse>=3.0.0",
+    "langfuse>=3.0.0,<4.0.0",
 ]
 keycloak = [
     "python-keycloak>=4.0.0",
