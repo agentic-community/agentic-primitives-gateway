@@ -102,7 +102,7 @@ class TestLangfuseEvaluationsProvider:
 
             assert result["evaluator_id"] == "cfg-2"
             assert result["name"] == "accuracy"
-            client.score_configs.get_by_id.assert_called_once_with("cfg-2")
+            client.score_configs.get_by_id.assert_called_once_with(config_id="cfg-2")
 
     @pytest.mark.asyncio
     async def test_update_evaluator(self, mock_creds):
@@ -131,9 +131,7 @@ class TestLangfuseEvaluationsProvider:
 
             await provider.delete_evaluator("cfg-1")
 
-            client.score_configs.update.assert_called_once()
-            call_args = client.score_configs.update.call_args
-            assert call_args[0][0] == "cfg-1"
+            client.score_configs.update.assert_called_once_with(config_id="cfg-1", is_archived=True)
 
     @pytest.mark.asyncio
     async def test_list_evaluators(self, mock_creds):
@@ -203,7 +201,7 @@ class TestLangfuseEvaluationsProvider:
             mock_rc.return_value = client
             mock_response = MagicMock()
             mock_response.id = "score-1"
-            client.score.create.return_value = mock_response
+            client.legacy.score_v1.create.return_value = mock_response
 
             result = await provider.create_score(
                 name="helpfulness",
@@ -215,7 +213,7 @@ class TestLangfuseEvaluationsProvider:
             assert result["score_id"] == "score-1"
             assert result["name"] == "helpfulness"
             assert result["value"] == 0.85
-            client.score.create.assert_called_once()
+            client.legacy.score_v1.create.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_get_score(self, mock_creds):
@@ -225,13 +223,13 @@ class TestLangfuseEvaluationsProvider:
         with patch.object(provider, "_resolve_rest_client") as mock_rc:
             client = MagicMock()
             mock_rc.return_value = client
-            client.score_v_2.get_by_id.return_value = _mock_score()
+            client.scores.get_by_id.return_value = _mock_score()
 
             result = await provider.get_score("score-1")
 
             assert result["score_id"] == "score-1"
             assert result["value"] == 0.9
-            client.score_v_2.get_by_id.assert_called_once_with("score-1")
+            client.scores.get_by_id.assert_called_once_with(score_id="score-1")
 
     @pytest.mark.asyncio
     async def test_delete_score(self, mock_creds):
@@ -244,7 +242,7 @@ class TestLangfuseEvaluationsProvider:
 
             await provider.delete_score("score-1")
 
-            client.score.delete.assert_called_once_with("score-1")
+            client.legacy.score_v1.delete.assert_called_once_with(score_id="score-1")
 
     @pytest.mark.asyncio
     async def test_list_scores(self, mock_creds):
@@ -258,7 +256,7 @@ class TestLangfuseEvaluationsProvider:
             mock_result.data = [_mock_score(), _mock_score(id="score-2", value=0.5)]
             mock_result.meta = MagicMock()
             mock_result.meta.total_items = 2
-            client.score_v_2.get.return_value = mock_result
+            client.scores.get_many.return_value = mock_result
 
             result = await provider.list_scores(trace_id="trace-1", limit=10)
 
@@ -278,12 +276,12 @@ class TestLangfuseEvaluationsProvider:
             mock_result.data = []
             mock_result.meta = MagicMock()
             mock_result.meta.total_items = 0
-            client.score_v_2.get.return_value = mock_result
+            client.scores.get_many.return_value = mock_result
 
             result = await provider.list_scores(name="accuracy", data_type="numeric")
 
             assert result["scores"] == []
-            call_kwargs = client.score_v_2.get.call_args[1]
+            call_kwargs = client.scores.get_many.call_args[1]
             assert call_kwargs["name"] == "accuracy"
 
     # ── Not supported ─────────────────────────────────────────────────
@@ -347,7 +345,7 @@ class TestCredentialResolution:
         mock_creds.return_value = {"public_key": "pk", "secret_key": "sk", "base_url": "https://test"}
         provider = LangfuseEvaluationsProvider(public_key="pk", secret_key="sk")
 
-        with patch("agentic_primitives_gateway.primitives.evaluations.langfuse.FernLangfuse") as mock_cls:
+        with patch("agentic_primitives_gateway.primitives.evaluations.langfuse.LangfuseAPI") as mock_cls:
             provider._resolve_rest_client()
             mock_cls.assert_called_once_with(
                 base_url="https://test",
@@ -371,7 +369,7 @@ class TestCredentialResolution:
 
 class TestHelpers:
     def test_to_data_type(self):
-        from langfuse.api.resources.commons.types.score_data_type import ScoreDataType
+        from langfuse.api import ScoreDataType
 
         assert _to_data_type("numeric") == ScoreDataType.NUMERIC
         assert _to_data_type("boolean") == ScoreDataType.BOOLEAN

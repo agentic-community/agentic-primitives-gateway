@@ -4,11 +4,10 @@ import logging
 import os
 from typing import Any
 
-from langfuse.api.client import FernLangfuse
-from langfuse.api.resources.commons.types.score_data_type import ScoreDataType
-from langfuse.api.resources.score.types.create_score_request import CreateScoreRequest
-from langfuse.api.resources.score_configs.types.create_score_config_request import CreateScoreConfigRequest
-from langfuse.api.resources.score_configs.types.update_score_config_request import UpdateScoreConfigRequest
+from langfuse.api import (
+    LangfuseAPI,
+    ScoreDataType,
+)
 
 from agentic_primitives_gateway.context import get_service_credentials_or_defaults
 from agentic_primitives_gateway.primitives._sync import SyncRunnerMixin
@@ -120,10 +119,10 @@ class LangfuseEvaluationsProvider(SyncRunnerMixin, EvaluationsProvider):
             },
         )
 
-    def _resolve_rest_client(self) -> FernLangfuse:
+    def _resolve_rest_client(self) -> LangfuseAPI:
         """Create a Langfuse REST API client with per-request credentials."""
         creds = self._resolve_credentials()
-        return FernLangfuse(
+        return LangfuseAPI(
             base_url=creds.get("base_url", "https://cloud.langfuse.com"),
             username=creds.get("public_key", ""),
             password=creds.get("secret_key", ""),
@@ -165,8 +164,7 @@ class LangfuseEvaluationsProvider(SyncRunnerMixin, EvaluationsProvider):
                 kwargs["max_value"] = cfg["max_value"]
             if cfg.get("categories"):
                 kwargs["categories"] = cfg["categories"]
-            req = CreateScoreConfigRequest(**kwargs)
-            result = client.score_configs.create(request=req)
+            result = client.score_configs.create(**kwargs)
             return _score_config_to_dict(result)
 
         return await self._run_sync(_create)
@@ -175,7 +173,7 @@ class LangfuseEvaluationsProvider(SyncRunnerMixin, EvaluationsProvider):
         client = self._resolve_rest_client()
 
         def _get() -> dict[str, Any]:
-            result = client.score_configs.get_by_id(evaluator_id)
+            result = client.score_configs.get_by_id(config_id=evaluator_id)
             return _score_config_to_dict(result)
 
         return await self._run_sync(_get)
@@ -190,13 +188,12 @@ class LangfuseEvaluationsProvider(SyncRunnerMixin, EvaluationsProvider):
         cfg = config or {}
 
         def _update() -> dict[str, Any]:
-            kwargs: dict[str, Any] = {}
+            kwargs: dict[str, Any] = {"config_id": evaluator_id}
             if description is not None:
                 kwargs["description"] = description
             if cfg.get("is_archived") is not None:
                 kwargs["is_archived"] = cfg["is_archived"]
-            req = UpdateScoreConfigRequest(**kwargs)
-            result = client.score_configs.update(evaluator_id, request=req)
+            result = client.score_configs.update(**kwargs)
             return _score_config_to_dict(result)
 
         return await self._run_sync(_update)
@@ -206,8 +203,7 @@ class LangfuseEvaluationsProvider(SyncRunnerMixin, EvaluationsProvider):
         client = self._resolve_rest_client()
 
         def _archive() -> None:
-            req = UpdateScoreConfigRequest(is_archived=True)
-            client.score_configs.update(evaluator_id, request=req)
+            client.score_configs.update(config_id=evaluator_id, is_archived=True)
 
         await self._run_sync(_archive)
 
@@ -319,8 +315,7 @@ class LangfuseEvaluationsProvider(SyncRunnerMixin, EvaluationsProvider):
                 kwargs["config_id"] = config_id
             if metadata:
                 kwargs["metadata"] = metadata
-            req = CreateScoreRequest(**kwargs)
-            result = client.score.create(request=req)
+            result = client.legacy.score_v1.create(**kwargs)
             return {
                 "score_id": result.id,
                 "name": name,
@@ -337,7 +332,7 @@ class LangfuseEvaluationsProvider(SyncRunnerMixin, EvaluationsProvider):
 
         def _get() -> dict[str, Any]:
             try:
-                result = client.score_v_2.get_by_id(score_id)
+                result = client.scores.get_by_id(score_id=score_id)
             except Exception as e:
                 if "404" in str(e) or "not found" in str(e).lower():
                     raise KeyError(f"Score not found: {score_id}") from e
@@ -350,7 +345,7 @@ class LangfuseEvaluationsProvider(SyncRunnerMixin, EvaluationsProvider):
         client = self._resolve_rest_client()
 
         def _delete() -> None:
-            client.score.delete(score_id)
+            client.legacy.score_v1.delete(score_id=score_id)
 
         await self._run_sync(_delete)
 
@@ -367,7 +362,7 @@ class LangfuseEvaluationsProvider(SyncRunnerMixin, EvaluationsProvider):
         client = self._resolve_rest_client()
 
         def _list() -> dict[str, Any]:
-            result = client.score_v_2.get(
+            result = client.scores.get_many(
                 page=page,
                 limit=limit,
                 trace_id=trace_id,
