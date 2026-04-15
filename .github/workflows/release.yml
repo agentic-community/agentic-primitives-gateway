@@ -28,6 +28,7 @@ jobs:
     if: github.repository == 'agentic-community/agentic-primitives-gateway'
     outputs:
       version: ${{ steps.version.outputs.tag }}
+      semver: ${{ steps.version.outputs.semver }}
       changelog: ${{ steps.changelog.outputs.body }}
     steps:
       - name: Checkout code
@@ -39,10 +40,12 @@ jobs:
         id: version
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+            TAG="${{ inputs.tag }}"
           else
-            echo "tag=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+            TAG="${{ github.ref_name }}"
           fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "semver=${TAG#v}" >> "$GITHUB_OUTPUT"
 
       - name: Generate changelog
         id: changelog
@@ -95,8 +98,6 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/gateway
           tags: |
             type=semver,pattern={{version}},value=${{ needs.prepare.outputs.version }}
-            type=semver,pattern={{major}}.{{minor}},value=${{ needs.prepare.outputs.version }}
-            type=semver,pattern={{major}},value=${{ needs.prepare.outputs.version }}
             type=raw,value=latest
 
       - name: Build and push
@@ -178,12 +179,7 @@ jobs:
             ## Gateway Image
 
             ```
-            docker pull ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/gateway:${{ needs.prepare.outputs.version }}
-            ```
-
-            **Tags:**
-            ```
-            ${{ needs.gateway-image.outputs.tags }}
+            docker pull ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/gateway:${{ needs.prepare.outputs.semver }}
             ```
 
             ## Client Wheel
@@ -202,5 +198,5 @@ jobs:
         run: |
           echo "## Release ${{ needs.prepare.outputs.version }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Gateway image:** \`${{ env.REGISTRY }}/${{ env.NAMESPACE }}/gateway:${{ needs.prepare.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Gateway image:** \`${{ env.REGISTRY }}/${{ env.NAMESPACE }}/gateway:${{ needs.prepare.outputs.semver }}\`" >> $GITHUB_STEP_SUMMARY
           echo "**Client wheel:** \`${{ needs.client-wheel.outputs.wheel_name }}\`" >> $GITHUB_STEP_SUMMARY
