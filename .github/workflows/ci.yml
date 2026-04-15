@@ -116,10 +116,11 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      - name: Stamp build ref
+      - name: Set version from commit
         run: |
-          REF="sha-$(echo $GITHUB_SHA | head -c 7)"
-          printf 'from __future__ import annotations\n\nBUILD_REF = "%s"\n' "$REF" \
+          SHORT_SHA=$(echo "$GITHUB_SHA" | head -c 7)
+          sed -i "s/^version = .*/version = \"0.0.0+${SHORT_SHA}\"/" client/pyproject.toml
+          printf 'from __future__ import annotations\n\nBUILD_REF = "%s"\n' "sha-${SHORT_SHA}" \
             > client/src/agentic_primitives_gateway_client/_build_info.py
       - run: pip install build
       - run: python -m build ./client
