@@ -5,6 +5,8 @@ repo_name: agentic-primitives-gateway
 
 theme:
   name: material
+  logo: images/square.png
+  favicon: images/square.png
   palette:
     - scheme: default
       primary: indigo
