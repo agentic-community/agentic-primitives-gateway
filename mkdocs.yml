@@ -3,6 +3,10 @@ site_description: Unified API for agent infrastructure primitives
 repo_url: https://github.com/agentic-community/agentic-primitives-gateway
 repo_name: agentic-primitives-gateway
 
+extra:
+  version:
+    provider: mike
+
 theme:
   name: material
   logo: images/square.png
