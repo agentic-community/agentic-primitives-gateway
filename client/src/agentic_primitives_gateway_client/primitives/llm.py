@@ -51,6 +51,26 @@ class LLM:
             request["max_tokens"] = max_tokens
         return await self._client.completions(request)
 
+    async def completions_stream(
+        self,
+        model: str,
+        messages: list[dict[str, Any]],
+        temperature: float = 1.0,
+        max_tokens: int | None = None,
+        **kwargs: Any,
+    ):
+        """Stream a completion request. Yields parsed event dicts."""
+        request: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "temperature": temperature,
+            **kwargs,
+        }
+        if max_tokens is not None:
+            request["max_tokens"] = max_tokens
+        async for event in self._client.completions_stream(request):
+            yield event
+
     async def list_models(self) -> list[dict[str, Any]]:
         """List available models from the LLM backend."""
         result = await self._client.list_models()

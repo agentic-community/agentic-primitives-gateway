@@ -1464,6 +1464,26 @@ class AgenticPlatformClient:
         self._raise_for_status(resp)
         return self._json_dict(resp)
 
+    async def completions_stream(self, model_request: dict[str, Any]):
+        """Stream LLM completion events via SSE.
+
+        Yields parsed JSON dicts for each ``data:`` line in the SSE stream.
+        """
+        import json as _json
+
+        async with self._client.stream(
+            "POST",
+            "/api/v1/llm/completions/stream",
+            headers=self._headers,
+            json=model_request,
+        ) as resp:
+            if resp.status_code >= 400:
+                await resp.aread()
+                self._raise_for_status(resp)
+            async for line in resp.aiter_lines():
+                if line.startswith("data: "):
+                    yield _json.loads(line[6:])
+
     async def list_models(self) -> dict[str, Any]:
         resp = await self._get("/api/v1/llm/models")
         self._raise_for_status(resp)
@@ -1591,6 +1611,43 @@ class AgenticPlatformClient:
 
         tools = build_tools_sync(self, primitives, namespace=namespace, session_id=session_id)
         return _wrap_tools(tools, format) if format else tools
+
+    def get_model(
+        self,
+        format: str = "strands",
+        *,
+        model: str | None = None,
+        max_tokens: int | None = None,
+        temperature: float | None = None,
+    ) -> Any:
+        """Get a framework-native model backed by the gateway's LLM primitive.
+
+        All inference is routed through the gateway. The operator controls
+        which actual model/provider is used via gateway config.
+
+        Args:
+            format: Framework format — ``"strands"`` or ``"langchain"``.
+            model: Optional model ID override. If ``None``, the gateway's
+                configured default is used.
+            max_tokens: Optional max tokens override.
+            temperature: Optional temperature override.
+        """
+        if format == "strands":
+            from agentic_primitives_gateway_client.models.llmgateway.strands import LLMGateway
+
+            return LLMGateway(self, model=model, max_tokens=max_tokens, temperature=temperature)
+
+        if format == "langchain":
+            from agentic_primitives_gateway_client.models.llmgateway.langchain import LLMGateway
+
+            return LLMGateway(
+                client=self,
+                model_name=model,
+                max_tokens=max_tokens,
+                temperature=temperature,
+            )
+
+        raise ValueError(f"Unknown model format: {format!r}. Use 'strands' or 'langchain'.")
 
     async def create_agent(self, spec: dict[str, Any]) -> dict[str, Any]:
         """Create a new agent.

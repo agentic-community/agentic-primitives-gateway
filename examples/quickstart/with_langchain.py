@@ -1,11 +1,12 @@
 """Quickstart: LangChain agent using gateway primitives.
 
-The gateway provides memory as tools. LangChain handles the agent loop
-(including automatic tool call execution). Swap "langchain" for any
-framework — the gateway tools are just async Python functions.
+The model is routed through the gateway — the operator controls which
+LLM provider and model is used via gateway config. The gateway also
+provides memory as tools. LangChain handles the agent loop (including
+automatic tool call execution).
 
 Prerequisites:
-    pip install agentic-primitives-gateway-client[aws] langchain langchain-aws
+    pip install agentic-primitives-gateway-client[aws] langchain langchain-core
     # Gateway running at localhost:8000 (./run.sh)
 
 Usage:
@@ -18,7 +19,6 @@ import asyncio
 import os
 
 from langchain.agents import create_agent
-from langchain_aws import ChatBedrock
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tools import tool
@@ -69,11 +69,8 @@ async def main():
             return "No memories stored."
         return "\n".join(f"- {r['key']}: {r['content']}" for r in items)
 
-    # Create LangChain agent with automatic tool execution
-    llm = ChatBedrock(
-        model_id="us.anthropic.claude-sonnet-4-20250514-v1:0",
-        region_name="us-east-1",
-    )
+    # Model routed through the gateway — operator controls the actual provider/model
+    llm = client.get_model(format="langchain")
 
     agent = create_agent(
         llm,

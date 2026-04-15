@@ -1,12 +1,11 @@
 """Quickstart: Strands agent using gateway primitives.
 
-The gateway client's get_tools_sync() auto-builds tool functions from
-the server's tool catalog. Pass them directly to Strands — no manual
-tool wrapping needed.
+Both the model and tools are provided by the gateway — the agent code
+is completely decoupled from any specific LLM provider or backend.
 
 Prerequisites:
-    pip install agentic-primitives-gateway-client[aws] strands-agents strands-agents-tools-mcp
-    # Gateway running at localhost:8000 (./run.sh selfhosted)
+    pip install agentic-primitives-gateway-client[aws] strands-agents
+    # Gateway running at localhost:8000 (./run.sh)
 
 Usage:
     python examples/quickstart/with_strands.py
@@ -26,7 +25,10 @@ GATEWAY_URL = os.environ.get("GATEWAY_URL", "http://localhost:8000")
 def main():
     client = AgenticPlatformClient(GATEWAY_URL, aws_from_environment=True)
 
-    # Auto-build Strands-compatible tools from the gateway's tool catalog
+    # Model routed through the gateway — operator controls the actual provider/model
+    model = client.get_model(format="strands")
+
+    # Tools auto-built from the gateway's tool catalog
     tools = client.get_tools_sync(
         ["memory"],
         namespace="agent:strands-demo",
@@ -34,10 +36,9 @@ def main():
     )
     print(f"Loaded {len(tools)} tools from gateway: {[t.__name__ for t in tools]}\n")
 
-    # Create Strands agent with gateway tools
     agent = Agent(
-        model="us.anthropic.claude-sonnet-4-20250514-v1:0",
-        system_prompt="You are a helpful assistant. Use memory to remember and recall things.",
+        model=model,
+        system_prompt="You are a helpful assistant. Use memory to remember and recall things. Search your memory before answering",
         tools=tools,
     )
 

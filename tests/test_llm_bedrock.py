@@ -1190,3 +1190,33 @@ class TestRouteRequestStream:
         assert call_kwargs["inferenceConfig"]["temperature"] == 0.5
         assert call_kwargs["inferenceConfig"]["maxTokens"] == 100
         assert "toolConfig" in call_kwargs
+
+    @pytest.mark.asyncio
+    async def test_empty_model_uses_default(self, mock_get_session):
+        """Empty string model falls back to provider's default_model."""
+        events = [{"messageStop": {"stopReason": "end_turn"}}]
+        mock_client = MagicMock()
+        mock_client.converse_stream.return_value = {"stream": iter(events)}
+        mock_get_session.return_value.client.return_value = mock_client
+
+        provider = BedrockConverseProvider(default_model="my-default-model")
+        async for _ in provider.route_request_stream({"model": "", "messages": [{"role": "user", "content": "Hi"}]}):
+            pass
+
+        call_kwargs = mock_client.converse_stream.call_args[1]
+        assert call_kwargs["modelId"] == "my-default-model"
+
+    @pytest.mark.asyncio
+    async def test_missing_model_uses_default(self, mock_get_session):
+        """Missing model key falls back to provider's default_model."""
+        events = [{"messageStop": {"stopReason": "end_turn"}}]
+        mock_client = MagicMock()
+        mock_client.converse_stream.return_value = {"stream": iter(events)}
+        mock_get_session.return_value.client.return_value = mock_client
+
+        provider = BedrockConverseProvider(default_model="my-default-model")
+        async for _ in provider.route_request_stream({"messages": [{"role": "user", "content": "Hi"}]}):
+            pass
+
+        call_kwargs = mock_client.converse_stream.call_args[1]
+        assert call_kwargs["modelId"] == "my-default-model"

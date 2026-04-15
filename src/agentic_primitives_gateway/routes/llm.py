@@ -1,4 +1,7 @@
+import json
+
 from fastapi import APIRouter, Depends
+from starlette.responses import StreamingResponse
 
 from agentic_primitives_gateway.models.enums import Primitive
 from agentic_primitives_gateway.models.llm import (
@@ -21,6 +24,15 @@ router = APIRouter(
 async def route_completion(request: CompletionRequest) -> CompletionResponse:
     result = await registry.llm.route_request(request.model_dump())
     return CompletionResponse(**result)
+
+
+@router.post("/completions/stream")
+async def route_completion_stream(request: CompletionRequest) -> StreamingResponse:
+    async def generate():
+        async for event in registry.llm.route_request_stream(request.model_dump()):
+            yield f"data: {json.dumps(event)}\n\n"
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
 
 
 @router.get("/models", response_model=ListModelsResponse)

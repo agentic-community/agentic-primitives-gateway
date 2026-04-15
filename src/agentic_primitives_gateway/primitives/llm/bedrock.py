@@ -104,7 +104,7 @@ class BedrockConverseProvider(SyncRunnerMixin, LLMProvider):
 
     async def route_request(self, model_request: dict[str, Any]) -> dict[str, Any]:
         client = self._get_client()
-        model_id = model_request.get("model", self._default_model)
+        model_id = model_request.get("model") or self._default_model
 
         system_prompts, messages = _to_bedrock_messages(model_request)
         converse_kwargs: dict[str, Any] = {
@@ -149,7 +149,7 @@ class BedrockConverseProvider(SyncRunnerMixin, LLMProvider):
         For text: contentBlockDelta contains text chunks directly.
         """
         client = self._get_client()
-        model_id = model_request.get("model", self._default_model)
+        model_id = model_request.get("model") or self._default_model
 
         system_prompts, messages = _to_bedrock_messages(model_request)
         converse_kwargs: dict[str, Any] = {

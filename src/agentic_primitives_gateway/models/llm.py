@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 
 class CompletionRequest(BaseModel):
-    model: str
+    model: str = ""
     messages: list[dict[str, Any]]
     temperature: float = 1.0
     max_tokens: int | None = None
