@@ -101,18 +101,15 @@ jobs:
     uses: ./.github/workflows/build-gateway.yml
     permissions:
       contents: read
-      packages: write
       attestations: write
       id-token: write
     secrets: inherit
 
   build-client:
-    name: Build & release client wheel
+    name: Build client wheel
     needs: [test-server, test-client]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
@@ -122,28 +119,12 @@ jobs:
       - name: Stamp build ref
         run: |
           REF="sha-$(echo $GITHUB_SHA | head -c 7)"
-          echo "BUILD_REF=$REF" >> "$GITHUB_ENV"
           printf 'from __future__ import annotations\n\nBUILD_REF = "%s"\n' "$REF" \
             > client/src/agentic_primitives_gateway_client/_build_info.py
       - run: pip install build
       - run: python -m build ./client
-      - name: Read client version
-        id: version
-        run: |
-          VERSION=$(python -c "import tomllib; print(tomllib.load(open('client/pyproject.toml','rb'))['project']['version'])")
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "tag=client-v${VERSION}-${BUILD_REF}" >> "$GITHUB_OUTPUT"
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2.5.0
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          tag_name: ${{ steps.version.outputs.tag }}
-          name: "Client ${{ steps.version.outputs.version }} (${{ env.BUILD_REF }})"
-          body: |
-            Client wheel for commit ${{ github.sha }}.
-
-            Install with:
-            ```
-            pip install 'agentic-primitives-gateway-client @ https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.tag }}/agentic_primitives_gateway_client-${{ steps.version.outputs.version }}-py3-none-any.whl'
-            ```
-          files: client/dist/*.whl
-          make_latest: true
+          name: client-wheel
+          path: client/dist/*.whl

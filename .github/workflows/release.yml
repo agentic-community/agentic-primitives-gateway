@@ -1,0 +1,206 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g., v1.0.0)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  attestations: write
+  id-token: write
+
+env:
+  REGISTRY: public.ecr.aws
+  NAMESPACE: ai-registry/agentic-primitives-gateway
+
+jobs:
+  # ── Resolve version ────────────────────────────────────────────────
+  prepare:
+    name: Prepare release
+    runs-on: ubuntu-latest
+    if: github.repository == 'agentic-community/agentic-primitives-gateway'
+    outputs:
+      version: ${{ steps.version.outputs.tag }}
+      changelog: ${{ steps.changelog.outputs.body }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Resolve version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          PREV_TAG=$(git tag --sort=-v:refname | grep '^v' | head -2 | tail -1)
+          if [ -z "$PREV_TAG" ]; then
+            LOG=$(git log --oneline --no-decorate)
+          else
+            LOG=$(git log --oneline --no-decorate "${PREV_TAG}..HEAD")
+          fi
+          # Write to multiline output
+          {
+            echo "body<<CHANGELOG_EOF"
+            echo "$LOG"
+            echo "CHANGELOG_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+  # ── Gateway Docker image ───────────────────────────────────────────
+  gateway-image:
+    name: Gateway image
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    outputs:
+      tags: ${{ steps.meta.outputs.tags }}
+      digest: ${{ steps.push.outputs.digest }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@8df5847569e6427dd6c4fb1cf565c83acfa8afa7 # v6.0.0
+        with:
+          aws-region: us-east-1
+          role-session-name: gateway-release
+          role-to-assume: ${{ secrets.ECR_ROLE }}
+
+      - name: Login to Amazon ECR Public
+        uses: aws-actions/amazon-ecr-login@062b18b96a7aff071d4dc91bc00c4c1a7945b076 # v2.0.1
+        with:
+          registry-type: public
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/gateway
+          tags: |
+            type=semver,pattern={{version}},value=${{ needs.prepare.outputs.version }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ needs.prepare.outputs.version }}
+            type=semver,pattern={{major}},value=${{ needs.prepare.outputs.version }}
+            type=raw,value=latest
+
+      - name: Build and push
+        id: push
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            BUILD_VERSION=${{ needs.prepare.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Generate attestation
+        uses: actions/attest-build-provenance@96278af6caaf10aea03fd8d33a09a777ca52d62f # v3.2.0
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/gateway
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+
+  # ── Client wheel ───────────────────────────────────────────────────
+  client-wheel:
+    name: Client wheel
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      wheel_name: ${{ steps.wheel.outputs.name }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Stamp build ref
+        run: |
+          printf 'from __future__ import annotations\n\nBUILD_REF = "%s"\n' \
+            "${{ needs.prepare.outputs.version }}" \
+            > client/src/agentic_primitives_gateway_client/_build_info.py
+
+      - name: Build wheel
+        run: pip install build && python -m build ./client
+
+      - name: Capture wheel name
+        id: wheel
+        run: echo "name=$(ls client/dist/*.whl | xargs basename)" >> "$GITHUB_OUTPUT"
+
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: client-wheel
+          path: client/dist/*.whl
+
+  # ── Combined GitHub Release ────────────────────────────────────────
+  release:
+    name: Create GitHub Release
+    needs: [prepare, gateway-image, client-wheel]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download wheel artifact
+        uses: actions/download-artifact@95815c38cf2ff2164869cbab79da8d1f422bc89e # v4.2.1
+        with:
+          name: client-wheel
+          path: dist
+
+      - name: Create release
+        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2.5.0
+        with:
+          tag_name: ${{ needs.prepare.outputs.version }}
+          name: ${{ needs.prepare.outputs.version }}
+          body: |
+            ## Gateway Image
+
+            ```
+            docker pull ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/gateway:${{ needs.prepare.outputs.version }}
+            ```
+
+            **Tags:**
+            ```
+            ${{ needs.gateway-image.outputs.tags }}
+            ```
+
+            ## Client Wheel
+
+            ```
+            pip install 'agentic-primitives-gateway-client @ https://github.com/${{ github.repository }}/releases/download/${{ needs.prepare.outputs.version }}/${{ needs.client-wheel.outputs.wheel_name }}'
+            ```
+
+            ## Changelog
+
+            ${{ needs.prepare.outputs.changelog }}
+          files: dist/*.whl
+          make_latest: true
+
+      - name: Release Summary
+        run: |
+          echo "## Release ${{ needs.prepare.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Gateway image:** \`${{ env.REGISTRY }}/${{ env.NAMESPACE }}/gateway:${{ needs.prepare.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Client wheel:** \`${{ needs.client-wheel.outputs.wheel_name }}\`" >> $GITHUB_STEP_SUMMARY
