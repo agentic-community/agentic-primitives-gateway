@@ -1633,14 +1633,14 @@ class AgenticPlatformClient:
             temperature: Optional temperature override.
         """
         if format == "strands":
-            from agentic_primitives_gateway_client.models.llmgateway.strands import LLMGateway
+            from agentic_primitives_gateway_client.models.llmgateway.strands import LLMGateway as StrandsLLM
 
-            return LLMGateway(self, model=model, max_tokens=max_tokens, temperature=temperature)
+            return StrandsLLM(self, model=model, max_tokens=max_tokens, temperature=temperature)
 
         if format == "langchain":
-            from agentic_primitives_gateway_client.models.llmgateway.langchain import LLMGateway
+            from agentic_primitives_gateway_client.models.llmgateway.langchain import LLMGateway as LangChainLLM
 
-            return LLMGateway(
+            return LangChainLLM(
                 client=self,
                 model_name=model,
                 max_tokens=max_tokens,

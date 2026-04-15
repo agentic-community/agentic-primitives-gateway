@@ -339,5 +339,5 @@ def _to_gateway_tool_choice(tc: dict[str, Any]) -> str | dict[str, Any]:
     if "any" in tc:
         return "any"
     if "tool" in tc:
-        return tc["tool"].get("name", "auto")
+        return str(tc["tool"].get("name", "auto"))
     return "auto"
