@@ -137,6 +137,12 @@ providers:
         config:
           region: "${AWS_REGION:=us-east-1}"
           default_model: "us.anthropic.claude-sonnet-4-20250514-v1:0"
+      openai_compatible:
+        backend: "agentic_primitives_gateway.primitives.llm.openai_compatible.OpenAICompatibleProvider"
+        config:
+          base_url: "${OPENAI_COMPATIBLE_URL:=http://localhost:1234}"
+          default_model: "${OPENAI_COMPATIBLE_MODEL:=}"
+          api_key: "${OPENAI_COMPATIBLE_API_KEY:=}"
 
   tasks:
     default: "in_memory"
