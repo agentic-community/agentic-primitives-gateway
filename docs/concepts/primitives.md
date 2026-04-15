@@ -4,18 +4,18 @@ The nine infrastructure primitives that recur across every agent system.
 
 ## Overview
 
-| Primitive | What it does | Backends |
-|-----------|-------------|----------|
-| **Memory** | Key-value storage, semantic search, conversation events, sessions, branches | Noop, InMemory, Mem0+Milvus, AgentCore |
-| **Identity** | OAuth2 tokens, API keys, workload identity, credential providers | Noop, AgentCore, Keycloak, Entra, Okta |
-| **Code Interpreter** | Sandboxed code execution with session management | Noop, AgentCore, Jupyter |
-| **Browser** | Remote browser automation (navigate, click, type, screenshot) | Noop, AgentCore, Selenium Grid |
-| **Observability** | Traces, logs, LLM generation tracking, scoring, sessions | Noop, Langfuse, AgentCore |
-| **LLM** | LLM request routing with tool_use support and streaming | Noop, Bedrock Converse |
-| **Tools** | External tool registration, invocation, search, MCP servers | Noop, AgentCore, [MCP Registry](../providers/mcp-gateway-registry.md) |
-| **Policy** | Cedar policy engine and policy CRUD, optional generation | Noop, AgentCore |
-| **Evaluations** | LLM-as-a-judge evaluators, online eval configs | Noop, AgentCore |
-| **Tasks** | Shared task board for team coordination | Noop, InMemory, Redis |
+| Primitive | What it does | Backends                                                                     |
+|-----------|-------------|------------------------------------------------------------------------------|
+| **Memory** | Key-value storage, semantic search, conversation events, sessions, branches | Noop, InMemory, Mem0+Milvus, AgentCore                                       |
+| **Identity** | OAuth2 tokens, API keys, workload identity, credential providers | Noop, AgentCore, Keycloak, Entra, Okta                                       |
+| **Code Interpreter** | Sandboxed code execution with session management | Noop, AgentCore, Jupyter                                                     |
+| **Browser** | Remote browser automation (navigate, click, type, screenshot) | Noop, AgentCore, Selenium Grid                                               |
+| **Observability** | Traces, logs, LLM generation tracking, scoring, sessions | Noop, Langfuse, AgentCore                                                    |
+| **LLM** | LLM request routing with tool_use support and streaming | Noop, Bedrock Converse                                                       |
+| **Tools** | External tool registration, invocation, search, MCP servers | Noop, AgentCore, [MCP Registry](../primitives/tools/mcp-gateway-registry.md) |
+| **Policy** | Cedar policy engine and policy CRUD, optional generation | Noop, AgentCore                                                              |
+| **Evaluations** | LLM-as-a-judge evaluators, online eval configs | Noop, AgentCore                                                              |
+| **Tasks** | Shared task board for team coordination | Noop, InMemory, Redis                                                        |
 
 ## How Providers Work
 

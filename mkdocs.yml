@@ -65,8 +65,9 @@ nav:
     - Agent-as-Tool Delegation: guides/agent-delegation.md
     - Memory Namespaces: guides/memory-namespaces.md
     - Using the Web UI: guides/web-ui.md
-  - Providers:
-    - MCP Gateway Registry: providers/mcp-gateway-registry.md
+  - Primitives:
+    - Tools:
+      - MCP Gateway Registry: primitives/tools/mcp-gateway-registry.md
   - API Reference:
     - Overview: api/overview.md
     - Memory: api/memory.md
