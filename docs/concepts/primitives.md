@@ -40,9 +40,9 @@ class MemoryProvider(ABC):
 
 The memory primitive supports shared namespaces for inter-agent knowledge sharing:
 
-- **Level 1 -- Team-scoped shared memory:** Teams set `shared_memory_namespace` on the `TeamSpec`. All workers in the team receive `share_finding`, `read_shared`, `search_shared`, and `list_shared` tools that operate on a single team-wide namespace. This enables workers to share findings during a team run.
+- **Level 1: Team-scoped shared memory:** Teams set `shared_memory_namespace` on the `TeamSpec`. All workers in the team receive `share_finding`, `read_shared`, `search_shared`, and `list_shared` tools that operate on a single team-wide namespace. This enables workers to share findings during a team run.
 
-- **Level 2 -- Agent-level shared pools:** Individual agents set `shared_namespaces` on their `PrimitiveConfig.memory`. Each pool name resolves to a separate user-scoped namespace. Agents receive `share_to`, `read_from_pool`, `search_pool`, and `list_pool` tools that accept a `pool` parameter. This enables cross-agent knowledge sharing outside of a team context.
+- **Level 2: Agent-level shared pools:** Individual agents set `shared_namespaces` on their `PrimitiveConfig.memory`. Each pool name resolves to a separate user-scoped namespace. Agents receive `share_to`, `read_from_pool`, `search_pool`, and `list_pool` tools that accept a `pool` parameter. This enables cross-agent knowledge sharing outside of a team context.
 
 Both levels use the same underlying memory provider and are user-scoped (`{namespace}:u:{user_id}`).
 
@@ -70,4 +70,4 @@ Providers are selected in this priority order:
 2. **Agent spec override**: `provider_overrides: {memory: mem0}`
 3. **Config default**: `memory.default: in_memory`
 
-This enables gradual migration -- run both backends simultaneously, route specific agents to the new one.
+This enables gradual migration; run both backends simultaneously, route specific agents to the new one.

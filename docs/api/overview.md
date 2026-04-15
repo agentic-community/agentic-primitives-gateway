@@ -77,7 +77,7 @@ The readiness probe (`/readyz`) returns a per-provider status with three possibl
 | `reachable` | Provider server is up but needs user credentials (e.g., no server-side AWS/Langfuse credentials configured) |
 | `down` | Provider is unreachable or errored |
 
-Only `down` providers cause the overall readiness check to return HTTP 503. Providers in `reachable` state are not considered failures -- they work fine once a user provides credentials.
+Only `down` providers cause the overall readiness check to return HTTP 503. Providers in `reachable` state are not considered failures; they work fine once a user provides credentials.
 
 ### Authenticated Provider Status
 

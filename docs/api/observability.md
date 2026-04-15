@@ -4,7 +4,7 @@
 
 Trace and log ingestion, LLM generation tracking, evaluation scoring, and session management. All endpoints require authentication.
 
-**Backends:** `NoopObservabilityProvider`, `LangfuseObservabilityProvider`, `AgentCoreObservabilityProvider`
+**Backends:** `NoopObservabilityProvider`, [`LangfuseObservabilityProvider`](../primitives/observability/langfuse.md), [`AgentCoreObservabilityProvider`](../primitives/observability/agentcore.md)
 
 ## Trace Ingestion
 
@@ -12,7 +12,7 @@ Trace and log ingestion, LLM generation tracking, evaluation scoring, and sessio
 |---|---|---|
 | `POST` | `/traces` | Ingest a trace. Returns 202. |
 | `POST` | `/logs` | Ingest a log entry. Returns 202. |
-| `GET` | `/traces` | Query traces. Query params: `trace_id`, `limit` (1--1000, default 100). |
+| `GET` | `/traces` | Query traces. Query params: `trace_id`, `limit` (1-1000, default 100). |
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/observability/traces \
@@ -74,7 +74,7 @@ curl -X POST http://localhost:8000/api/v1/observability/traces/t1/scores \
 
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/sessions` | List observability sessions. Query params: `user_id`, `limit` (1--1000, default 100). Non-admins can only query their own sessions. |
+| `GET` | `/sessions` | List observability sessions. Query params: `user_id`, `limit` (1-1000, default 100). Non-admins can only query their own sessions. |
 | `GET` | `/sessions/{session_id}` | Get session details. Returns 501 if not supported. |
 
 ## Flush

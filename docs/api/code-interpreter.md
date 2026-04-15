@@ -4,7 +4,7 @@
 
 Sandboxed code execution with persistent sessions. All endpoints require authentication. Session operations are scoped to the session owner.
 
-**Backends:** `NoopCodeInterpreterProvider`, `AgentCoreCodeInterpreterProvider`, `JupyterCodeInterpreterProvider`
+**Backends:** `NoopCodeInterpreterProvider`, [`AgentCoreCodeInterpreterProvider`](../primitives/code-interpreter/agentcore.md), [`JupyterCodeInterpreterProvider`](../primitives/code-interpreter/jupyter.md)
 
 ## Sessions
 
@@ -36,7 +36,7 @@ curl -X POST http://localhost:8000/api/v1/code-interpreter/sessions \
 | Method | Path | Description |
 |---|---|---|
 | `POST` | `/sessions/{session_id}/execute` | Execute code. Returns execution result. |
-| `GET` | `/sessions/{session_id}/history` | Get execution history. Query param: `limit` (1--500, default 50). Returns 501 if not supported. |
+| `GET` | `/sessions/{session_id}/history` | Get execution history. Query param: `limit` (1-500, default 50). Returns 501 if not supported. |
 
 ### Execute code
 

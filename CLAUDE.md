@@ -174,3 +174,45 @@ make ui-dev        # vite dev server
 make ui-build      # production build
 make ui-clean      # remove build artifacts and node_modules
 ```
+
+## Post-Task Checklist
+
+After completing ANY task or feature, verify ALL of these before considering it done:
+
+### CI Must Pass
+1. `make format` — auto-fix lint/format issues
+2. `make lint` — verify no remaining issues
+3. `make typecheck` — mypy must pass with zero errors
+4. `python -m pytest tests/ -v` — all server tests pass
+5. `cd client && python -m pytest tests/ -v` — all client tests pass
+
+### Client Must Match Server
+6. Any new server routes must have corresponding client methods in `client/src/agentic_primitives_gateway_client/client.py`
+7. New client methods must have tests in `client/tests/`
+
+### Test Coverage Must Stay High
+8. Server coverage target: 90%+ (enforced by CI via `--cov-fail-under=90`)
+9. All new code paths must have unit tests — providers, routes, translation functions, edge cases
+10. Integration tests for providers that talk to external services
+
+### Documentation Must Be Updated
+11. **`README.md`** — update architecture diagram AND primitives table if providers/features changed
+12. **`docs/`** — update relevant mkdocs pages (api/, concepts/, guides/) for any new or changed functionality
+13. **`CLAUDE.md`** — add one-line reference for new providers/patterns in Key Patterns section
+14. **Examples** — update or add examples that demonstrate the feature
+
+## Adding a New Provider
+
+When adding a new provider to any primitive, update ALL of these:
+
+1. Provider implementation in `src/agentic_primitives_gateway/primitives/<primitive>/<name>.py`
+2. Unit tests in `tests/test_<primitive>_<name>.py`
+3. Integration tests in `tests/integration/test_<primitive>_<name>.py`
+4. `pyproject.toml` — optional deps group if new packages
+5. `configs/kitchen-sink.yaml` — add backend entry
+6. `CLAUDE.md` — add one-line provider reference in Key Patterns
+7. `README.md` — update architecture diagram AND primitives table
+8. `docs/` — update relevant API reference and guides
+9. Any relevant config YAML presets
+10. Any relevant example agents
+11. Update the client if new functionality is exposed

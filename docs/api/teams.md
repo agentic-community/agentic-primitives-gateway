@@ -84,7 +84,7 @@ curl -N -X POST http://localhost:8000/api/v1/teams/research-team/run/stream \
   -d '{"message": "Research Python web frameworks and write benchmarks"}'
 ```
 
-The run executes in a background task -- if the client disconnects, the run completes independently. All events are recorded for replay on reconnect.
+The run executes in a background task: if the client disconnects, the run completes independently. All events are recorded for replay on reconnect.
 
 See [Streaming](../concepts/streaming.md) for team event types, and [Teams](../concepts/teams.md) for the full execution model.
 

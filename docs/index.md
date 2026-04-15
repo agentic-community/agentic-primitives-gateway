@@ -34,8 +34,8 @@ Agent (any framework)  -->  Gateway REST API  -->  Backend Provider
 
 ## Quick Links
 
-- [Quickstart](getting-started/quickstart.md) -- get running in 2 minutes
-- [Architecture](concepts/architecture.md) -- how the pieces fit together
-- [Agents Guide](concepts/agents.md) -- declarative agents with tool calling
-- [Teams Guide](concepts/teams.md) -- multi-agent collaboration with task boards
-- [API Reference](api/overview.md) -- full endpoint documentation
+- [Quickstart](getting-started/quickstart.md): get running in 2 minutes
+- [Architecture](concepts/architecture.md): how the pieces fit together
+- [Agents Guide](concepts/agents.md): declarative agents with tool calling
+- [Teams Guide](concepts/teams.md): multi-agent collaboration with task boards
+- [API Reference](api/overview.md): full endpoint documentation

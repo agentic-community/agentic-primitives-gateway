@@ -4,10 +4,10 @@ The gateway evaluates every API request against Cedar policies before it reaches
 
 ## How It Works
 
-1. **Action auto-discovery** -- Routes are introspected at startup to build a mapping of `(HTTP method, path pattern) → Cedar action`. No static list to maintain.
-2. **Principal resolution** -- Extracted from request headers (`X-Agent-Id`, `X-Cred-*`, `X-AWS-Access-Key-Id`).
-3. **Cedar evaluation** -- The `PolicyEnforcer` evaluates `permit(principal, action, resource)?` for each request.
-4. **Default-deny** -- When Cedar is active with no loaded policies, all non-exempt requests are denied.
+1. **Action auto-discovery**: Routes are introspected at startup to build a mapping of `(HTTP method, path pattern) → Cedar action`. No static list to maintain.
+2. **Principal resolution**: Extracted from request headers (`X-Agent-Id`, `X-Cred-*`, `X-AWS-Access-Key-Id`).
+3. **Cedar evaluation**: The `PolicyEnforcer` evaluates `permit(principal, action, resource)?` for each request.
+4. **Default-deny**: When Cedar is active with no loaded policies, all non-exempt requests are denied.
 
 ## Cedar Actions
 

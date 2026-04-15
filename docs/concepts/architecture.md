@@ -4,9 +4,9 @@
 
 The gateway is a FastAPI service with three layers:
 
-1. **Middleware** -- extracts credentials, routes providers, enforces policies
-2. **Routes** -- one router per primitive + agents + teams
-3. **Provider Registry** -- loads backend implementations, resolves per-request
+1. **Middleware**: extracts credentials, routes providers, enforces policies
+2. **Routes**: one router per primitive + agents + teams
+3. **Provider Registry**: loads backend implementations, resolves per-request
 
 ```
 Request → CORS → RequestContextMiddleware → AuthenticationMiddleware → CredentialResolutionMiddleware → PolicyEnforcementMiddleware → Route → Registry → Provider
@@ -76,7 +76,7 @@ The registry loads classes via `importlib`, instantiates them with the config di
 
 ## Authentication
 
-`AuthenticationMiddleware` runs after `RequestContextMiddleware` and before `PolicyEnforcementMiddleware`. It validates the incoming request's credentials -- JWT token, API key, or noop (dev mode) -- based on the configured `auth.backend`, and sets an `AuthenticatedPrincipal` in a contextvar. The principal carries `principal_id`, `principal_type`, `groups`, and `scopes`.
+`AuthenticationMiddleware` runs after `RequestContextMiddleware` and before `PolicyEnforcementMiddleware`. It validates the incoming request's credentials, JWT token, API key, or noop (dev mode), based on the configured `auth.backend`, and sets an `AuthenticatedPrincipal` in a contextvar. The principal carries `principal_id`, `principal_type`, `groups`, and `scopes`.
 
 Route handlers check resource-level access via `require_access()` (verifies the caller can view/use a resource based on ownership or sharing) and `require_owner_or_admin()` (verifies the caller owns the resource or has admin scope). These helpers read the principal from the contextvar and raise 403 if access is denied.
 
@@ -90,14 +90,14 @@ The `credentials/` subsystem resolves per-user service credentials from OIDC use
 
 **Two resolution modes** (tried in order):
 
-1. **Admin API** (preferred) -- Reads user attributes directly from the Keycloak Admin REST API via a service account. Returns all attributes; no protocol mappers needed.
-2. **Userinfo** (fallback) -- Fetches from the OIDC userinfo endpoint using the caller's access token. Only returns claims with protocol mappers.
+1. **Admin API** (preferred): Reads user attributes directly from the Keycloak Admin REST API via a service account. Returns all attributes; no protocol mappers needed.
+2. **Userinfo** (fallback): Fetches from the OIDC userinfo endpoint using the caller's access token. Only returns claims with protocol mappers.
 
 **Credential resolution chain** (priority order):
 
-1. Explicit headers (`X-AWS-*`, `X-Cred-*`) -- always win
-2. OIDC-resolved credentials -- per-user attributes from the identity provider
-3. Server ambient credentials -- env vars, IRSA, provider config (when `allow_server_credentials: fallback` or `always`)
+1. Explicit headers (`X-AWS-*`, `X-Cred-*`) always win
+2. OIDC-resolved credentials: per-user attributes from the identity provider
+3. Server ambient credentials: env vars, IRSA, provider config (when `allow_server_credentials: fallback` or `always`)
 
 **Checkpoint integration:** OIDC-resolved credentials are captured in checkpoint data via `serialize_auth_context()`. On recovery, `restore_auth_context()` restores them into contextvars. Providers work unchanged.
 
@@ -142,10 +142,10 @@ TeamRunner.run(team_spec, message)
 
 Key features:
 
-- **Shared memory** (`shared_memory_namespace`) -- workers can share findings via a team-scoped namespace
-- **Dependency-aware execution** -- tasks with `depends_on` wait for dependencies before becoming available
-- **Task retry** -- individual failed tasks can be retried without re-running the entire team
-- **Export** -- teams can be exported as standalone Python scripts with dependency-wave execution
+- **Shared memory** (`shared_memory_namespace`): workers can share findings via a team-scoped namespace
+- **Dependency-aware execution**: tasks with `depends_on` wait for dependencies before becoming available
+- **Task retry**: individual failed tasks can be retried without re-running the entire team
+- **Export**: teams can be exported as standalone Python scripts with dependency-wave execution
 
 See [Teams](teams.md) for the full replanning loop documentation.
 
@@ -160,9 +160,9 @@ Client → SSE Response ← Queue ← asyncio.Task (background)
 
 Components:
 
-- **`BackgroundRunManager`** -- tracks active runs in a local dict. Optional `EventStore` persists events/status to Redis for cross-replica visibility.
-- **`RedisEventStore`** -- stores run status and event logs in Redis lists with TTL auto-expiry.
-- **`SessionRegistry`** -- tracks active browser/code_interpreter sessions. `InMemorySessionRegistry` (default) or `RedisSessionRegistry` (multi-replica). Used for observability and orphan cleanup.
+- **`BackgroundRunManager`**: tracks active runs in a local dict. Optional `EventStore` persists events/status to Redis for cross-replica visibility.
+- **`RedisEventStore`**: stores run status and event logs in Redis lists with TTL auto-expiry.
+- **`SessionRegistry`**: tracks active browser/code_interpreter sessions. `InMemorySessionRegistry` (default) or `RedisSessionRegistry` (multi-replica). Used for observability and orphan cleanup.
 
 ## Pluggable Store Backends
 
@@ -194,17 +194,17 @@ The checkpoint system enables durable agent and team runs that survive server cr
 
 Key components:
 
-- **`agents/checkpoint.py`** -- `Checkpoint` model and `CheckpointStore` ABC with Redis implementation. Stores run state (messages, tool results, turn count) as JSON in Redis with TTL expiry.
-- **`agents/checkpoint_utils.py`** -- Shared helpers for checkpoint save/load/delete used by both `AgentRunner` and `TeamRunner`.
-- **`agents/base_store.py`** -- Generic base classes for agent and team stores, providing shared factory methods (`create_background_run_manager()`, `create_session_registry()`) and common CRUD patterns.
+- **`agents/checkpoint.py`**: `Checkpoint` model and `CheckpointStore` ABC with Redis implementation. Stores run state (messages, tool results, turn count) as JSON in Redis with TTL expiry.
+- **`agents/checkpoint_utils.py`**: Shared helpers for checkpoint save/load/delete used by both `AgentRunner` and `TeamRunner`.
+- **`agents/base_store.py`**: Generic base classes for agent and team stores, providing shared factory methods (`create_background_run_manager()`, `create_session_registry()`) and common CRUD patterns.
 
 ## Shared Route Helpers
 
 Route modules share common utilities from `routes/_helpers.py`:
 
-- **`require_principal()`** -- extracts and validates the `AuthenticatedPrincipal` from the request context, returning 401 if missing.
-- **`reconnect_event_generator()`** -- builds an async generator that replays stored events from the event store and polls for new events, used by both agent and team SSE reconnection endpoints.
-- **`@handle_provider_errors`** -- decorator that converts `NotImplementedError` to 501 and `KeyError` to 404.
+- **`require_principal()`**: extracts and validates the `AuthenticatedPrincipal` from the request context, returning 401 if missing.
+- **`reconnect_event_generator()`**: builds an async generator that replays stored events from the event store and polls for new events, used by both agent and team SSE reconnection endpoints.
+- **`@handle_provider_errors`**: decorator that converts `NotImplementedError` to 501 and `KeyError` to 404.
 
 ## File Organization
 

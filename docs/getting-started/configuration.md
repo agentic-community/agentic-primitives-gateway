@@ -131,9 +131,9 @@ The resolver reads user attributes directly from the Keycloak Admin API (when ad
 
 Credential resolution order:
 
-1. **Explicit headers** (`X-AWS-*`, `X-Cred-*`) -- always win
-2. **OIDC-resolved credentials** -- per-user attributes from the identity provider
-3. **Server ambient credentials** -- from environment (when mode is `fallback` or `always`)
+1. **Explicit headers** (`X-AWS-*`, `X-Cred-*`) always win
+2. **OIDC-resolved credentials**: per-user attributes from the identity provider
+3. **Server ambient credentials**: from environment (when mode is `fallback` or `always`)
 
 ## Authentication
 
@@ -174,7 +174,7 @@ auth:
 All agents, teams, and related resources track ownership for access control:
 
 - **`owner_id`** is set automatically from the authenticated principal on create.
-- **`shared_with: []`** means private -- only the owner can access. This is the default for API-created resources.
+- **`shared_with: []`** means private; only the owner can access. This is the default for API-created resources.
 - **`shared_with: ["*"]`** means all authenticated users can view/use the resource. This is the default for config-seeded resources.
 - The **owner** can edit and delete the resource. Users in **shared groups** can view and use it. Users with the **admin** scope bypass all access checks.
 
@@ -205,7 +205,7 @@ Custom backends can be specified by dotted class path instead of an alias.
 
 ### Redis Backend
 
-When using `redis`, the store also creates a `RedisEventStore` (for background run event persistence) and a `RedisSessionRegistry` (for cross-replica browser/code_interpreter session tracking). No additional config needed -- these are wired up automatically.
+When using `redis`, the store also creates a `RedisEventStore` (for background run event persistence) and a `RedisSessionRegistry` (for cross-replica browser/code_interpreter session tracking). No additional config needed; these are wired up automatically.
 
 ```yaml
 agents:

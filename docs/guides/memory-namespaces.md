@@ -29,7 +29,7 @@ The `{session_id}` placeholder is **stripped** for the knowledge store, and `{us
 - Noop auth: `agent:research-assistant:u:noop` (all dev users share)
 - This is where `remember`, `recall`, `search_memory` tools read/write
 
-This means when a user says "my name is Alice" and the agent stores it, it persists across all of **that user's** sessions -- but is invisible to other users.
+This means when a user says "my name is Alice" and the agent stores it, it persists across all of **that user's** sessions, but is invisible to other users.
 
 ## Conversation History
 

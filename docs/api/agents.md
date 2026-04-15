@@ -67,7 +67,7 @@ curl -N -X POST http://localhost:8000/api/v1/agents/my-agent/chat/stream \
   -d '{"message": "Hello!", "session_id": "my-session"}'
 ```
 
-Returns `text/event-stream`. The run executes in a background task -- if the client disconnects, the run completes and stores the conversation turn. See [Streaming](../concepts/streaming.md) for event types.
+Returns `text/event-stream`. The run executes in a background task: if the client disconnects, the run completes and stores the conversation turn. See [Streaming](../concepts/streaming.md) for event types.
 
 ## Sessions
 

@@ -36,7 +36,7 @@ Each directory contains `with_strands.py` and `with_langchain.py` plus a README 
 
 ## E2E Consolidated Examples
 
-These three examples each demonstrate the **full gateway feature set** -- all primitives, JWT auth, Redis stores, Cedar enforcement, declarative agents, and teams. Start here after the per-config examples.
+These three examples each demonstrate the **full gateway feature set**: all primitives, JWT auth, Redis stores, Cedar enforcement, declarative agents, and teams. Start here after the per-config examples.
 
 | Directory | Framework | Providers | Description |
 |-----------|-----------|-----------|-------------|
@@ -98,7 +98,7 @@ Each E2E example includes:
 
 ## Quick Example: Declarative Agent with Memory
 
-No framework needed -- just the gateway:
+No framework needed, just the gateway:
 
 ```bash
 # Start with kitchen-sink config

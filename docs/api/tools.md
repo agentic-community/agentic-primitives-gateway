@@ -4,7 +4,7 @@
 
 Tool registration, discovery, invocation, and MCP server management. All endpoints require authentication.
 
-**Backends:** `NoopToolsProvider`, `AgentCoreGatewayProvider`, [`MCPRegistryProvider`](../primitives/tools/mcp-gateway-registry.md)
+**Backends:** `NoopToolsProvider`, [`AgentCoreGatewayProvider`](../primitives/tools/agentcore.md), [`MCPRegistryProvider`](../primitives/tools/mcp-gateway-registry.md)
 
 ## Tool Operations
 
@@ -12,7 +12,7 @@ Tool registration, discovery, invocation, and MCP server management. All endpoin
 |---|---|---|
 | `POST` | `/` | Register a tool. Returns 201. |
 | `GET` | `/` | List registered tools. |
-| `GET` | `/search` | Search tools by query. Query params: `query` (required), `max_results` (1--100, default 10). |
+| `GET` | `/search` | Search tools by query. Query params: `query` (required), `max_results` (1-100, default 10). |
 | `GET` | `/{name}` | Get a tool by name. Returns 404/501 if not found or not supported. |
 | `DELETE` | `/{name}` | Delete a tool. Returns 204 or 501. |
 | `POST` | `/{name}/invoke` | Invoke a tool. Body: `{"params": {...}}`. |

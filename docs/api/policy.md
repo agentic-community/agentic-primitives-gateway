@@ -4,9 +4,9 @@
 
 Cedar-based policy engine and policy management. All endpoints require authentication. Mutation endpoints (create, update, delete) require admin.
 
-This API manages policy **definitions** (the write path). For policy **enforcement** at request time, see the [Configuration Guide](../getting-started/configuration.md#enforcement).
+This API manages policy **definitions** (the write path). For policy **enforcement** at request time, see the [Policy Enforcement](../concepts/policy.md) concept guide.
 
-**Backends:** `NoopPolicyProvider`, `AgentCorePolicyProvider`
+**Backends:** `NoopPolicyProvider`, [`AgentCorePolicyProvider`](../primitives/policy/agentcore.md)
 
 ## Enforcement Info
 

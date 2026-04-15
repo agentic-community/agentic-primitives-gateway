@@ -2,6 +2,8 @@
 
 Prefix: `/api/v1/memory`
 
+**Backends:** `NoopMemoryProvider`, [`AgentCoreMemoryProvider`](../primitives/memory/agentcore.md), [`Mem0MemoryProvider`](../primitives/memory/mem0.md), [`InMemoryProvider`](../primitives/memory/in-memory.md)
+
 ## Key-Value Memory
 
 | Method | Path | Description |

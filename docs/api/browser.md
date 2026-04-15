@@ -4,7 +4,7 @@
 
 Cloud-based browser automation. All endpoints require authentication. Session operations are scoped to the session owner.
 
-**Backends:** `NoopBrowserProvider`, `AgentCoreBrowserProvider`, `SeleniumGridBrowserProvider`
+**Backends:** `NoopBrowserProvider`, [`AgentCoreBrowserProvider`](../primitives/browser/agentcore.md), [`SeleniumGridBrowserProvider`](../primitives/browser/selenium-grid.md)
 
 ## Sessions
 
@@ -14,7 +14,7 @@ Cloud-based browser automation. All endpoints require authentication. Session op
 | `GET` | `/sessions` | List sessions (filtered to owned sessions for non-admins). |
 | `GET` | `/sessions/{session_id}` | Get session info. Returns 404 if not found. |
 | `DELETE` | `/sessions/{session_id}` | Stop a session. Returns 204. |
-| `GET` | `/sessions/{session_id}/live-view` | Get a live view URL. Query param: `expires` (1--3600, default 300). |
+| `GET` | `/sessions/{session_id}/live-view` | Get a live view URL. Query param: `expires` (1-3600, default 300). |
 
 ### Start session
 

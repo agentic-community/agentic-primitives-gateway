@@ -66,8 +66,38 @@ nav:
     - Memory Namespaces: guides/memory-namespaces.md
     - Using the Web UI: guides/web-ui.md
   - Primitives:
+    - Memory:
+      - AgentCore: primitives/memory/agentcore.md
+      - Mem0 + Milvus: primitives/memory/mem0.md
+      - In-Memory: primitives/memory/in-memory.md
+    - LLM:
+      - Bedrock Converse: primitives/llm/bedrock.md
+      - OpenAI Compatible: primitives/llm/openai-compatible.md
+    - Observability:
+      - AgentCore: primitives/observability/agentcore.md
+      - Langfuse: primitives/observability/langfuse.md
+    - Identity:
+      - AgentCore: primitives/identity/agentcore.md
+      - Keycloak: primitives/identity/keycloak.md
+      - Okta: primitives/identity/okta.md
+      - Microsoft Entra ID: primitives/identity/entra.md
+    - Browser:
+      - AgentCore: primitives/browser/agentcore.md
+      - Selenium Grid: primitives/browser/selenium-grid.md
+    - Code Interpreter:
+      - AgentCore: primitives/code-interpreter/agentcore.md
+      - Jupyter: primitives/code-interpreter/jupyter.md
     - Tools:
+      - AgentCore: primitives/tools/agentcore.md
       - MCP Gateway Registry: primitives/tools/mcp-gateway-registry.md
+    - Policy:
+      - AgentCore: primitives/policy/agentcore.md
+    - Evaluations:
+      - AgentCore: primitives/evaluations/agentcore.md
+      - Langfuse: primitives/evaluations/langfuse.md
+    - Tasks:
+      - In-Memory: primitives/tasks/in-memory.md
+      - Redis: primitives/tasks/redis.md
   - API Reference:
     - Overview: api/overview.md
     - Memory: api/memory.md

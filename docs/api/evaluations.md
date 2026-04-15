@@ -4,7 +4,7 @@
 
 Evaluator management, LLM-as-a-judge evaluation, and score recording. All endpoints require authentication.
 
-**Backends:** `NoopEvaluationsProvider`, `LangfuseEvaluationsProvider`, `AgentCoreEvaluationsProvider`
+**Backends:** `NoopEvaluationsProvider`, [`LangfuseEvaluationsProvider`](../primitives/evaluations/langfuse.md), [`AgentCoreEvaluationsProvider`](../primitives/evaluations/agentcore.md)
 
 ## Evaluator Management
 

@@ -14,11 +14,11 @@ Agent  -->  Gateway (tools primitive)  -->  MCP Gateway Registry  -->  MCP Serve
 
 Key capabilities:
 
-- **Tool discovery** -- list and search tools across all registered MCP servers
-- **Tool invocation** -- invoke any tool through the registry's MCP streamable-http proxy
-- **Server management** -- register, list, and inspect MCP servers
-- **Semantic search** -- find tools by description or capability (when the registry supports it)
-- **Health-aware routing** -- only healthy servers are included in tool listings
+- **Tool discovery**: list and search tools across all registered MCP servers
+- **Tool invocation**: invoke any tool through the registry's MCP streamable-http proxy
+- **Server management**: register, list, and inspect MCP servers
+- **Semantic search**: find tools by description or capability (when the registry supports it)
+- **Health-aware routing**: only healthy servers are included in tool listings
 
 ## Configuration
 
@@ -68,9 +68,9 @@ These can be managed from the gateway's Settings page in the web UI.
 
 **Credential resolution order:**
 
-1. Client headers (`X-Cred-Mcp-Registry-*`) -- always win
-2. OIDC-resolved attributes (`apg.mcp_registry.*`) -- per-user
-3. Provider config / environment variables -- server ambient
+1. Client headers (`X-Cred-Mcp-Registry-*`) always win
+2. OIDC-resolved attributes (`apg.mcp_registry.*`) per-user
+3. Provider config / environment variables server ambient
 
 ## Using the Tools API
 
@@ -187,11 +187,11 @@ See the full example in [examples/langchain-mcp-tools/](https://github.com/agent
 
 The `MCPRegistryProvider` uses the MCP streamable-http transport protocol:
 
-1. **Server discovery** -- calls `GET /v0.1/servers` on the registry to list available MCP servers and their proxy paths
-2. **Endpoint discovery** -- probes each server's path (trying both `{path}` and `{path}/mcp`) with an `initialize` request to find the correct MCP endpoint
-3. **Session management** -- maintains MCP sessions per server via the `Mcp-Session-Id` header, with a 5-minute cache TTL and automatic re-initialization on expiry
-4. **Tool listing** -- sends `tools/list` JSON-RPC calls to each healthy server and aggregates results
-5. **Tool invocation** -- sends `tools/call` JSON-RPC calls to the correct server, resolving the server from the `ServerTitle/tool_name` format
+1. **Server discovery**: calls `GET /v0.1/servers` on the registry to list available MCP servers and their proxy paths
+2. **Endpoint discovery**: probes each server's path (trying both `{path}` and `{path}/mcp`) with an `initialize` request to find the correct MCP endpoint
+3. **Session management**: maintains MCP sessions per server via the `Mcp-Session-Id` header, with a 5-minute cache TTL and automatic re-initialization on expiry
+4. **Tool listing**: sends `tools/list` JSON-RPC calls to each healthy server and aggregates results
+5. **Tool invocation**: sends `tools/call` JSON-RPC calls to the correct server, resolving the server from the `ServerTitle/tool_name` format
 
 All MCP calls are synchronous HTTP (via `httpx`) wrapped in `SyncRunnerMixin` for async compatibility.
 

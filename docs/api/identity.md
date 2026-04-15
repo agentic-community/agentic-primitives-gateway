@@ -4,7 +4,7 @@
 
 Workload identity tokens, OAuth2 token exchange, API key retrieval, and credential/workload management. All endpoints require authentication. Control plane endpoints (create, update, delete) require admin.
 
-**Backends:** `NoopIdentityProvider`, `AgentCoreIdentityProvider`, `KeycloakIdentityProvider`, `EntraIdentityProvider`, `OktaIdentityProvider`
+**Backends:** `NoopIdentityProvider`, [`AgentCoreIdentityProvider`](../primitives/identity/agentcore.md), [`KeycloakIdentityProvider`](../primitives/identity/keycloak.md), [`EntraIdentityProvider`](../primitives/identity/entra.md), [`OktaIdentityProvider`](../primitives/identity/okta.md)
 
 ## Token Operations (Data Plane)
 
