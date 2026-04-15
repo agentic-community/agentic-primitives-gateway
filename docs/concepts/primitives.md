@@ -12,7 +12,7 @@ The nine infrastructure primitives that recur across every agent system.
 | **Browser** | Remote browser automation (navigate, click, type, screenshot) | Noop, AgentCore, Selenium Grid |
 | **Observability** | Traces, logs, LLM generation tracking, scoring, sessions | Noop, Langfuse, AgentCore |
 | **LLM** | LLM request routing with tool_use support and streaming | Noop, Bedrock Converse |
-| **Tools** | External tool registration, invocation, search, MCP servers | Noop, AgentCore, [MCP Registry](../guides/mcp-gateway-registry.md) |
+| **Tools** | External tool registration, invocation, search, MCP servers | Noop, AgentCore, [MCP Registry](../providers/mcp-gateway-registry.md) |
 | **Policy** | Cedar policy engine and policy CRUD, optional generation | Noop, AgentCore |
 | **Evaluations** | LLM-as-a-judge evaluators, online eval configs | Noop, AgentCore |
 | **Tasks** | Shared task board for team coordination | Noop, InMemory, Redis |
