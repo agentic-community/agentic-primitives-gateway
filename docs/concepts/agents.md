@@ -42,6 +42,112 @@ agents:
 | `hooks.auto_trace` | Auto-trace to observability | `true` |
 | `max_turns` | Maximum LLM calls per chat | `20` |
 | `temperature` | LLM temperature | `1.0` |
+| `max_tokens` | Maximum output tokens per LLM call | `null` (model default) |
+| `checkpointing_enabled` | Durable runs that survive server restarts (requires Redis) | `false` |
+| `shared_with` | Users/groups with access; `["*"]` for all authenticated users | `[]` (private) |
+
+Each primitive entry supports:
+
+| Field | Description | Default |
+|-------|-------------|---------|
+| `enabled` | Whether the primitive is active | `true` |
+| `tools` | Specific tools to allow; `null` includes all | `null` |
+| `namespace` | Memory namespace (memory primitive only); supports `{agent_name}`, `{session_id}` placeholders | `null` |
+| `shared_namespaces` | Shared memory pool names (memory primitive only) | `null` |
+
+### Complete Example: All Primitives
+
+An agent spec that enables every primitive the gateway supports:
+
+```yaml
+agents:
+  specs:
+    full-stack-assistant:
+      model: "us.anthropic.claude-sonnet-4-20250514-v1:0"
+      description: "An assistant with access to all gateway primitives"
+      system_prompt: |
+        You are a capable assistant with memory, web browsing, code execution,
+        external tool access, identity services, and the ability to delegate
+        tasks to specialized agents.
+
+        Always search memory before saying you don't know something.
+        When tasks can be handled by a specialist, delegate to the
+        appropriate agent.
+
+      primitives:
+        memory:
+          enabled: true
+          namespace: "agent:{agent_name}:{session_id}"
+          # Tools: remember, recall, search_memory, forget, list_memories
+
+        browser:
+          enabled: true
+          # Tools: navigate, read_page, click, type_text, screenshot, evaluate_js
+
+        code_interpreter:
+          enabled: true
+          # Tools: execute_code
+
+        tools:
+          enabled: true
+          # Tools: search_tools, invoke_tool
+          # Discovers and invokes external tools via MCP Gateway Registry
+
+        identity:
+          enabled: true
+          # Tools: get_token, get_api_key
+
+        agents:
+          enabled: true
+          tools: ["researcher", "coder"]
+          # Tools: call_researcher, call_coder
+
+      provider_overrides:
+        memory: "mem0"                 # Mem0 + Milvus
+        browser: "selenium_grid"       # Selenium Grid
+        code_interpreter: "jupyter"    # Jupyter Server
+        tools: "mcp_registry"          # MCP Gateway Registry
+
+      hooks:
+        auto_memory: true              # Save each turn to memory
+        auto_trace: true               # Trace each turn to observability
+
+      max_turns: 30
+      temperature: 1.0
+      max_tokens: 4096
+      checkpointing_enabled: true      # Durable runs (requires Redis)
+      shared_with: ["*"]               # All authenticated users
+```
+
+The same spec can be created at runtime via `POST /api/v1/agents`:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/agents \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "full-stack-assistant",
+    "model": "us.anthropic.claude-sonnet-4-20250514-v1:0",
+    "description": "An assistant with access to all gateway primitives",
+    "system_prompt": "You are a capable assistant...",
+    "primitives": {
+      "memory": {"enabled": true, "namespace": "agent:{agent_name}:{session_id}"},
+      "browser": {"enabled": true},
+      "code_interpreter": {"enabled": true},
+      "tools": {"enabled": true},
+      "identity": {"enabled": true},
+      "agents": {"enabled": true, "tools": ["researcher", "coder"]}
+    },
+    "provider_overrides": {
+      "memory": "mem0",
+      "browser": "selenium_grid",
+      "code_interpreter": "jupyter",
+      "tools": "mcp_registry"
+    },
+    "hooks": {"auto_memory": true, "auto_trace": true},
+    "max_turns": 30,
+    "max_tokens": 4096
+  }'
+```
 
 ## How It Works
 
@@ -69,6 +175,7 @@ Each enabled primitive provides tools to the LLM:
 | **tools** | `search_tools`, `invoke_tool` |
 | **identity** | `get_token`, `get_api_key` |
 | **agents** | `call_{agent_name}` (dynamic, one per sub-agent) |
+| **agent_management** | `create_agent`, `list_agents`, `list_primitives`, `delete_agent`, `delegate_to` |
 
 ### Tool Filtering
 
