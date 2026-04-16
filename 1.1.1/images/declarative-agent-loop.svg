@@ -1,0 +1,241 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 820" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
+  <defs>
+    <filter id="shadow" x="-4%" y="-4%" width="108%" height="108%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-opacity="0.15"/>
+    </filter>
+    <linearGradient id="specGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0ea5e9"/>
+      <stop offset="100%" stop-color="#0284c7"/>
+    </linearGradient>
+    <linearGradient id="initGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#6366f1"/>
+      <stop offset="100%" stop-color="#4f46e5"/>
+    </linearGradient>
+    <linearGradient id="llmGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#8b5cf6"/>
+      <stop offset="100%" stop-color="#7c3aed"/>
+    </linearGradient>
+    <linearGradient id="toolGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#f97316"/>
+      <stop offset="100%" stop-color="#ea580c"/>
+    </linearGradient>
+    <linearGradient id="finalGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#10b981"/>
+      <stop offset="100%" stop-color="#059669"/>
+    </linearGradient>
+    <linearGradient id="loopGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#fbbf24"/>
+      <stop offset="100%" stop-color="#f59e0b"/>
+    </linearGradient>
+    <marker id="arrowGray" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6" fill="#64748b"/>
+    </marker>
+    <marker id="arrowIndigo" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6" fill="#818cf8"/>
+    </marker>
+    <marker id="arrowOrange" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6" fill="#fb923c"/>
+    </marker>
+    <marker id="arrowGreen" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6" fill="#10b981"/>
+    </marker>
+    <marker id="arrowYellow" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6" fill="#fbbf24"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect width="920" height="820" rx="16" fill="#0f172a"/>
+
+  <!-- Title -->
+  <text x="460" y="38" text-anchor="middle" fill="#f1f5f9" font-size="22" font-weight="700">Declarative Agent Tool Loop</text>
+  <text x="460" y="58" text-anchor="middle" fill="#94a3b8" font-size="13">Server-side LLM tool-call loop -- define agents in YAML, no code required</text>
+
+  <!-- ═══ AGENT SPEC (left side) ═══ -->
+  <rect x="30" y="80" width="260" height="200" rx="12" fill="#1e293b" stroke="#0ea5e9" stroke-width="1.5" filter="url(#shadow)"/>
+  <rect x="30" y="80" width="260" height="32" rx="12" fill="url(#specGrad)"/>
+  <rect x="30" y="100" width="260" height="12" fill="url(#specGrad)"/>
+  <text x="55" y="103" fill="white" font-size="13" font-weight="700">Agent Spec (YAML)</text>
+  <text x="265" y="103" text-anchor="end" fill="white" font-size="10" opacity="0.7">no code</text>
+
+  <!-- YAML content -->
+  <text x="48" y="134" fill="#7dd3fc" font-size="10" font-family="monospace">name: research-assistant</text>
+  <text x="48" y="150" fill="#7dd3fc" font-size="10" font-family="monospace">model: anthropic.claude-sonnet</text>
+  <text x="48" y="166" fill="#7dd3fc" font-size="10" font-family="monospace">system_prompt: "You are..."</text>
+  <text x="48" y="182" fill="#7dd3fc" font-size="10" font-family="monospace">max_turns: 10</text>
+  <text x="48" y="198" fill="#7dd3fc" font-size="10" font-family="monospace">primitives:</text>
+  <text x="48" y="214" fill="#7dd3fc" font-size="10" font-family="monospace">  memory: { enabled: true }</text>
+  <text x="48" y="230" fill="#7dd3fc" font-size="10" font-family="monospace">  browser: { enabled: true }</text>
+  <text x="48" y="246" fill="#7dd3fc" font-size="10" font-family="monospace">  code_interpreter: { ... }</text>
+  <text x="48" y="262" fill="#94a3b8" font-size="9">Primitives become tools automatically</text>
+
+  <!-- Arrow from spec to init -->
+  <line x1="290" y1="180" x2="340" y2="180" stroke="#64748b" stroke-width="2" marker-end="url(#arrowGray)"/>
+
+  <!-- ═══ USER MESSAGE ═══ -->
+  <rect x="30" y="296" width="260" height="40" rx="8" fill="rgba(99,102,241,0.15)" stroke="#6366f1" stroke-width="1"/>
+  <text x="160" y="312" text-anchor="middle" fill="#a5b4fc" font-size="11" font-weight="600">POST /agents/{name}/chat</text>
+  <text x="160" y="326" text-anchor="middle" fill="#818cf8" font-size="10">{ "message": "Research Python..." }</text>
+
+  <!-- Arrow from user to init -->
+  <line x1="290" y1="316" x2="340" y2="260" stroke="#64748b" stroke-width="2" marker-end="url(#arrowGray)"/>
+
+  <!-- ═══ INIT PHASE ═══ -->
+  <rect x="350" y="80" width="540" height="200" rx="12" fill="#1e293b" stroke="#6366f1" stroke-width="1.5" filter="url(#shadow)"/>
+  <rect x="350" y="80" width="540" height="32" rx="12" fill="url(#initGrad)"/>
+  <rect x="350" y="100" width="540" height="12" fill="url(#initGrad)"/>
+  <text x="380" y="103" fill="white" font-size="13" font-weight="700">_init_context()</text>
+  <text x="860" y="103" text-anchor="end" fill="white" font-size="10" opacity="0.7">one-time setup</text>
+
+  <!-- Init steps -->
+  <rect x="370" y="122" width="150" height="44" rx="6" fill="rgba(99,102,241,0.1)" stroke="#6366f1" stroke-width="0.5"/>
+  <text x="445" y="140" text-anchor="middle" fill="#c4b5fd" font-size="10" font-weight="600">Apply Provider</text>
+  <text x="445" y="154" text-anchor="middle" fill="#c4b5fd" font-size="10" font-weight="600">Overrides</text>
+
+  <rect x="535" y="122" width="150" height="44" rx="6" fill="rgba(99,102,241,0.1)" stroke="#6366f1" stroke-width="0.5"/>
+  <text x="610" y="140" text-anchor="middle" fill="#c4b5fd" font-size="10" font-weight="600">Build Tool List</text>
+  <text x="610" y="154" text-anchor="middle" fill="#c4b5fd" font-size="10" font-weight="600">from Primitives</text>
+
+  <rect x="700" y="122" width="170" height="44" rx="6" fill="rgba(99,102,241,0.1)" stroke="#6366f1" stroke-width="0.5"/>
+  <text x="785" y="140" text-anchor="middle" fill="#c4b5fd" font-size="10" font-weight="600">Resolve Namespace</text>
+  <text x="785" y="154" text-anchor="middle" fill="#c4b5fd" font-size="10" font-weight="600">+ Actor ID</text>
+
+  <rect x="370" y="178" width="150" height="44" rx="6" fill="rgba(99,102,241,0.1)" stroke="#6366f1" stroke-width="0.5"/>
+  <text x="445" y="196" text-anchor="middle" fill="#c4b5fd" font-size="10" font-weight="600">Load Conversation</text>
+  <text x="445" y="210" text-anchor="middle" fill="#c4b5fd" font-size="10" font-weight="600">History</text>
+
+  <rect x="535" y="178" width="150" height="44" rx="6" fill="rgba(99,102,241,0.1)" stroke="#6366f1" stroke-width="0.5"/>
+  <text x="610" y="196" text-anchor="middle" fill="#c4b5fd" font-size="10" font-weight="600">Inject Stored</text>
+  <text x="610" y="210" text-anchor="middle" fill="#c4b5fd" font-size="10" font-weight="600">Memories</text>
+
+  <rect x="700" y="178" width="170" height="44" rx="6" fill="rgba(99,102,241,0.1)" stroke="#6366f1" stroke-width="0.5"/>
+  <text x="785" y="196" text-anchor="middle" fill="#c4b5fd" font-size="10" font-weight="600">Append User</text>
+  <text x="785" y="210" text-anchor="middle" fill="#c4b5fd" font-size="10" font-weight="600">Message</text>
+
+  <!-- Built tools list -->
+  <rect x="370" y="236" width="500" height="30" rx="5" fill="rgba(249,115,22,0.08)" stroke="#f97316" stroke-width="0.5"/>
+  <text x="384" y="255" fill="#94a3b8" font-size="9" font-weight="600">TOOLS:</text>
+  <rect x="426" y="242" width="72" height="18" rx="4" fill="#f97316" opacity="0.8"/>
+  <text x="462" y="254" text-anchor="middle" fill="white" font-size="9" font-weight="600">remember</text>
+  <rect x="504" y="242" width="50" height="18" rx="4" fill="#f97316" opacity="0.8"/>
+  <text x="529" y="254" text-anchor="middle" fill="white" font-size="9" font-weight="600">recall</text>
+  <rect x="560" y="242" width="80" height="18" rx="4" fill="#f97316" opacity="0.8"/>
+  <text x="600" y="254" text-anchor="middle" fill="white" font-size="9" font-weight="600">search_mem</text>
+  <rect x="646" y="242" width="62" height="18" rx="4" fill="#22c55e" opacity="0.8"/>
+  <text x="677" y="254" text-anchor="middle" fill="white" font-size="9" font-weight="600">navigate</text>
+  <rect x="714" y="242" width="72" height="18" rx="4" fill="#22c55e" opacity="0.8"/>
+  <text x="750" y="254" text-anchor="middle" fill="white" font-size="9" font-weight="600">read_page</text>
+  <rect x="792" y="242" width="66" height="18" rx="4" fill="#0ea5e9" opacity="0.8"/>
+  <text x="825" y="254" text-anchor="middle" fill="white" font-size="9" font-weight="600">exec_code</text>
+
+  <!-- ═══ TOOL-CALL LOOP (main section) ═══ -->
+  <!-- Loop boundary -->
+  <rect x="120" y="340" width="770" height="310" rx="14" fill="rgba(251,191,36,0.04)" stroke="#fbbf24" stroke-width="1.5" stroke-dasharray="6,3"/>
+  <rect x="120" y="340" width="220" height="24" rx="12" fill="url(#loopGrad)"/>
+  <text x="140" y="356" fill="#1e293b" font-size="11" font-weight="700">TOOL-CALL LOOP</text>
+  <text x="322" y="356" text-anchor="end" fill="#1e293b" font-size="9">while turns &lt; max_turns</text>
+
+  <!-- Arrow from init to loop -->
+  <line x1="620" y1="280" x2="505" y2="338" stroke="#64748b" stroke-width="2" marker-end="url(#arrowGray)"/>
+
+  <!-- Step 1: Build Request -->
+  <rect x="150" y="380" width="180" height="60" rx="10" fill="#1e293b" stroke="#8b5cf6" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="240" y="403" text-anchor="middle" fill="#c4b5fd" font-size="11" font-weight="700">1. Build Request</text>
+  <text x="240" y="420" text-anchor="middle" fill="#94a3b8" font-size="10">messages + system_prompt</text>
+  <text x="240" y="432" text-anchor="middle" fill="#94a3b8" font-size="10">+ tools + model</text>
+
+  <!-- Arrow to LLM -->
+  <line x1="330" y1="410" x2="378" y2="410" stroke="#818cf8" stroke-width="2" marker-end="url(#arrowIndigo)"/>
+
+  <!-- Step 2: Call LLM -->
+  <rect x="380" y="380" width="200" height="60" rx="10" fill="url(#llmGrad)" filter="url(#shadow)"/>
+  <text x="480" y="403" text-anchor="middle" fill="white" font-size="11" font-weight="700">2. Call LLM</text>
+  <text x="480" y="420" text-anchor="middle" fill="white" font-size="10" opacity="0.8">registry.llm</text>
+  <text x="480" y="432" text-anchor="middle" fill="white" font-size="10" opacity="0.8">.route_request()</text>
+
+  <!-- Step 3: Check response (diamond) -->
+  <polygon points="700,380 780,410 700,440 620,410" fill="#1e293b" stroke="#fbbf24" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="700" y="407" text-anchor="middle" fill="#fbbf24" font-size="10" font-weight="700">stop_reason</text>
+  <text x="700" y="420" text-anchor="middle" fill="#fbbf24" font-size="10" font-weight="700">== tool_use?</text>
+
+  <!-- Arrow from LLM to decision -->
+  <line x1="580" y1="410" x2="618" y2="410" stroke="#818cf8" stroke-width="2" marker-end="url(#arrowIndigo)"/>
+
+  <!-- NO path (exit loop) -->
+  <line x1="780" y1="410" x2="860" y2="410" stroke="#10b981" stroke-width="2" marker-end="url(#arrowGreen)"/>
+  <rect x="830" y="396" width="40" height="18" rx="4" fill="rgba(16,185,129,0.2)"/>
+  <text x="850" y="409" text-anchor="middle" fill="#10b981" font-size="10" font-weight="700">NO</text>
+
+  <!-- YES path (down to tools) -->
+  <line x1="700" y1="440" x2="700" y2="470" stroke="#fbbf24" stroke-width="2" marker-end="url(#arrowYellow)"/>
+  <rect x="676" y="444" width="36" height="18" rx="4" fill="rgba(251,191,36,0.2)"/>
+  <text x="694" y="457" text-anchor="middle" fill="#fbbf24" font-size="10" font-weight="700">YES</text>
+
+  <!-- Step 4: Execute Tools -->
+  <rect x="150" y="476" width="710" height="80" rx="10" fill="#1e293b" stroke="#f97316" stroke-width="1.5" filter="url(#shadow)"/>
+  <rect x="150" y="476" width="710" height="30" rx="10" fill="url(#toolGrad)"/>
+  <rect x="150" y="496" width="710" height="10" fill="url(#toolGrad)"/>
+  <text x="175" y="497" fill="white" font-size="12" font-weight="700">3. Execute Tools in Parallel</text>
+  <text x="830" y="497" text-anchor="end" fill="white" font-size="10" opacity="0.7">asyncio.gather</text>
+
+  <!-- Parallel tool boxes -->
+  <rect x="170" y="516" width="130" height="28" rx="5" fill="rgba(249,115,22,0.15)" stroke="#f97316" stroke-width="0.5"/>
+  <text x="235" y="534" text-anchor="middle" fill="#fb923c" font-size="10" font-weight="600">remember(...)</text>
+
+  <rect x="310" y="516" width="130" height="28" rx="5" fill="rgba(249,115,22,0.15)" stroke="#f97316" stroke-width="0.5"/>
+  <text x="375" y="534" text-anchor="middle" fill="#fb923c" font-size="10" font-weight="600">navigate(url)</text>
+
+  <rect x="450" y="516" width="130" height="28" rx="5" fill="rgba(249,115,22,0.15)" stroke="#f97316" stroke-width="0.5"/>
+  <text x="515" y="534" text-anchor="middle" fill="#fb923c" font-size="10" font-weight="600">execute_code(...)</text>
+
+  <rect x="590" y="516" width="130" height="28" rx="5" fill="rgba(249,115,22,0.15)" stroke="#f97316" stroke-width="0.5"/>
+  <text x="655" y="534" text-anchor="middle" fill="#fb923c" font-size="10" font-weight="600">call_researcher</text>
+
+  <!-- Agent-as-tool badge -->
+  <rect x="726" y="516" width="120" height="28" rx="5" fill="rgba(99,102,241,0.15)" stroke="#6366f1" stroke-width="0.5"/>
+  <text x="786" y="530" text-anchor="middle" fill="#a5b4fc" font-size="9" font-weight="600">sub-agent tools</text>
+  <text x="786" y="540" text-anchor="middle" fill="#a5b4fc" font-size="8">run full nested loop</text>
+
+  <!-- Loop-back arrow: tools → build request -->
+  <text x="165" y="478" fill="#fbbf24" font-size="10" font-weight="600">Append tool_results to messages</text>
+  <path d="M 240,556 L 240,574 Q 240,584 230,584 L 146,584 Q 136,584 136,574 L 136,410 Q 136,400 146,400 L 148,400" fill="none" stroke="#fbbf24" stroke-width="2" marker-end="url(#arrowYellow)"/>
+
+  <!-- Loop iteration label -->
+  <text x="108" y="500" fill="#fbbf24" font-size="10" font-weight="600" transform="rotate(-90, 108, 500)">next turn</text>
+
+  <!-- ═══ EXIT LOOP - BREAK ARROW ═══ -->
+  <!-- Arrow from "NO" exit down to finalize -->
+  <path d="M 860,410 Q 890,410 890,440 L 890,668 Q 890,678 880,678 L 660,678" fill="none" stroke="#10b981" stroke-width="2" marker-end="url(#arrowGreen)"/>
+  <text x="898" y="540" fill="#10b981" font-size="10" font-weight="600" transform="rotate(90, 898, 540)">end_turn / max_turns</text>
+
+  <!-- ═══ FINALIZE PHASE ═══ -->
+  <rect x="200" y="660" width="460" height="60" rx="12" fill="url(#finalGrad)" filter="url(#shadow)"/>
+  <text x="430" y="684" text-anchor="middle" fill="white" font-size="13" font-weight="700">_finalize()</text>
+  <text x="430" y="702" text-anchor="middle" fill="white" font-size="11" opacity="0.85">Store conversation turn  |  Trace to observability  |  Cleanup sessions</text>
+
+  <!-- Arrow to response -->
+  <line x1="430" y1="720" x2="430" y2="746" stroke="#64748b" stroke-width="2" marker-end="url(#arrowGray)"/>
+
+  <!-- ═══ RESPONSE ═══ -->
+  <rect x="200" y="748" width="460" height="48" rx="10" fill="#1e293b" stroke="#10b981" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="430" y="770" text-anchor="middle" fill="#10b981" font-size="12" font-weight="700">ChatResponse</text>
+  <text x="430" y="786" text-anchor="middle" fill="#94a3b8" font-size="10">{ response, session_id, turns_used, tools_called, artifacts }</text>
+
+  <!-- ═══ SSE STREAMING callout ═══ -->
+  <rect x="680" y="748" width="210" height="56" rx="8" fill="rgba(139,92,246,0.1)" stroke="#8b5cf6" stroke-width="1" stroke-dasharray="4,2"/>
+  <text x="785" y="766" text-anchor="middle" fill="#c4b5fd" font-size="10" font-weight="700">STREAMING (run_stream)</text>
+  <text x="785" y="780" text-anchor="middle" fill="#818cf8" font-size="9">Same loop, but yields SSE</text>
+  <text x="785" y="792" text-anchor="middle" fill="#818cf8" font-size="9">events: token, tool_call_*,</text>
+  <text x="785" y="804" text-anchor="middle" fill="#818cf8" font-size="9">sub_agent_*, done</text>
+
+  <!-- ═══ KEY INSIGHT callout ═══ -->
+  <rect x="30" y="358" width="80" height="148" rx="8" fill="rgba(251,191,36,0.08)" stroke="#fbbf24" stroke-width="1" stroke-dasharray="4,2"/>
+  <text x="70" y="380" text-anchor="middle" fill="#fbbf24" font-size="10" font-weight="700">ZERO</text>
+  <text x="70" y="393" text-anchor="middle" fill="#fbbf24" font-size="10" font-weight="700">CODE</text>
+  <text x="70" y="416" text-anchor="middle" fill="#fbbf24" font-size="9">Define agent</text>
+  <text x="70" y="429" text-anchor="middle" fill="#fbbf24" font-size="9">in YAML.</text>
+  <text x="70" y="449" text-anchor="middle" fill="#fbbf24" font-size="9">Gateway runs</text>
+  <text x="70" y="462" text-anchor="middle" fill="#fbbf24" font-size="9">the full LLM</text>
+  <text x="70" y="475" text-anchor="middle" fill="#fbbf24" font-size="9">tool loop</text>
+  <text x="70" y="488" text-anchor="middle" fill="#fbbf24" font-size="9">server-side.</text>
+</svg>
