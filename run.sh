@@ -26,4 +26,4 @@ echo "Config file: $CONFIG_FILE"
 echo ""
 
 export AGENTIC_PRIMITIVES_GATEWAY_CONFIG_FILE="$CONFIG_FILE"
-exec uvicorn agentic_primitives_gateway.main:app --reload --host 0.0.0.0 --port "${PORT:-8000}"
+exec uvicorn agentic_primitives_gateway.main:app --reload --reload-dir src --reload-dir configs --host 0.0.0.0 --port "${PORT:-8000}"
