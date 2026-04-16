@@ -1591,22 +1591,22 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#configuration" class="md-nav__link">
+  <a href="#keycloak-and-the-gateway-three-config-sections" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Configuration
+        Keycloak and the Gateway: Three Config Sections
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Configuration">
+    <nav class="md-nav" aria-label="Keycloak and the Gateway: Three Config Sections">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#server-side-gateway-config" class="md-nav__link">
+  <a href="#1-authjwt-who-is-the-user" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Server-Side (Gateway Config)
+        1. auth.jwt — Who is the user?
       
     </span>
   </a>
@@ -1614,10 +1614,32 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#per-request-credentials" class="md-nav__link">
+  <a href="#2-providersidentity-agent-to-service-authentication" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Per-Request Credentials
+        2. providers.identity — Agent-to-service authentication
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3-credentials-per-user-credential-resolution" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. credentials — Per-user credential resolution
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#which-client-for-what" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Which client for what?
       
     </span>
   </a>
@@ -1626,56 +1648,6 @@
         
       </ul>
     </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#using-the-identity-api" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Using the Identity API
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Using the Identity API">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#get-a-token" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Get a Token
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#get-an-api-key" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Get an API Key
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#using-with-the-python-client" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Using with the Python Client
-      
-    </span>
-  </a>
   
 </li>
       
@@ -1684,6 +1656,217 @@
     <span class="md-ellipsis">
       
         Prerequisites
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#setting-up-keycloak" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Setting Up Keycloak
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Setting Up Keycloak">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#option-a-use-an-existing-realm" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Option A: Use an existing realm
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#option-b-create-a-dedicated-realm-recommended-for-isolation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Option B: Create a dedicated realm (recommended for isolation)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#create-the-gateway-client" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Create the gateway client
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#assign-admin-roles-required-for-control-plane-operations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Assign admin roles (required for control plane operations)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#optional-create-a-public-client-for-the-web-ui-authjwt" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Optional: Create a public client for the web UI (auth.jwt)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#optional-add-a-groups-mapper" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Optional: Add a groups mapper
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#optional-enable-credential-resolution-credentials-section" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Optional: Enable credential resolution (credentials section)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#gateway-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Gateway Configuration
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Gateway Configuration">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#per-request-credentials" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Per-request credentials
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#supported-operations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Supported Operations
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Supported Operations">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#data-plane-token-operations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Data plane (token operations)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#control-plane-admin-operations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Control plane (admin operations)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#usage-examples" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Usage Examples
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Usage Examples">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#python-client" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Python client
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#curl" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        curl
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#security-best-practices" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Security Best Practices
       
     </span>
   </a>
@@ -2981,22 +3164,22 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#configuration" class="md-nav__link">
+  <a href="#keycloak-and-the-gateway-three-config-sections" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Configuration
+        Keycloak and the Gateway: Three Config Sections
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Configuration">
+    <nav class="md-nav" aria-label="Keycloak and the Gateway: Three Config Sections">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#server-side-gateway-config" class="md-nav__link">
+  <a href="#1-authjwt-who-is-the-user" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Server-Side (Gateway Config)
+        1. auth.jwt — Who is the user?
       
     </span>
   </a>
@@ -3004,10 +3187,32 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#per-request-credentials" class="md-nav__link">
+  <a href="#2-providersidentity-agent-to-service-authentication" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Per-Request Credentials
+        2. providers.identity — Agent-to-service authentication
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3-credentials-per-user-credential-resolution" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. credentials — Per-user credential resolution
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#which-client-for-what" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Which client for what?
       
     </span>
   </a>
@@ -3016,56 +3221,6 @@
         
       </ul>
     </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#using-the-identity-api" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Using the Identity API
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Using the Identity API">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#get-a-token" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Get a Token
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#get-an-api-key" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Get an API Key
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#using-with-the-python-client" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Using with the Python Client
-      
-    </span>
-  </a>
   
 </li>
       
@@ -3074,6 +3229,217 @@
     <span class="md-ellipsis">
       
         Prerequisites
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#setting-up-keycloak" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Setting Up Keycloak
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Setting Up Keycloak">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#option-a-use-an-existing-realm" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Option A: Use an existing realm
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#option-b-create-a-dedicated-realm-recommended-for-isolation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Option B: Create a dedicated realm (recommended for isolation)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#create-the-gateway-client" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Create the gateway client
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#assign-admin-roles-required-for-control-plane-operations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Assign admin roles (required for control plane operations)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#optional-create-a-public-client-for-the-web-ui-authjwt" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Optional: Create a public client for the web UI (auth.jwt)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#optional-add-a-groups-mapper" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Optional: Add a groups mapper
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#optional-enable-credential-resolution-credentials-section" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Optional: Enable credential resolution (credentials section)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#gateway-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Gateway Configuration
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Gateway Configuration">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#per-request-credentials" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Per-request credentials
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#supported-operations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Supported Operations
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Supported Operations">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#data-plane-token-operations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Data plane (token operations)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#control-plane-admin-operations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Control plane (admin operations)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#usage-examples" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Usage Examples
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Usage Examples">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#python-client" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Python client
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#curl" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        curl
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#security-best-practices" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Security Best Practices
       
     </span>
   </a>
@@ -3102,16 +3468,211 @@
 
 <h1 id="keycloak-identity">Keycloak Identity<a class="headerlink" href="#keycloak-identity" title="Permanent link">&para;</a></h1>
 <p>Self-hosted identity provider using <a href="https://www.keycloak.org/">Keycloak</a> for token exchange, API key management, and workload identity.</p>
-<h2 id="configuration">Configuration<a class="headerlink" href="#configuration" title="Permanent link">&para;</a></h2>
-<h3 id="server-side-gateway-config">Server-Side (Gateway Config)<a class="headerlink" href="#server-side-gateway-config" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">providers</span><span class="p">:</span>
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="nt">identity</span><span class="p">:</span>
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">    </span><span class="nt">backend</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;agentic_primitives_gateway.primitives.identity.keycloak.KeycloakIdentityProvider&quot;</span>
-<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">    </span><span class="nt">config</span><span class="p">:</span>
-<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">      </span><span class="nt">server_url</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;http://localhost:8080&quot;</span>
-<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="w">      </span><span class="nt">realm</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;agents&quot;</span>
-<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">      </span><span class="nt">client_id</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;agentic-gateway&quot;</span>
-<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="w">      </span><span class="nt">client_secret</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;${KEYCLOAK_CLIENT_SECRET}&quot;</span>
+<h2 id="keycloak-and-the-gateway-three-config-sections">Keycloak and the Gateway: Three Config Sections<a class="headerlink" href="#keycloak-and-the-gateway-three-config-sections" title="Permanent link">&para;</a></h2>
+<p>The gateway has three distinct config sections that can all be backed by the same Keycloak instance, but they serve different purposes and typically use <strong>different clients</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>┌─────────────────────────────────────────────────────────────────┐
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>│                        Keycloak Realm                           │
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>│                                                                 │
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>│  ┌──────────────────────┐  ┌──────────────┐  ┌──────────────┐  │
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>│  │ agentic-gateway-ui   │  │ agentic-     │  │ agentic-     │  │
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>│  │ (public client)      │  │ gateway      │  │ gateway-admin│  │
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>│  │                      │  │ (confidential│  │ (confidential│  │
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>│  │ Used by:             │  │  client)     │  │  client)     │  │
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>│  │ • auth.jwt           │  │              │  │              │  │
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>│  │ • Web UI OIDC login  │  │ Used by:     │  │ Used by:     │  │
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>│  │                      │  │ • identity   │  │ • credentials│  │
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>│  │ No secret — browser  │  │   provider   │  │   resolver   │  │
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>│  │ safe (PKCE flow)     │  │              │  │   + writer   │  │
+<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>│  │                      │  │ Token        │  │              │  │
+<a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>│  │                      │  │ exchange,    │  │ Reads user   │  │
+<a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>│  │                      │  │ workload IDs │  │ attributes   │  │
+<a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>│  └──────────────────────┘  └──────────────┘  └──────────────┘  │
+<a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a>└─────────────────────────────────────────────────────────────────┘
+</code></pre></div>
+<h3 id="1-authjwt-who-is-the-user">1. <code>auth.jwt</code> — Who is the user?<a class="headerlink" href="#1-authjwt-who-is-the-user" title="Permanent link">&para;</a></h3>
+<p><strong>Purpose:</strong> Validates JWT tokens on incoming API requests. Identifies the user (principal) for ownership, scoping, and policy enforcement.</p>
+<p><strong>Client type:</strong> <strong>Public</strong> (no secret) — used by the web UI's browser-based OIDC flow (Authorization Code + PKCE).</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">auth</span><span class="p">:</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">backend</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">jwt</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">  </span><span class="nt">jwt</span><span class="p">:</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">    </span><span class="nt">issuer</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;https://keycloak.example.com/realms/agents&quot;</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">    </span><span class="nt">client_id</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;agentic-gateway-ui&quot;</span><span class="w">    </span><span class="c1"># public client</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">    </span><span class="nt">algorithms</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;RS256&quot;</span><span class="p p-Indicator">]</span>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="w">    </span><span class="nt">claims_mapping</span><span class="p">:</span>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="w">      </span><span class="nt">groups</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;groups&quot;</span>
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="w">      </span><span class="nt">scopes</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;scope&quot;</span>
+</code></pre></div>
+<p>This section has <strong>nothing to do with the identity primitive</strong>. It's pure authentication — "is this JWT valid and who sent it?" The gateway fetches JWKS keys from the issuer's <code>.well-known/openid-configuration</code> endpoint.</p>
+<h3 id="2-providersidentity-agent-to-service-authentication">2. <code>providers.identity</code> — Agent-to-service authentication<a class="headerlink" href="#2-providersidentity-agent-to-service-authentication" title="Permanent link">&para;</a></h3>
+<p><strong>Purpose:</strong> Enables agents to obtain tokens for external services (token exchange), retrieve API keys, and manage workload identities. This is the <strong>identity primitive</strong>.</p>
+<p><strong>Client type:</strong> <strong>Confidential</strong> (has a secret) — used server-side by the gateway. Needs "Service accounts roles" enabled for workload tokens.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nt">providers</span><span class="p">:</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">identity</span><span class="p">:</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">    </span><span class="nt">backend</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;...keycloak.KeycloakIdentityProvider&quot;</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">    </span><span class="nt">config</span><span class="p">:</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">      </span><span class="nt">server_url</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;https://keycloak.example.com&quot;</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="w">      </span><span class="nt">realm</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;agents&quot;</span>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="w">      </span><span class="nt">client_id</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;agentic-gateway&quot;</span><span class="w">          </span><span class="c1"># confidential client</span>
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="w">      </span><span class="nt">client_secret</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;${KEYCLOAK_CLIENT_SECRET}&quot;</span>
+</code></pre></div>
+<p>This is what agents call when they need to authenticate with external APIs. An agent calls <code>POST /api/v1/identity/token</code> and the gateway exchanges tokens via Keycloak on the agent's behalf.</p>
+<h3 id="3-credentials-per-user-credential-resolution">3. <code>credentials</code> — Per-user credential resolution<a class="headerlink" href="#3-credentials-per-user-credential-resolution" title="Permanent link">&para;</a></h3>
+<p><strong>Purpose:</strong> Resolves per-user backend credentials (Langfuse keys, MCP tokens, etc.) from Keycloak user attributes. Populates the same context as <code>X-Cred-*</code> headers, but automatically from the OIDC provider.</p>
+<p><strong>Client type:</strong> <strong>Confidential</strong> with <strong>Admin API access</strong> — needs <code>manage-users</code> and <code>manage-realm</code> roles to read user attributes. Can be the same client as the identity provider, or a dedicated admin client.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nt">credentials</span><span class="p">:</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span><span class="nt">resolver</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">oidc</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span><span class="nt">writer</span><span class="p">:</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">    </span><span class="nt">backend</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">keycloak</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">    </span><span class="nt">config</span><span class="p">:</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w">      </span><span class="nt">admin_client_id</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;${KC_ADMIN_CLIENT_ID}&quot;</span><span class="w">      </span><span class="c1"># confidential client with admin roles</span>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="w">      </span><span class="nt">admin_client_secret</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;${KC_ADMIN_CLIENT_SECRET}&quot;</span>
+</code></pre></div>
+<p>When a user sends a JWT, the gateway reads their <code>apg.*</code> attributes from Keycloak (e.g., <code>apg.langfuse.public_key</code>) and injects them as service credentials. Users manage their credentials via the Settings page in the web UI.</p>
+<h3 id="which-client-for-what">Which client for what?<a class="headerlink" href="#which-client-for-what" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Config section</th>
+<th>Purpose</th>
+<th>Client type</th>
+<th>Client ID (example)</th>
+<th>Requires secret?</th>
+<th>Keycloak roles needed</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>auth.jwt</code></td>
+<td>Validate user JWTs</td>
+<td><strong>Public</strong></td>
+<td><code>agentic-gateway-ui</code></td>
+<td>No</td>
+<td>None</td>
+</tr>
+<tr>
+<td><code>providers.identity</code></td>
+<td>Token exchange, workload IDs</td>
+<td><strong>Confidential</strong></td>
+<td><code>agentic-gateway</code></td>
+<td>Yes</td>
+<td><code>manage-clients</code> (for control plane)</td>
+</tr>
+<tr>
+<td><code>credentials.writer</code></td>
+<td>Read/write user attributes</td>
+<td><strong>Confidential</strong></td>
+<td><code>agentic-gateway</code> or <code>agentic-gateway-admin</code></td>
+<td>Yes</td>
+<td><code>manage-users</code>, <code>manage-realm</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>You can use the same confidential client</strong> for both <code>providers.identity</code> and <code>credentials.writer</code> if you assign all the needed roles. Using separate clients provides better audit separation.</p>
+<p><strong>The public client</strong> (<code>agentic-gateway-ui</code>) should <strong>only</strong> be used for <code>auth.jwt</code>. It has no secret and cannot perform admin operations.</p>
+<h2 id="prerequisites">Prerequisites<a class="headerlink" href="#prerequisites" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>pip<span class="w"> </span>install<span class="w"> </span>agentic-primitives-gateway<span class="o">[</span>keycloak<span class="o">]</span>
+</code></pre></div>
+<p>A running Keycloak instance with a confidential client configured. The <a href="https://awslabs.github.io/ai-on-eks/docs/infra/agents-on-eks">Agents on EKS</a> infrastructure includes a pre-configured Keycloak.</p>
+<h2 id="setting-up-keycloak">Setting Up Keycloak<a class="headerlink" href="#setting-up-keycloak" title="Permanent link">&para;</a></h2>
+<h3 id="option-a-use-an-existing-realm">Option A: Use an existing realm<a class="headerlink" href="#option-a-use-an-existing-realm" title="Permanent link">&para;</a></h3>
+<p>If you already have a Keycloak realm (e.g., from Agents on EKS), you can add the gateway client to it.</p>
+<h3 id="option-b-create-a-dedicated-realm-recommended-for-isolation">Option B: Create a dedicated realm (recommended for isolation)<a class="headerlink" href="#option-b-create-a-dedicated-realm-recommended-for-isolation" title="Permanent link">&para;</a></h3>
+<p>A dedicated realm keeps agent infrastructure separate from your application's user realm. This is recommended for production deployments.</p>
+<ol>
+<li>Log into the Keycloak admin console</li>
+<li>Click the realm dropdown (top left) → <strong>Create realm</strong></li>
+<li>Name it (e.g., <code>agents</code>) → <strong>Create</strong></li>
+</ol>
+<h3 id="create-the-gateway-client">Create the gateway client<a class="headerlink" href="#create-the-gateway-client" title="Permanent link">&para;</a></h3>
+<p>In your chosen realm:</p>
+<ol>
+<li>Go to <strong>Clients</strong> → <strong>Create client</strong></li>
+<li><strong>General settings:</strong></li>
+<li>Client ID: <code>agentic-gateway</code></li>
+<li>Client type: <strong>OpenID Connect</strong></li>
+<li><strong>Capability config:</strong></li>
+<li>Client authentication: <strong>ON</strong> (makes it confidential)</li>
+<li>Authorization: OFF</li>
+<li>Check <strong>Service accounts roles</strong> (enables client_credentials grant for workload tokens)</li>
+<li>Check <strong>Standard flow</strong> if the web UI will use this realm for OIDC login</li>
+<li><strong>Login settings:</strong></li>
+<li>Valid redirect URIs: <code>http://localhost:8000/*</code> (or your gateway URL)</li>
+<li>Web origins: <code>http://localhost:8000</code> (for CORS)</li>
+<li>Click <strong>Save</strong></li>
+<li>Go to the <strong>Credentials</strong> tab → copy the <strong>Client secret</strong></li>
+</ol>
+<h3 id="assign-admin-roles-required-for-control-plane-operations">Assign admin roles (required for control plane operations)<a class="headerlink" href="#assign-admin-roles-required-for-control-plane-operations" title="Permanent link">&para;</a></h3>
+<p>The gateway's service account needs Keycloak Admin API access to manage workload identities (clients) and credential providers.</p>
+<ol>
+<li>Go to <strong>Clients</strong> → <strong>agentic-gateway</strong> → <strong>Service account roles</strong></li>
+<li>Click <strong>Assign role</strong></li>
+<li>Change the filter to <strong>Filter by clients</strong> → select <strong>realm-management</strong></li>
+<li>Select these roles:</li>
+<li><strong>manage-clients</strong> — create, update, delete clients (workload identities)</li>
+<li><strong>manage-realm</strong> — required for credential resolution (reading user attributes)</li>
+<li>Click <strong>Assign</strong></li>
+</ol>
+<p><strong>Security considerations:</strong></p>
+<ul>
+<li><code>manage-clients</code> allows the gateway to create and delete OAuth clients in the realm. In a shared realm, this means the gateway could modify clients it didn't create. Use a <strong>dedicated realm</strong> to limit blast radius.</li>
+<li><code>manage-realm</code> is needed for the OIDC credential resolution subsystem (reading <code>apg.*</code> user attributes via the Admin API). If you don't use credential resolution, you can skip this role.</li>
+<li>In production, consider using a <strong>separate service account client</strong> for admin operations (not the same client used for token exchange). This lets you audit admin actions separately.</li>
+<li>Never expose the client secret in client-side code. The gateway holds the secret server-side; the web UI uses a separate <strong>public</strong> client for OIDC login.</li>
+</ul>
+<h3 id="optional-create-a-public-client-for-the-web-ui-authjwt">Optional: Create a public client for the web UI (<code>auth.jwt</code>)<a class="headerlink" href="#optional-create-a-public-client-for-the-web-ui-authjwt" title="Permanent link">&para;</a></h3>
+<p>If the gateway's web UI needs OIDC login through this realm (this is the <strong>public client</strong> described in the "Which client for what?" table above):</p>
+<ol>
+<li>Go to <strong>Clients</strong> → <strong>Create client</strong></li>
+<li>Client ID: <code>agentic-gateway-ui</code></li>
+<li>Client authentication: <strong>OFF</strong> (public client — required for browser SPAs)</li>
+<li>Standard flow: <strong>ON</strong>, Direct access grants: OFF</li>
+<li>Valid redirect URIs: <code>http://localhost:8000/ui/*</code>, <code>http://localhost:5173/ui/*</code> (dev)</li>
+<li>Web origins: <code>http://localhost:8000</code>, <code>http://localhost:5173</code></li>
+</ol>
+<p>Then configure the gateway:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nt">auth</span><span class="p">:</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span><span class="nt">backend</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">jwt</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">  </span><span class="nt">jwt</span><span class="p">:</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">    </span><span class="nt">issuer</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;https://keycloak.example.com/realms/agents&quot;</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">    </span><span class="nt">client_id</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;agentic-gateway-ui&quot;</span>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="w">    </span><span class="nt">algorithms</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;RS256&quot;</span><span class="p p-Indicator">]</span>
+</code></pre></div>
+<h3 id="optional-add-a-groups-mapper">Optional: Add a groups mapper<a class="headerlink" href="#optional-add-a-groups-mapper" title="Permanent link">&para;</a></h3>
+<p>If you want JWT-based group membership for Cedar policy enforcement:</p>
+<ol>
+<li>Go to <strong>Clients</strong> → <strong>agentic-gateway-ui</strong> → <strong>Client scopes</strong> → <strong>agentic-gateway-ui-dedicated</strong></li>
+<li><strong>Add mapper</strong> → <strong>By configuration</strong> → <strong>Group Membership</strong></li>
+<li>Name: <code>groups</code>, Token Claim Name: <code>groups</code>, Full group path: <strong>OFF</strong></li>
+</ol>
+<h3 id="optional-enable-credential-resolution-credentials-section">Optional: Enable credential resolution (<code>credentials</code> section)<a class="headerlink" href="#optional-enable-credential-resolution-credentials-section" title="Permanent link">&para;</a></h3>
+<p>If you want per-user credential resolution (users store their own Langfuse keys, MCP tokens, etc. in Keycloak):</p>
+<ol>
+<li>The service account needs <strong><code>manage-users</code></strong> and <strong><code>manage-realm</code></strong> roles (in addition to <code>manage-clients</code>)</li>
+<li>The gateway reads <code>apg.*</code> user attributes from Keycloak's Admin API</li>
+<li>The credential writer auto-declares new <code>apg.*</code> attributes in Keycloak's User Profile config</li>
+</ol>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="nt">credentials</span><span class="p">:</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">  </span><span class="nt">resolver</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">oidc</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="w">  </span><span class="nt">writer</span><span class="p">:</span>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="w">    </span><span class="nt">backend</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">keycloak</span>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="w">    </span><span class="nt">config</span><span class="p">:</span>
+<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="w">      </span><span class="c1"># Can be the same client as the identity provider, or a dedicated admin client</span>
+<a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="w">      </span><span class="nt">admin_client_id</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;${KC_ADMIN_CLIENT_ID:=agentic-gateway}&quot;</span>
+<a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a><span class="w">      </span><span class="nt">admin_client_secret</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;${KC_ADMIN_CLIENT_SECRET}&quot;</span>
+<a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a><span class="w">  </span><span class="nt">cache</span><span class="p">:</span>
+<a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a><span class="w">    </span><span class="nt">ttl_seconds</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">300</span>
+<a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a><span class="w">    </span><span class="nt">max_entries</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">10000</span>
+</code></pre></div>
+<p>Users then manage their credentials via the gateway's web UI Settings page (<code>/ui/settings</code>). The writer stores them as <code>apg.langfuse.public_key</code>, <code>apg.mcp_registry.token</code>, etc. in Keycloak user attributes.</p>
+<h2 id="gateway-configuration">Gateway Configuration<a class="headerlink" href="#gateway-configuration" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="nt">providers</span><span class="p">:</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="w">  </span><span class="nt">identity</span><span class="p">:</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">    </span><span class="nt">backend</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;agentic_primitives_gateway.primitives.identity.keycloak.KeycloakIdentityProvider&quot;</span>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="w">    </span><span class="nt">config</span><span class="p">:</span>
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="w">      </span><span class="nt">server_url</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;${KEYCLOAK_SERVER_URL:=http://localhost:8080}&quot;</span>
+<a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="w">      </span><span class="nt">realm</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;${KEYCLOAK_REALM:=agents}&quot;</span>
+<a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a><span class="w">      </span><span class="nt">client_id</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;${KEYCLOAK_CLIENT_ID:=agentic-gateway}&quot;</span>
+<a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a><span class="w">      </span><span class="nt">client_secret</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;${KEYCLOAK_CLIENT_SECRET}&quot;</span>
 </code></pre></div>
 <table>
 <thead>
@@ -3135,54 +3696,136 @@
 <tr>
 <td><code>client_id</code></td>
 <td><code>agentic-gateway</code></td>
-<td>Client ID for token exchange</td>
+<td>Confidential client ID</td>
 </tr>
 <tr>
 <td><code>client_secret</code></td>
 <td>(none)</td>
-<td>Client secret</td>
+<td>Client secret from the Credentials tab</td>
 </tr>
 </tbody>
 </table>
-<h3 id="per-request-credentials">Per-Request Credentials<a class="headerlink" href="#per-request-credentials" title="Permanent link">&para;</a></h3>
+<h3 id="per-request-credentials">Per-request credentials<a class="headerlink" href="#per-request-credentials" title="Permanent link">&para;</a></h3>
 <p>Users can override Keycloak connection details per-request:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>curl<span class="w"> </span>-H<span class="w"> </span><span class="s2">&quot;X-Cred-Keycloak-Server-Url: https://keycloak.example.com&quot;</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">     </span>-H<span class="w"> </span><span class="s2">&quot;X-Cred-Keycloak-Realm: my-realm&quot;</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">     </span>-H<span class="w"> </span><span class="s2">&quot;X-Cred-Keycloak-Client-Id: my-client&quot;</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">     </span>-H<span class="w"> </span><span class="s2">&quot;X-Cred-Keycloak-Client-Secret: my-secret&quot;</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">     </span>http://localhost:8000/api/v1/identity/token
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>curl<span class="w"> </span>-H<span class="w"> </span><span class="s2">&quot;X-Cred-Keycloak-Server-Url: https://keycloak.example.com&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="w">     </span>-H<span class="w"> </span><span class="s2">&quot;X-Cred-Keycloak-Realm: my-realm&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="w">     </span>-H<span class="w"> </span><span class="s2">&quot;X-Cred-Keycloak-Client-Id: my-client&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="w">     </span>-H<span class="w"> </span><span class="s2">&quot;X-Cred-Keycloak-Client-Secret: my-secret&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="w">     </span>http://localhost:8000/api/v1/identity/token
 </code></pre></div>
 <p>Or via the Python client:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">client</span><span class="o">.</span><span class="n">set_service_credentials</span><span class="p">(</span><span class="s2">&quot;keycloak&quot;</span><span class="p">,</span> <span class="p">{</span>
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>    <span class="s2">&quot;server_url&quot;</span><span class="p">:</span> <span class="s2">&quot;https://keycloak.example.com&quot;</span><span class="p">,</span>
-<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>    <span class="s2">&quot;realm&quot;</span><span class="p">:</span> <span class="s2">&quot;my-realm&quot;</span><span class="p">,</span>
-<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>    <span class="s2">&quot;client_id&quot;</span><span class="p">:</span> <span class="s2">&quot;my-client&quot;</span><span class="p">,</span>
-<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>    <span class="s2">&quot;client_secret&quot;</span><span class="p">:</span> <span class="s2">&quot;my-secret&quot;</span><span class="p">,</span>
-<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="p">})</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="n">client</span><span class="o">.</span><span class="n">set_service_credentials</span><span class="p">(</span><span class="s2">&quot;keycloak&quot;</span><span class="p">,</span> <span class="p">{</span>
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>    <span class="s2">&quot;server_url&quot;</span><span class="p">:</span> <span class="s2">&quot;https://keycloak.example.com&quot;</span><span class="p">,</span>
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>    <span class="s2">&quot;realm&quot;</span><span class="p">:</span> <span class="s2">&quot;my-realm&quot;</span><span class="p">,</span>
+<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a>    <span class="s2">&quot;client_id&quot;</span><span class="p">:</span> <span class="s2">&quot;my-client&quot;</span><span class="p">,</span>
+<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a>    <span class="s2">&quot;client_secret&quot;</span><span class="p">:</span> <span class="s2">&quot;my-secret&quot;</span><span class="p">,</span>
+<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a><span class="p">})</span>
 </code></pre></div>
-<h2 id="using-the-identity-api">Using the Identity API<a class="headerlink" href="#using-the-identity-api" title="Permanent link">&para;</a></h2>
-<h3 id="get-a-token">Get a Token<a class="headerlink" href="#get-a-token" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>http://localhost:8000/api/v1/identity/token<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;audience&quot;: &quot;https://api.example.com&quot;, &quot;scopes&quot;: [&quot;read&quot;, &quot;write&quot;]}&#39;</span>
+<h2 id="supported-operations">Supported Operations<a class="headerlink" href="#supported-operations" title="Permanent link">&para;</a></h2>
+<h3 id="data-plane-token-operations">Data plane (token operations)<a class="headerlink" href="#data-plane-token-operations" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Operation</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>get_token</strong></td>
+<td>Exchange a workload token for an external service token via Keycloak's token exchange. Requires "Standard Token Exchange" enabled on the client.</td>
+</tr>
+<tr>
+<td><strong>get_api_key</strong></td>
+<td>Retrieve a client secret from Keycloak by client label lookup via the Admin API.</td>
+</tr>
+<tr>
+<td><strong>get_workload_token</strong></td>
+<td>Obtain a workload identity token using client_credentials grant. Requires "Service accounts roles" enabled.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="control-plane-admin-operations">Control plane (admin operations)<a class="headerlink" href="#control-plane-admin-operations" title="Permanent link">&para;</a></h3>
+<p>These require <code>manage-clients</code> role on the service account.</p>
+<table>
+<thead>
+<tr>
+<th>Operation</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>list_credential_providers</strong></td>
+<td>Lists Identity Providers (IDPs) configured in the realm.</td>
+</tr>
+<tr>
+<td><strong>create_credential_provider</strong></td>
+<td>Creates a new IDP in the realm.</td>
+</tr>
+<tr>
+<td><strong>get/update/delete_credential_provider</strong></td>
+<td>Manage IDPs by alias.</td>
+</tr>
+<tr>
+<td><strong>list_workload_identities</strong></td>
+<td>Lists confidential clients with service accounts enabled.</td>
+</tr>
+<tr>
+<td><strong>create_workload_identity</strong></td>
+<td>Creates a new confidential client with client_credentials grant.</td>
+</tr>
+<tr>
+<td><strong>get/update/delete_workload_identity</strong></td>
+<td>Manage clients by client_id.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="usage-examples">Usage Examples<a class="headerlink" href="#usage-examples" title="Permanent link">&para;</a></h2>
+<h3 id="python-client">Python client<a class="headerlink" href="#python-client" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">agentic_primitives_gateway_client</span><span class="w"> </span><span class="kn">import</span> <span class="n">AgenticPlatformClient</span><span class="p">,</span> <span class="n">Identity</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="n">client</span> <span class="o">=</span> <span class="n">AgenticPlatformClient</span><span class="p">(</span><span class="s2">&quot;http://localhost:8000&quot;</span><span class="p">)</span>
+<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="n">identity</span> <span class="o">=</span> <span class="n">Identity</span><span class="p">(</span><span class="n">client</span><span class="p">)</span>
+<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a>
+<a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a><span class="c1"># Get a workload token (client_credentials grant)</span>
+<a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a><span class="n">token</span> <span class="o">=</span> <span class="k">await</span> <span class="n">identity</span><span class="o">.</span><span class="n">get_workload_token</span><span class="p">(</span><span class="s2">&quot;my-agent&quot;</span><span class="p">)</span>
+<a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a>
+<a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a><span class="c1"># Get an API key (client secret lookup)</span>
+<a id="__codelineno-10-10" name="__codelineno-10-10" href="#__codelineno-10-10"></a><span class="n">key</span> <span class="o">=</span> <span class="k">await</span> <span class="n">identity</span><span class="o">.</span><span class="n">get_api_key</span><span class="p">(</span><span class="s2">&quot;my-service&quot;</span><span class="p">,</span> <span class="n">workload_token</span><span class="o">=</span><span class="s2">&quot;...&quot;</span><span class="p">)</span>
 </code></pre></div>
-<h3 id="get-an-api-key">Get an API Key<a class="headerlink" href="#get-an-api-key" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>curl<span class="w"> </span>http://localhost:8000/api/v1/identity/api-key
+<h3 id="curl">curl<a class="headerlink" href="#curl" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="c1"># Get a workload token</span>
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>http://localhost:8000/api/v1/identity/workload-token<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;workload_name&quot;: &quot;my-agent&quot;}&#39;</span>
+<a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a>
+<a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a><span class="c1"># List workload identities</span>
+<a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a>curl<span class="w"> </span>http://localhost:8000/api/v1/identity/workload-identities
+<a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a>
+<a id="__codelineno-11-9" name="__codelineno-11-9" href="#__codelineno-11-9"></a><span class="c1"># Create a workload identity</span>
+<a id="__codelineno-11-10" name="__codelineno-11-10" href="#__codelineno-11-10"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>http://localhost:8000/api/v1/identity/workload-identities<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-11-11" name="__codelineno-11-11" href="#__codelineno-11-11"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-11-12" name="__codelineno-11-12" href="#__codelineno-11-12"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;name&quot;: &quot;new-agent&quot;, &quot;allowed_return_urls&quot;: [&quot;https://example.com/callback&quot;]}&#39;</span>
 </code></pre></div>
-<h2 id="using-with-the-python-client">Using with the Python Client<a class="headerlink" href="#using-with-the-python-client" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">agentic_primitives_gateway_client</span><span class="w"> </span><span class="kn">import</span> <span class="n">AgenticPlatformClient</span><span class="p">,</span> <span class="n">Identity</span>
-<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>
-<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="n">client</span> <span class="o">=</span> <span class="n">AgenticPlatformClient</span><span class="p">(</span><span class="s2">&quot;http://localhost:8000&quot;</span><span class="p">)</span>
-<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="n">identity</span> <span class="o">=</span> <span class="n">Identity</span><span class="p">(</span><span class="n">client</span><span class="p">)</span>
-<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>
-<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="n">token</span> <span class="o">=</span> <span class="k">await</span> <span class="n">identity</span><span class="o">.</span><span class="n">get_token</span><span class="p">(</span><span class="n">audience</span><span class="o">=</span><span class="s2">&quot;https://api.example.com&quot;</span><span class="p">)</span>
-<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="n">api_key</span> <span class="o">=</span> <span class="k">await</span> <span class="n">identity</span><span class="o">.</span><span class="n">get_api_key</span><span class="p">()</span>
-</code></pre></div>
-<h2 id="prerequisites">Prerequisites<a class="headerlink" href="#prerequisites" title="Permanent link">&para;</a></h2>
-<ul>
-<li><code>pip install agentic-primitives-gateway[keycloak]</code></li>
-<li>Running Keycloak instance with a realm and client configured</li>
-</ul>
+<h2 id="security-best-practices">Security Best Practices<a class="headerlink" href="#security-best-practices" title="Permanent link">&para;</a></h2>
+<ol>
+<li>
+<p><strong>Use a dedicated realm</strong> for agent infrastructure. This prevents the gateway's <code>manage-clients</code> role from affecting application clients.</p>
+</li>
+<li>
+<p><strong>Rotate client secrets</strong> periodically. The gateway config supports <code>${KEYCLOAK_CLIENT_SECRET}</code> env var references for secret injection from Kubernetes Secrets or vault systems.</p>
+</li>
+<li>
+<p><strong>Separate UI and service clients.</strong> The web UI should use a public client (<code>agentic-gateway-ui</code>). The gateway backend should use a confidential client (<code>agentic-gateway</code>). Never share secrets with browser-side code.</p>
+</li>
+<li>
+<p><strong>Audit admin operations.</strong> Keycloak logs all Admin API calls. Monitor for unexpected client creation/deletion from the gateway's service account.</p>
+</li>
+<li>
+<p><strong>Minimize roles.</strong> Only assign <code>manage-clients</code> if the gateway needs to create workload identities. If you only need token exchange, no admin roles are required.</p>
+</li>
+</ol>
 
 
 
