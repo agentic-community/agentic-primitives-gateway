@@ -59,6 +59,61 @@ class MCPRegistryProvider(SyncRunnerMixin, ToolsProvider):
         token = creds.get("token") or self._default_token
         return base_url, token
 
+    def _fetch_servers_raw(self, base_url: str, token: str | None) -> list[dict[str, Any]]:
+        """Fetch server list from the registry, supporting both API formats.
+
+        Tries ``/api/servers`` first (v2 format with flat fields), falls back
+        to ``/v0.1/servers`` (v1 format with nested ``server._meta``).
+        Normalizes both formats to a common structure with keys:
+        ``title``, ``description``, ``path``, ``health_status``, ``num_tools``, ``tool_list``.
+        """
+        import httpx
+
+        with httpx.Client(timeout=30, verify=self._verify_ssl) as http:
+            # Try v2 API first
+            resp = http.get(f"{base_url}/api/servers", headers=self._headers(token))
+            if resp.status_code == 404:
+                # Fall back to v1 API
+                resp = http.get(f"{base_url}/v0.1/servers", headers=self._headers(token))
+            resp.raise_for_status()
+            data = resp.json()
+
+        raw_servers = data.get("servers", data) if isinstance(data, dict) else data
+        normalized: list[dict[str, Any]] = []
+
+        for entry in raw_servers:
+            server = entry.get("server", entry) if isinstance(entry, dict) else entry
+
+            # v2 format: flat fields (display_name, path, health_status, tool_list)
+            if "display_name" in server or "path" in server:
+                normalized.append(
+                    {
+                        "title": server.get("display_name", server.get("name", server.get("title", ""))),
+                        "description": server.get("description", ""),
+                        "path": server.get("path", ""),
+                        "health_status": server.get("health_status", "unknown"),
+                        "num_tools": server.get("num_tools", 0),
+                        "tool_list": server.get("tool_list", []),
+                    }
+                )
+                continue
+
+            # v1 format: nested under _meta.io.mcpgateway/internal
+            meta = server.get("_meta", {})
+            internal = meta.get("io.mcpgateway/internal", {})
+            normalized.append(
+                {
+                    "title": server.get("title", server.get("name", "")),
+                    "description": server.get("description", ""),
+                    "path": internal.get("path", ""),
+                    "health_status": internal.get("health_status", "unknown"),
+                    "num_tools": internal.get("num_tools", 0),
+                    "tool_list": [],
+                }
+            )
+
+        return normalized
+
     def _headers(self, token: str | None, session_id: str | None = None) -> dict[str, str]:
         headers: dict[str, str] = {
             "Content-Type": "application/json",
@@ -253,22 +308,10 @@ class MCPRegistryProvider(SyncRunnerMixin, ToolsProvider):
             del self._server_paths[server_title]
 
         def _fetch() -> None:
-            import httpx
-
-            with httpx.Client(timeout=15, verify=self._verify_ssl) as http:
-                resp = http.get(f"{base_url}/v0.1/servers", headers=self._headers(token))
-                resp.raise_for_status()
-                data = resp.json()
-
             now = time.monotonic()
-            for entry in data.get("servers", []):
-                server = entry.get("server", entry)
-                title = server.get("title", server.get("name", ""))
-                meta = server.get("_meta", {})
-                internal = meta.get("io.mcpgateway/internal", {})
-                path = internal.get("path", "")
-                if title and path:
-                    self._server_paths[title] = (path, now)
+            for s in self._fetch_servers_raw(base_url, token):
+                if s["title"] and s["path"]:
+                    self._server_paths[s["title"]] = (s["path"], now)
 
         await self._run_sync(_fetch)
 
@@ -284,28 +327,32 @@ class MCPRegistryProvider(SyncRunnerMixin, ToolsProvider):
         base_url, token = self._resolve_config()
 
         def _list() -> list[dict[str, Any]]:
-            import httpx
-
-            with httpx.Client(timeout=30, verify=self._verify_ssl) as http:
-                resp = http.get(f"{base_url}/v0.1/servers", headers=self._headers(token))
-                resp.raise_for_status()
-                data = resp.json()
-
             tools: list[dict[str, Any]] = []
-            servers = data.get("servers", data) if isinstance(data, dict) else data
-            for entry in servers:
-                server = entry.get("server", entry) if isinstance(entry, dict) else entry
-                server_title = server.get("title", server.get("name", ""))
-                server_desc = server.get("description", "")
-                meta = server.get("_meta", {})
-                internal = meta.get("io.mcpgateway/internal", {})
-                path = internal.get("path", "")
-                health = internal.get("health_status", "unknown")
+            for s in self._fetch_servers_raw(base_url, token):
+                server_title = s["title"]
+                path = s["path"]
+                health = s["health_status"]
 
                 if not path or health != "healthy":
                     continue
 
-                # Fetch actual tools via MCP streamable-http
+                # If the registry already returned tool_list (v2), use it directly
+                if s.get("tool_list"):
+                    for t in s["tool_list"]:
+                        tools.append(
+                            {
+                                "name": f"{server_title}/{t.get('name', '')}",
+                                "description": t.get("description", ""),
+                                "parameters": t.get("inputSchema", t.get("schema", {})),
+                                "metadata": {
+                                    "server": server_title,
+                                    "server_path": path,
+                                },
+                            }
+                        )
+                    continue
+
+                # Otherwise fetch tools via MCP streamable-http (v1)
                 try:
                     mcp_data = self._mcp_call(base_url, path, token, "tools/list", timeout=15)
 
@@ -326,7 +373,7 @@ class MCPRegistryProvider(SyncRunnerMixin, ToolsProvider):
                     tools.append(
                         {
                             "name": server_title,
-                            "description": f"{server_desc} ({internal.get('num_tools', 0)} tools)",
+                            "description": f"{s['description']} ({s['num_tools']} tools)",
                             "parameters": {},
                             "metadata": {"server_path": path},
                         }
@@ -479,28 +526,15 @@ class MCPRegistryProvider(SyncRunnerMixin, ToolsProvider):
         base_url, token = self._resolve_config()
 
         def _list() -> list[dict[str, Any]]:
-            import httpx
-
-            with httpx.Client(timeout=15, verify=self._verify_ssl) as http:
-                resp = http.get(f"{base_url}/v0.1/servers", headers=self._headers(token))
-                resp.raise_for_status()
-                data = resp.json()
-
-            servers: list[dict[str, Any]] = []
-            for entry in data.get("servers", data) if isinstance(data, dict) else data:
-                server = entry.get("server", entry) if isinstance(entry, dict) else entry
-                meta = server.get("_meta", {})
-                internal = meta.get("io.mcpgateway/internal", {})
-                servers.append(
-                    {
-                        "name": server.get("title", server.get("name", "")),
-                        "url": internal.get("path", ""),
-                        "health_status": internal.get("health_status", "unknown"),
-                        "tools_count": internal.get("num_tools", 0),
-                        "metadata": {k: v for k, v in server.items() if k not in ("title", "name", "_meta")},
-                    }
-                )
-            return servers
+            return [
+                {
+                    "name": s["title"],
+                    "url": s["path"],
+                    "health_status": s["health_status"],
+                    "tools_count": s["num_tools"],
+                }
+                for s in self._fetch_servers_raw(base_url, token)
+            ]
 
         result: list[dict[str, Any]] = await self._run_sync(_list)
         return result

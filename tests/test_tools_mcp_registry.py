@@ -559,3 +559,181 @@ class TestMCPRegistryProvider:
         base_url, token = provider._resolve_config()
         assert base_url == "http://default:8080"
         assert token == "default-token"
+
+    # ── v2 API format tests ───────────────────────────────────────────
+
+    @pytest.mark.asyncio
+    async def test_list_tools_v2_format_with_inline_tool_list(self, mock_get_creds):
+        """v2 format: /api/servers returns tool_list inline, no MCP calls needed."""
+        mock_get_creds.return_value = None
+        provider = self._make_provider(base_url="http://localhost:8080")
+
+        servers_resp = MagicMock()
+        servers_resp.status_code = 200
+        servers_resp.json.return_value = {
+            "servers": [
+                {
+                    "display_name": "Weather Service",
+                    "path": "/weather/",
+                    "description": "Weather tools",
+                    "health_status": "healthy",
+                    "num_tools": 2,
+                    "tool_list": [
+                        {"name": "get_forecast", "description": "Get forecast", "schema": {"type": "object"}},
+                        {"name": "get_current", "description": "Current weather", "schema": {"type": "object"}},
+                    ],
+                }
+            ]
+        }
+        servers_resp.raise_for_status = MagicMock()
+
+        with patch("httpx.Client") as mock_client_cls:
+            mock_client = self._mock_httpx_client()
+            mock_client.get.return_value = servers_resp
+            mock_client_cls.return_value = mock_client
+
+            result = await provider.list_tools()
+
+        assert len(result) == 2
+        assert result[0]["name"] == "Weather Service/get_forecast"
+        assert result[1]["name"] == "Weather Service/get_current"
+        assert result[0]["metadata"]["server"] == "Weather Service"
+        # No MCP post calls should have been made (tools came from tool_list)
+        mock_client.post.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_list_tools_v2_skips_unhealthy(self, mock_get_creds):
+        """v2 format: unhealthy servers are skipped."""
+        mock_get_creds.return_value = None
+        provider = self._make_provider(base_url="http://localhost:8080")
+
+        servers_resp = MagicMock()
+        servers_resp.status_code = 200
+        servers_resp.json.return_value = {
+            "servers": [
+                {
+                    "display_name": "Healthy",
+                    "path": "/healthy/",
+                    "health_status": "healthy",
+                    "num_tools": 1,
+                    "tool_list": [{"name": "tool1", "description": "A tool", "schema": {}}],
+                },
+                {
+                    "display_name": "Unhealthy",
+                    "path": "/unhealthy/",
+                    "health_status": "unhealthy",
+                    "num_tools": 1,
+                    "tool_list": [{"name": "tool2", "description": "B tool", "schema": {}}],
+                },
+            ]
+        }
+        servers_resp.raise_for_status = MagicMock()
+
+        with patch("httpx.Client") as mock_client_cls:
+            mock_client = self._mock_httpx_client()
+            mock_client.get.return_value = servers_resp
+            mock_client_cls.return_value = mock_client
+
+            result = await provider.list_tools()
+
+        assert len(result) == 1
+        assert result[0]["name"] == "Healthy/tool1"
+
+    @pytest.mark.asyncio
+    async def test_list_servers_v2_format(self, mock_get_creds):
+        """v2 format: list_servers normalizes correctly."""
+        mock_get_creds.return_value = None
+        provider = self._make_provider(base_url="http://localhost:8080")
+
+        servers_resp = MagicMock()
+        servers_resp.status_code = 200
+        servers_resp.json.return_value = {
+            "servers": [
+                {
+                    "display_name": "Calculator",
+                    "path": "/calc/",
+                    "health_status": "healthy",
+                    "num_tools": 3,
+                }
+            ]
+        }
+        servers_resp.raise_for_status = MagicMock()
+
+        with patch("httpx.Client") as mock_client_cls:
+            mock_client = self._mock_httpx_client()
+            mock_client.get.return_value = servers_resp
+            mock_client_cls.return_value = mock_client
+
+            result = await provider.list_servers()
+
+        assert len(result) == 1
+        assert result[0]["name"] == "Calculator"
+        assert result[0]["url"] == "/calc/"
+        assert result[0]["health_status"] == "healthy"
+        assert result[0]["tools_count"] == 3
+
+    @pytest.mark.asyncio
+    async def test_fetch_servers_falls_back_to_v1(self, mock_get_creds):
+        """/api/servers returns 404, falls back to /v0.1/servers."""
+        mock_get_creds.return_value = None
+        provider = self._make_provider(base_url="http://localhost:8080")
+
+        not_found_resp = MagicMock()
+        not_found_resp.status_code = 404
+
+        v1_resp = MagicMock()
+        v1_resp.status_code = 200
+        v1_resp.json.return_value = {
+            "servers": [
+                {
+                    "server": {
+                        "title": "Calculator",
+                        "description": "Math tools",
+                        "_meta": {
+                            "io.mcpgateway/internal": {
+                                "path": "/mcp/calc",
+                                "health_status": "healthy",
+                                "num_tools": 2,
+                            }
+                        },
+                    }
+                }
+            ]
+        }
+        v1_resp.raise_for_status = MagicMock()
+
+        with patch("httpx.Client") as mock_client_cls:
+            mock_client = self._mock_httpx_client()
+            mock_client.get.side_effect = [not_found_resp, v1_resp]
+            mock_client_cls.return_value = mock_client
+
+            result = provider._fetch_servers_raw("http://localhost:8080", None)
+
+        assert len(result) == 1
+        assert result[0]["title"] == "Calculator"
+        assert result[0]["path"] == "/mcp/calc"
+        assert result[0]["health_status"] == "healthy"
+        # Two GET calls: /api/servers (404) then /v0.1/servers (200)
+        assert mock_client.get.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_resolve_server_path_v2_format(self, mock_get_creds):
+        """_resolve_server_path works with v2 format."""
+        mock_get_creds.return_value = None
+        provider = self._make_provider(base_url="http://localhost:8080")
+
+        servers_resp = MagicMock()
+        servers_resp.status_code = 200
+        servers_resp.json.return_value = {
+            "servers": [{"display_name": "Weather", "path": "/weather/", "health_status": "healthy", "num_tools": 1}]
+        }
+        servers_resp.raise_for_status = MagicMock()
+
+        with patch("httpx.Client") as mock_client_cls:
+            mock_client = self._mock_httpx_client()
+            mock_client.get.return_value = servers_resp
+            mock_client_cls.return_value = mock_client
+
+            path = await provider._resolve_server_path("Weather", "http://localhost:8080", None)
+
+        assert path == "/weather/"
