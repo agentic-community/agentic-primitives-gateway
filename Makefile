@@ -20,20 +20,31 @@ test-client:
 	cd client && python -m pytest tests/ -v
 
 test-agentcore:
-	python -m pytest tests/integration/test_browser.py tests/integration/test_code_interpreter.py \
-		tests/integration/test_evaluations.py tests/integration/test_identity.py \
-		tests/integration/test_memory.py tests/integration/test_observability.py \
-		tests/integration/test_policy.py tests/integration/test_tools.py \
-		tests/integration/test_llm_bedrock.py -v
+	python -m pytest \
+		tests/integration/browser/test_agentcore.py \
+		tests/integration/code_interpreter/test_agentcore.py \
+		tests/integration/evaluations/test_agentcore.py \
+		tests/integration/identity/test_agentcore.py \
+		tests/integration/llm/test_bedrock.py \
+		tests/integration/memory/test_agentcore.py \
+		tests/integration/observability/test_agentcore.py \
+		tests/integration/policy/test_agentcore.py \
+		tests/integration/tools/test_agentcore.py -v
 
 test-selfhosted:
-	python -m pytest tests/integration/test_browser_selenium.py \
-		tests/integration/test_code_interpreter_jupyter.py \
-		tests/integration/test_evaluations_langfuse.py \
-		tests/integration/test_identity_keycloak.py tests/integration/test_identity_entra.py \
-		tests/integration/test_identity_okta.py tests/integration/test_memory_milvus.py \
-		tests/integration/test_observability_langfuse.py tests/integration/test_tools_mcp.py \
-		tests/integration/test_redis_stores.py tests/integration/test_checkpoint_redis.py -v
+	python -m pytest \
+		tests/integration/browser/test_selenium.py \
+		tests/integration/code_interpreter/test_jupyter.py \
+		tests/integration/evaluations/test_langfuse.py \
+		tests/integration/identity/test_keycloak.py \
+		tests/integration/identity/test_entra.py \
+		tests/integration/identity/test_okta.py \
+		tests/integration/llm/test_openai.py \
+		tests/integration/memory/test_milvus.py \
+		tests/integration/observability/test_langfuse.py \
+		tests/integration/tools/test_mcp.py \
+		tests/integration/stores/test_redis.py \
+		tests/integration/stores/test_checkpoint_redis.py -v
 
 install:
 	pip install -e ".[dev]"
