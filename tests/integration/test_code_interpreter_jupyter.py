@@ -62,7 +62,7 @@ def _init_registry():
     }
 
     test_settings = Settings(
-        allow_server_credentials=True,
+        allow_server_credentials="always",
         providers={
             "memory": {
                 "backend": "agentic_primitives_gateway.primitives.memory.noop.NoopMemoryProvider",

@@ -54,14 +54,14 @@ def _init_registry():
     """Initialise registry with Mem0 + Milvus memory provider (noop for everything else).
 
     Uses real Milvus for vector storage and real AWS Bedrock for LLM/embeddings.
-    ``allow_server_credentials=True`` lets the provider use ambient AWS creds.
+    ``allow_server_credentials="always"`` lets the provider use ambient AWS creds.
     """
     host = os.environ.get("MILVUS_HOST", "localhost")
     port = os.environ.get("MILVUS_PORT", "19530")
     token = os.environ.get("MILVUS_TOKEN", "")
 
     test_settings = Settings(
-        allow_server_credentials=True,
+        allow_server_credentials="always",
         providers={
             "memory": {
                 "backend": "agentic_primitives_gateway.primitives.memory.mem0_provider.Mem0MemoryProvider",
@@ -117,7 +117,7 @@ def _init_registry():
     )
     orig_settings = _config_module.settings
     _config_module.settings = test_settings
-    _config_module.settings.allow_server_credentials = True
+    _config_module.settings.allow_server_credentials = "always"
     registry.initialize(test_settings)
 
     yield

@@ -66,6 +66,15 @@ class TestGetTool:
 
 
 @_skip_no_agentcore_gw
+class TestSearchTools:
+    async def test_search_tools(self, client: AgenticPlatformClient) -> None:
+        result = await client.search_tools("test")
+
+        assert "tools" in result
+        assert isinstance(result["tools"], list)
+
+
+@_skip_no_agentcore_gw
 class TestInvokeTool:
     async def test_invoke_tool(self, client: AgenticPlatformClient) -> None:
         # List tools to find one we can invoke

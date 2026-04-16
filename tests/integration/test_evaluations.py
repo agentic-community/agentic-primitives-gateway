@@ -70,3 +70,37 @@ class TestEvaluatorLifecycle:
         result = await client.list_evaluators()
         ids = [e["evaluator_id"] for e in result.get("evaluators", [])]
         assert evaluator in ids
+
+    @pytest.mark.asyncio
+    async def test_update_evaluator(self, client, evaluator):
+        result = await client.update_evaluator(evaluator, description="updated by integration test")
+        assert result.get("evaluator_id") == evaluator
+
+
+class TestEvaluate:
+    @pytest.mark.asyncio
+    @pytest.mark.xfail(
+        reason="AgentCore Evaluate API requires spans in internal trace format — needs deeper integration"
+    )
+    async def test_evaluate(self, client, evaluator):
+        """Run an LLM-as-a-judge evaluation via AgentCore.
+
+        AgentCore's Evaluate API requires evaluationInput with sessionSpans
+        in the exact format produced by AgentCore's trace service. Constructing
+        synthetic spans doesn't work — this needs real traced agent execution
+        with span data fetched from the observability service.
+        """
+        result = await client.evaluate(
+            evaluator_id=evaluator,
+            metadata={
+                "evaluationInput": {
+                    "sessionSpans": [
+                        {
+                            "context": "What is the capital of France?",
+                            "assistant_turn": "The capital of France is Paris.",
+                        }
+                    ]
+                },
+            },
+        )
+        assert "results" in result

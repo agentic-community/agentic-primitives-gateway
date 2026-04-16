@@ -61,7 +61,7 @@ def _init_registry(_skip_without_aws_credentials):
 
     Unlike system tests, no SDK methods are mocked.  The observability
     provider's ``__init__`` calls ``_ensure_log_group`` and ``_setup_tracer``
-    with real server-side credentials (``allow_server_credentials=True``).
+    with real server-side credentials (``allow_server_credentials="always"``).
     """
     region = os.environ.get("AWS_REGION", "us-east-1")
     gateway_id = os.environ.get("AGENTCORE_GATEWAY_ID")
@@ -71,7 +71,7 @@ def _init_registry(_skip_without_aws_credentials):
         tools_config["gateway_id"] = gateway_id
 
     test_settings = Settings(
-        allow_server_credentials=True,
+        allow_server_credentials="always",
         providers={
             "memory": {
                 "backend": "agentic_primitives_gateway.primitives.memory.agentcore.AgentCoreMemoryProvider",
@@ -117,7 +117,7 @@ def _init_registry(_skip_without_aws_credentials):
     )
     # Patch the global settings singleton so that get_boto3_session() and
     # other helpers that check allow_server_credentials see the test value.
-    settings.allow_server_credentials = True
+    settings.allow_server_credentials = "always"
     registry.initialize(test_settings)
 
 
