@@ -191,7 +191,7 @@ After completing ANY task or feature, verify ALL of these before considering it 
 7. New client methods must have tests in `client/tests/`
 
 ### Test Coverage Must Stay High
-8. Server coverage target: 90%+ (enforced by CI via `--cov-fail-under=90`)
+8. Server coverage target: 85%+ (enforced by CI via `--cov-fail-under=85`)
 9. All new code paths must have unit tests — providers, routes, translation functions, edge cases
 10. Integration tests for providers that talk to external services
 

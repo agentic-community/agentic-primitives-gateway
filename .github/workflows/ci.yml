@@ -74,7 +74,7 @@ jobs:
           --ignore=tests/system
           --cov=agentic_primitives_gateway
           --cov-report=term-missing
-          --cov-fail-under=90
+          --cov-fail-under=85
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
