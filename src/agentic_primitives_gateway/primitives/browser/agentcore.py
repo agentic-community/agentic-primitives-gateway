@@ -173,7 +173,12 @@ class AgentCoreBrowserProvider(BrowserProvider, SyncRunnerMixin):
 
     async def evaluate(self, session_id: str, expression: str) -> Any:
         page = self._get_page(session_id)
-        return await page.evaluate(expression)
+        # Playwright wraps the expression in a function, so bare `return` is illegal.
+        # Strip leading `return` if the LLM included it.
+        expr = expression.strip()
+        if expr.startswith("return "):
+            expr = expr[7:]
+        return await page.evaluate(expr)
 
     async def healthcheck(self) -> bool:
         return True

@@ -59,6 +59,16 @@ class TestRequireUserScoped:
 # ── require_admin ────────────────────────────────────────────────────
 
 
+class TestRequirePrincipal:
+    def test_no_principal_raises(self):
+        from agentic_primitives_gateway.context import set_authenticated_principal
+        from agentic_primitives_gateway.routes._helpers import require_principal
+
+        set_authenticated_principal(None)  # type: ignore[arg-type]
+        with pytest.raises(RuntimeError, match="No authenticated principal"):
+            require_principal()
+
+
 class TestRequireAdmin:
     def test_admin_returns_principal(self):
         from agentic_primitives_gateway.context import set_authenticated_principal

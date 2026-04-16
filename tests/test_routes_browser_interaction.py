@@ -127,6 +127,17 @@ class TestBrowserInteractionRoutes:
             resp = self.client.post("/api/v1/browser/sessions/s1/evaluate", json={"expression": "1+1"})
             assert resp.status_code == 400
 
+    def test_evaluate_playwright_error_returns_400(self):
+        """Playwright/Selenium errors should return 400, not 500."""
+
+        class PlaywrightError(Exception):
+            pass
+
+        with self._patch_browser("evaluate", side_effect=PlaywrightError("SyntaxError: Illegal return")):
+            resp = self.client.post("/api/v1/browser/sessions/s1/evaluate", json={"expression": "return 1"})
+            assert resp.status_code == 400
+            assert "Illegal return" in resp.json()["detail"]
+
     # ── get_session ───────────────────────────────────────────────────
 
     def test_get_session_not_found_returns_404(self):

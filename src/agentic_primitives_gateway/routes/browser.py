@@ -142,3 +142,8 @@ async def evaluate(session_id: str, request: EvaluateRequest) -> dict[str, Any]:
         return {"result": result}
     except (ValueError, NotImplementedError) as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        # Catch Playwright errors, Selenium errors, etc.
+        if "Error" in type(e).__name__ or "Exception" in type(e).__name__:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        raise

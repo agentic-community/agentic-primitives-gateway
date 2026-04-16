@@ -308,12 +308,20 @@ class TestObservability:
         obs._client.flush_observability.assert_called_once()
 
     def test_trace_sync(self, obs):
+        mock_http = MagicMock()
+        obs._sync_http = mock_http
         obs.trace_sync("event", {}, "out")
-        obs._client.ingest_trace.assert_called_once()
+        mock_http.post.assert_called_once()
+        call_args = mock_http.post.call_args
+        assert call_args[0][0] == "/api/v1/observability/traces"
 
     def test_log_sync(self, obs):
+        mock_http = MagicMock()
+        obs._sync_http = mock_http
         obs.log_sync("info", "msg")
-        obs._client.ingest_log.assert_called_once()
+        mock_http.post.assert_called_once()
+        call_args = mock_http.post.call_args
+        assert call_args[0][0] == "/api/v1/observability/logs"
 
 
 # ── Identity ──────────────────────────────────────────────────────────
