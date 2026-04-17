@@ -106,11 +106,13 @@ See the [Configuration Guide](https://agentic-community.github.io/agentic-primit
 |  +----v-----------v-----------v-------v---------v-v---------v--------+ |
 |  |              PolicyEnforcementMiddleware (Cedar)                  | |
 |  +------------------------------------------------------------------+ |
-|  |              AuthenticationMiddleware (JWT/API key/noop)          | |
-|  +------------------------------------------------------------------+ |
 |  |              CredentialResolutionMiddleware (OIDC)                | |
 |  +------------------------------------------------------------------+ |
-|  |              RequestContextMiddleware (AWS creds + routing)       | |
+|  |              AuthenticationMiddleware (JWT/API key/noop)          | |
+|  +------------------------------------------------------------------+ |
+|  |     AuditMiddleware (http.request, auth/policy/cred emits)        | |
+|  +------------------------------------------------------------------+ |
+|  |              RequestContextMiddleware (AWS + correlation_id)      | |
 |  +------------------------------------------------------------------+ |
 |  |                     Provider Registry (MetricsProxy)              | |
 |  +--+-------+-------+-------+-------+--------+-------+------+-------+ |
@@ -122,9 +124,14 @@ See the [Configuration Guide](https://agentic-community.github.io/agentic-primit
  | Noop   | |Noop     | |Noop   | |Noop | |Noop  | |Noop   | |Noop   | |Noop   | | Noop     |
  | InMem  | |AgntCore | |AgntCr | |Agnt | |Lang  | |Bedrock| |Agnt   | |Agnt   | | AgntCore |
  | Mem0   | |Keycloak | |Juptyr | |Core | |fuse  | |Convrs | |Core   | |Core   | | MCP      |
- | Agnt   | |Entra    | |       | |Seln | |Agnt  | |       | |       | |       | | Registry |
- | Core   | |Okta     | |       | |Grid | |Core  | |       | |       | |       | |          |
+ | Agnt   | |Entra    | |       | |Seln | |Agnt  | |OpenAI | |       | |       | | Registry |
+ | Core   | |Okta     | |       | |Grid | |Core  | |Compat | |       | |       | |          |
  +--------+ +---------+ +-------+ +-----+ +------+ +-------+ +-------+ +-------+ +----------+
+
+ Governance fan-out (from AuditRouter)
+ +-------------+  +--------+  +----------------+  +---------------+
+ | stdout_json |  |  file  |  |  redis_stream  |  | observability |
+ +-------------+  +--------+  +----------------+  +---------------+
 ```
 
 ## Primitives
@@ -142,6 +149,18 @@ See the [Configuration Guide](https://agentic-community.github.io/agentic-primit
 | **Evaluations** | LLM-as-a-judge evaluator management and evaluation | Noop, Langfuse, AgentCore |
 
 See the [Primitives Guide](https://agentic-community.github.io/agentic-primitives-gateway/concepts/primitives/) for details on each primitive and its backends.
+
+## Governance
+
+The gateway emits structured audit events, Prometheus metrics, and JSON logs for every request so compliance, operational debugging, and security detection are one coherent story.
+
+| Subsystem | What it records | Default backend |
+|---|---|---|
+| **Audit events** | `auth.*`, `policy.*`, `credential.*`, `agent.run.*`, `team.run.*`, `tool.call`, `llm.generate`, `http.request`, `provider.call`, `resource.access.denied` | `stdout_json` (always on); pluggable sinks: `file`, `redis_stream`, `observability` |
+| **Metrics** | `gateway_auth_events_total`, `gateway_policy_decisions_total`, `gateway_credential_operations_total`, `gateway_agent_runs_total`, `gateway_team_runs_total`, `gateway_tool_calls_total`, `gateway_llm_{requests,tokens}_total`, `gateway_access_denials_total`, plus audit-pipeline health | Prometheus scrape at `/metrics` |
+| **Logs** | Structured JSON with `request_id`, `correlation_id`, `principal_id` on every line; secret scrubbing filter enabled by default | stdout (opt-in via `logging.format: json`) |
+
+See the [Governance Guide](https://agentic-community.github.io/agentic-primitives-gateway/concepts/governance/) for the architecture, [Observability Guide](https://agentic-community.github.io/agentic-primitives-gateway/guides/observability/) for SIEM/Loki/Datadog/CloudWatch recipes, and [Compliance Guide](https://agentic-community.github.io/agentic-primitives-gateway/guides/compliance/) for SOC 2 / GDPR alignment.
 
 ## Declarative Agents
 

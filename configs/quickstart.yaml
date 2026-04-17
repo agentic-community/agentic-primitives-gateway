@@ -14,6 +14,12 @@
 
 allow_server_credentials: fallback
 
+## Structured JSON logs with secret scrubbing — recommended default.
+## Audit events go to stdout as JSON automatically (see docs/concepts/governance.md).
+logging:
+  format: json
+  sanitize: true
+
 providers:
   llm:
     default: "bedrock"

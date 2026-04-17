@@ -63,11 +63,14 @@ nav:
     - Agent Teams: concepts/teams.md
     - Streaming: concepts/streaming.md
     - Policy Enforcement: concepts/policy.md
+    - Governance: concepts/governance.md
   - Guides:
     - Building Tools: guides/building-tools.md
     - Adding a Provider: guides/adding-a-provider.md
     - Agent-as-Tool Delegation: guides/agent-delegation.md
     - Memory Namespaces: guides/memory-namespaces.md
+    - Observability: guides/observability.md
+    - Compliance: guides/compliance.md
     - Using the Web UI: guides/web-ui.md
   - Primitives:
     - Memory:
@@ -115,5 +118,6 @@ nav:
     - Evaluations: api/evaluations.md
     - Agents: api/agents.md
     - Teams: api/teams.md
+    - Audit: api/audit.md
   - Examples:
     - Overview: examples/index.md

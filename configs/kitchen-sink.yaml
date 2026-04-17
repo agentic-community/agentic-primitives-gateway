@@ -205,6 +205,37 @@ credentials:
     ttl_seconds: 300
     max_entries: 10000
 
+## Governance: structured audit events with fan-out to every built-in sink.
+## stdout_json is always-on by default; additional sinks layer on top with
+## per-sink failure isolation. See docs/concepts/governance.md.
+audit:
+  enabled: true
+  stdout_json: true
+  sinks:
+    - name: local_file
+      backend: file
+      config:
+        path: "${APG_AUDIT_LOG_PATH:=/tmp/apg-audit.log}"
+        max_bytes: 10485760   # 10 MiB
+        backup_count: 5
+    - name: durable
+      backend: redis_stream
+      config:
+        redis_url: "${REDIS_URL:=redis://localhost:6379/0}"
+        stream: "gateway:audit"
+        maxlen: 100000
+    - name: traces
+      backend: observability
+  redact_keys: []
+  redact_principal_id: false
+  queue_size: 2048
+  sink_timeout_seconds: 2.0
+
+## Structured JSON app logs + secret-pattern scrubbing.
+logging:
+  format: json
+  sanitize: true
+
 agents:
   store:
     backend: redis
