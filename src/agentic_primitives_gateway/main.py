@@ -66,6 +66,9 @@ from agentic_primitives_gateway.routes import (
     teams,
     tools,
 )
+from agentic_primitives_gateway.routes import (
+    audit as audit_routes,
+)
 from agentic_primitives_gateway.watcher import ConfigWatcher
 
 _old_record_factory = logging.getLogRecordFactory()
@@ -491,6 +494,7 @@ app.include_router(agents.router)
 app.include_router(teams.router)
 app.include_router(a2a.router)
 app.include_router(credentials.router)
+app.include_router(audit_routes.router)
 
 
 # ── Provider discovery ──────────────────────────────────────────────

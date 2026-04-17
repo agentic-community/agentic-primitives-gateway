@@ -27,6 +27,7 @@ _EXEMPT_PREFIXES = (
     "/ui",
     "/api/v1/providers",
     "/api/v1/policy",
+    "/api/v1/auth/whoami",
     "/auth/config",
 )
 

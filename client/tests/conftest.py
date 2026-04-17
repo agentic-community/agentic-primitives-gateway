@@ -23,6 +23,61 @@ def _mock_handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"status": "ok", "checks": {"memory": True}})
     if path == "/auth/config":
         return httpx.Response(200, json={"backend": "noop", "oidc": None})
+    if path == "/api/v1/auth/whoami":
+        return httpx.Response(
+            200,
+            json={
+                "id": "noop",
+                "type": "user",
+                "is_admin": True,
+                "groups": [],
+                "scopes": ["admin"],
+            },
+        )
+
+    # Audit endpoints (admin-only on the real server; mock returns stubs)
+    if path == "/api/v1/audit/status":
+        return httpx.Response(
+            200,
+            json={
+                "stream_sink_configured": True,
+                "stream_name": "gateway:audit",
+                "length": 3,
+                "maxlen": 100000,
+            },
+        )
+    if path == "/api/v1/audit/events":
+        return httpx.Response(
+            200,
+            json={
+                "events": [
+                    {
+                        "schema_version": "1",
+                        "event_id": "abc123",
+                        "timestamp": "2026-04-17T00:00:00+00:00",
+                        "action": "auth.success",
+                        "outcome": "success",
+                        "actor_id": "alice",
+                        "actor_type": "user",
+                        "actor_groups": [],
+                        "resource_type": None,
+                        "resource_id": None,
+                        "request_id": "r1",
+                        "correlation_id": "c1",
+                        "source_ip": None,
+                        "user_agent": None,
+                        "http_method": "GET",
+                        "http_path": "/api/v1/providers",
+                        "http_status": None,
+                        "duration_ms": None,
+                        "reason": None,
+                        "metadata": {"backend": "NoopAuthBackend"},
+                    }
+                ],
+                "next": None,
+                "scanned": 1,
+            },
+        )
 
     # Providers
     if path == "/api/v1/providers" and method == "GET":

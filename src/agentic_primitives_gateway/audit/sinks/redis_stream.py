@@ -13,10 +13,13 @@ increments but won't affect other sinks or the request path.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from agentic_primitives_gateway.audit.base import AuditSink
 from agentic_primitives_gateway.audit.models import AuditEvent
+
+if TYPE_CHECKING:
+    import redis.asyncio as redis_asyncio
 
 
 class RedisStreamAuditSink(AuditSink):
@@ -47,6 +50,26 @@ class RedisStreamAuditSink(AuditSink):
         self._maxlen = maxlen
         self._approximate = approximate
         self._redis = redis_asyncio.from_url(redis_url, decode_responses=True)
+
+    # Public accessors — used by the audit UI routes to read from the
+    # same stream the sink writes to.  redis-py async clients are
+    # pool-based, so a long-running ``xread`` on the shared client does
+    # not block concurrent ``xadd`` calls from the sink's worker.
+
+    @property
+    def stream(self) -> str:
+        """Redis stream key this sink writes to."""
+        return self._stream
+
+    @property
+    def redis(self) -> redis_asyncio.Redis:
+        """The underlying async Redis client."""
+        return self._redis
+
+    @property
+    def maxlen(self) -> int:
+        """Configured MAXLEN bound for the stream."""
+        return self._maxlen
 
     async def emit(self, event: AuditEvent) -> None:
         # Serialize the event as a single JSON field rather than flattening

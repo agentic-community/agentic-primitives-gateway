@@ -501,6 +501,60 @@ class AgenticPlatformClient:
         self._raise_for_status(resp)
         return self._json_dict(resp)
 
+    async def whoami(self) -> dict[str, Any]:
+        """Return the authenticated principal (id, type, is_admin, groups, scopes)."""
+        resp = await self._get("/api/v1/auth/whoami")
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    # ── Audit (admin-only) ──────────────────────────────────────────────
+
+    async def audit_status(self) -> dict[str, Any]:
+        """Check whether the audit Redis-stream sink is configured.
+
+        Returns ``{"stream_sink_configured": bool, "stream_name": str | None,
+        "length": int | None, "maxlen": int | None}``.
+        """
+        resp = await self._get("/api/v1/audit/status")
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def list_audit_events(
+        self,
+        *,
+        start: str = "-",
+        end: str = "+",
+        count: int = 100,
+        action: str | None = None,
+        action_category: str | None = None,
+        outcome: str | None = None,
+        actor_id: str | None = None,
+        resource_type: str | None = None,
+        resource_id: str | None = None,
+        correlation_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Paginated historical browse of the audit Redis stream (admin-only).
+
+        ``start`` and ``end`` are Redis stream IDs; use ``"-"`` and ``"+"``
+        for "oldest" and "newest".  For pagination, pass the ``next`` cursor
+        from the previous response as ``end``.
+        """
+        params: dict[str, Any] = {"start": start, "end": end, "count": count}
+        for key, value in (
+            ("action", action),
+            ("action_category", action_category),
+            ("outcome", outcome),
+            ("actor_id", actor_id),
+            ("resource_type", resource_type),
+            ("resource_id", resource_id),
+            ("correlation_id", correlation_id),
+        ):
+            if value is not None:
+                params[key] = value
+        resp = await self._get("/api/v1/audit/events", params=params)
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
     # ── Memory ──────────────────────────────────────────────────────────
 
     async def list_memory_namespaces(self) -> dict[str, Any]:
