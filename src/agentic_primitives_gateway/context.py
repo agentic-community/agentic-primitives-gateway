@@ -44,6 +44,23 @@ def get_request_id() -> str:
     return _request_id.get()
 
 
+# ── Correlation ID ─────────────────────────────────────────────────
+#
+# ``request_id`` is unique per HTTP request.  ``correlation_id`` is
+# threaded across sub-agent calls, background runs, and reconnects so a
+# multi-step agent workflow appears as one chain in audit/logs/traces.
+
+_correlation_id: ContextVar[str] = ContextVar("_correlation_id", default="")
+
+
+def set_correlation_id(correlation_id: str) -> None:
+    _correlation_id.set(correlation_id)
+
+
+def get_correlation_id() -> str:
+    return _correlation_id.get()
+
+
 # ── AWS credentials ───────────────────────────────────────────────
 
 _aws_credentials: ContextVar[AWSCredentials | None] = ContextVar("_aws_credentials", default=None)

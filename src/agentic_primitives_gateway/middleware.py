@@ -11,6 +11,7 @@ from starlette.responses import Response
 from agentic_primitives_gateway.context import (
     AWSCredentials,
     set_aws_credentials,
+    set_correlation_id,
     set_provider_overrides,
     set_request_id,
     set_service_credentials,
@@ -46,6 +47,12 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
         # Request ID
         request_id = request.headers.get("x-request-id") or uuid4().hex
         set_request_id(request_id)
+
+        # Correlation ID — threads across sub-agent calls + background runs.
+        # Falls back to the request_id so callers that don't pass one still
+        # get a usable chain identifier.
+        correlation_id = request.headers.get("x-correlation-id") or request_id
+        set_correlation_id(correlation_id)
 
         # AWS credentials
         access_key = request.headers.get("x-aws-access-key-id")
@@ -86,4 +93,5 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
 
         response = await call_next(request)
         response.headers["x-request-id"] = request_id
+        response.headers["x-correlation-id"] = correlation_id
         return response

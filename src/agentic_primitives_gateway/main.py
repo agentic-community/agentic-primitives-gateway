@@ -21,10 +21,17 @@ from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from starlette.responses import Response
 
 from agentic_primitives_gateway._build_info import BUILD_REF
+from agentic_primitives_gateway.audit.base import AuditSink
+from agentic_primitives_gateway.audit.emit import configure_redaction, set_audit_router
+from agentic_primitives_gateway.audit.log_formatter import JsonLogFormatter, LogSanitizationFilter
+from agentic_primitives_gateway.audit.middleware import AuditMiddleware
+from agentic_primitives_gateway.audit.router import AuditRouter
+from agentic_primitives_gateway.audit.sinks.stdout_json import StdoutJsonSink
 from agentic_primitives_gateway.auth.base import AuthBackend
 from agentic_primitives_gateway.auth.middleware import AuthenticationMiddleware
 from agentic_primitives_gateway.config import (
     AGENT_STORE_ALIASES,
+    AUDIT_SINK_ALIASES,
     AUTH_BACKEND_ALIASES,
     CREDENTIAL_RESOLVER_ALIASES,
     CREDENTIAL_WRITER_ALIASES,
@@ -32,7 +39,11 @@ from agentic_primitives_gateway.config import (
     Settings,
     settings,
 )
-from agentic_primitives_gateway.context import get_request_id
+from agentic_primitives_gateway.context import (
+    get_authenticated_principal,
+    get_correlation_id,
+    get_request_id,
+)
 from agentic_primitives_gateway.credentials.base import CredentialResolver
 from agentic_primitives_gateway.credentials.middleware import CredentialResolutionMiddleware
 from agentic_primitives_gateway.enforcement.base import PolicyEnforcer
@@ -63,14 +74,31 @@ _old_record_factory = logging.getLogRecordFactory()
 def _request_id_record_factory(*args: object, **kwargs: object) -> logging.LogRecord:
     record = _old_record_factory(*args, **kwargs)
     record.request_id = get_request_id() or "-"  # type: ignore[attr-defined]
+    record.correlation_id = get_correlation_id() or "-"  # type: ignore[attr-defined]
+    principal = get_authenticated_principal()
+    record.principal_id = principal.id if principal else "-"  # type: ignore[attr-defined]
+    record.principal_type = principal.type if principal else "-"  # type: ignore[attr-defined]
     return record
 
 
 logging.setLogRecordFactory(_request_id_record_factory)
-logging.basicConfig(
-    level=settings.log_level.upper(),
-    format="%(asctime)s %(levelname)s %(name)s [%(request_id)s] %(message)s",
-)
+
+_log_handler = logging.StreamHandler()
+if settings.logging.format == "json":
+    _log_handler.setFormatter(JsonLogFormatter())
+else:
+    _log_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s [%(request_id)s] %(message)s"))
+if settings.logging.sanitize:
+    _log_handler.addFilter(LogSanitizationFilter())
+
+_root_logger = logging.getLogger()
+_root_logger.setLevel(settings.log_level.upper())
+# Replace any default handlers installed by prior basicConfig calls so the
+# formatter + sanitization filter are the sole source of output.
+for _existing in list(_root_logger.handlers):
+    _root_logger.removeHandler(_existing)
+_root_logger.addHandler(_log_handler)
+
 logger = logging.getLogger(__name__)
 
 
@@ -147,11 +175,57 @@ def _warn_replica_unsafe_config() -> None:
         )
 
 
+def _build_audit_router() -> AuditRouter | None:
+    """Construct the process-wide ``AuditRouter`` from ``settings.audit``.
+
+    Returns ``None`` when audit is disabled in config.  Always includes a
+    :class:`StdoutJsonSink` when ``stdout_json: true`` (the default) so
+    operators get a usable audit stream out of the box.  Additional sinks
+    are instantiated from ``settings.audit.sinks`` — each entry's ``name``
+    must be unique.
+    """
+    audit_cfg = settings.audit
+    if not audit_cfg.enabled:
+        return None
+
+    sinks: list[AuditSink] = []
+    if audit_cfg.stdout_json:
+        sinks.append(StdoutJsonSink(name="stdout_json"))
+
+    for entry in audit_cfg.sinks:
+        cls_path = AUDIT_SINK_ALIASES.get(entry.backend, entry.backend)
+        sink_cls = _load_class(cls_path)
+        sinks.append(sink_cls(name=entry.name, **entry.config))
+
+    if not sinks:
+        return None
+
+    configure_redaction(
+        extra_redact_keys=tuple(audit_cfg.redact_keys),
+        redact_principal_id=audit_cfg.redact_principal_id,
+    )
+    return AuditRouter(
+        sinks=sinks,
+        queue_size=audit_cfg.queue_size,
+        sink_timeout_seconds=audit_cfg.sink_timeout_seconds,
+    )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logger.info("agentic-primitives-gateway build=%s", BUILD_REF)
     registry.initialize()
     _warn_replica_unsafe_config()
+
+    # Start the audit router before anything else so emits from the rest of
+    # the startup path land on sinks.
+    audit_router = _build_audit_router()
+    if audit_router is not None:
+        await audit_router.start()
+        set_audit_router(audit_router)
+        logger.info("Audit router started with %d sink(s)", len(audit_router.sinks))
+    else:
+        logger.info("Audit disabled")
 
     # Initialize stores via pluggable backend config
     from agentic_primitives_gateway.routes.agents import set_agent_store
@@ -333,6 +407,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await credential_writer.close()
     await enforcer.close()
 
+    if audit_router is not None:
+        await audit_router.shutdown()
+        set_audit_router(None)
+
 
 app = FastAPI(
     title="Agentic Primitives Gateway",
@@ -342,11 +420,15 @@ app = FastAPI(
 )
 
 # Middleware execution order (outermost first):
-# CORS → RequestContext → Auth → CredentialResolution → PolicyEnforcement → handler
+# CORS → RequestContext → Audit → Auth → CredentialResolution → PolicyEnforcement → handler
 # (Starlette runs last-added middleware outermost.)
+# AuditMiddleware wraps auth/creds/policy so its http.request event sees the
+# final response status, but runs inside RequestContextMiddleware so
+# request_id and correlation_id are populated.
 app.add_middleware(PolicyEnforcementMiddleware)
 app.add_middleware(CredentialResolutionMiddleware)
 app.add_middleware(AuthenticationMiddleware)
+app.add_middleware(AuditMiddleware)
 app.add_middleware(RequestContextMiddleware)
 app.add_middleware(
     CORSMiddleware,

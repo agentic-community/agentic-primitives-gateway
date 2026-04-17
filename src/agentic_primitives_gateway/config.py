@@ -41,6 +41,8 @@ def _expand_vars(text: str) -> str:
     return text
 
 
+from typing import Literal  # noqa: E402
+
 from pydantic import BaseModel, Field, model_validator  # noqa: E402
 from pydantic_settings import BaseSettings, SettingsConfigDict  # noqa: E402
 
@@ -315,6 +317,45 @@ CREDENTIAL_WRITER_ALIASES: dict[str, str] = {
 }
 
 
+class AuditSinkConfig(BaseModel):
+    """One audit sink entry (name + backend alias or dotted path + kwargs)."""
+
+    name: str
+    backend: str
+    config: dict[str, Any] = Field(default_factory=dict)
+
+
+class AuditConfig(BaseModel):
+    """Configuration for the audit subsystem.
+
+    ``stdout_json`` is enabled by default so operators get a usable audit
+    stream out of the box (pipe to Fluent Bit / Vector / CloudWatch).
+    Additional sinks (file, redis_stream, observability) layer on top.
+    """
+
+    enabled: bool = True
+    stdout_json: bool = True
+    sinks: list[AuditSinkConfig] = Field(default_factory=list)
+    redact_keys: list[str] = Field(default_factory=list)
+    redact_principal_id: bool = False
+    queue_size: int = 2048
+    sink_timeout_seconds: float = 2.0
+
+
+class LoggingConfig(BaseModel):
+    """Application logging configuration (separate from audit events)."""
+
+    format: Literal["text", "json"] = "text"
+    sanitize: bool = True
+
+
+# Well-known audit sink aliases → dotted class paths
+AUDIT_SINK_ALIASES: dict[str, str] = {
+    "noop": "agentic_primitives_gateway.audit.sinks.noop.NoopAuditSink",
+    "stdout_json": "agentic_primitives_gateway.audit.sinks.stdout_json.StdoutJsonSink",
+}
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="AGENTIC_PRIMITIVES_GATEWAY_",
@@ -333,6 +374,8 @@ class Settings(BaseSettings):
     credentials: CredentialsConfig = CredentialsConfig()
     agents: AgentsConfig = AgentsConfig()
     teams: TeamsConfig = TeamsConfig()
+    audit: AuditConfig = AuditConfig()
+    logging: LoggingConfig = LoggingConfig()
 
     @staticmethod
     def config_file_path() -> str | None:

@@ -8,6 +8,8 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
+from agentic_primitives_gateway.audit.emit import emit_audit_event
+from agentic_primitives_gateway.audit.models import AuditAction, AuditOutcome
 from agentic_primitives_gateway.context import get_authenticated_principal
 from agentic_primitives_gateway.enforcement.base import PolicyEnforcer
 
@@ -201,9 +203,26 @@ class PolicyEnforcementMiddleware(BaseHTTPMiddleware):
                 action,
                 resource,
             )
+            emit_audit_event(
+                action=AuditAction.POLICY_DENY,
+                outcome=AuditOutcome.DENY,
+                resource_id=resource,
+                reason="cedar_deny",
+                http_method=request.method,
+                http_path=path,
+                metadata={"cedar_principal": principal, "cedar_action": action},
+            )
             return JSONResponse(
                 status_code=403,
                 content={"detail": "Forbidden by policy"},
             )
 
+        emit_audit_event(
+            action=AuditAction.POLICY_ALLOW,
+            outcome=AuditOutcome.ALLOW,
+            resource_id=resource,
+            http_method=request.method,
+            http_path=path,
+            metadata={"cedar_principal": principal, "cedar_action": action},
+        )
         return await call_next(request)

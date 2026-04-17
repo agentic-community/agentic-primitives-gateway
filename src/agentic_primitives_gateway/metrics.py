@@ -50,6 +50,32 @@ PROVIDER_HEALTH = Gauge(
     ["primitive", "provider"],
 )
 
+# ── Governance: audit fan-out ───────────────────────────────────────
+
+AUDIT_EVENTS = Counter(
+    "gateway_audit_events_total",
+    "Audit events emitted (counted at the emit site, before fan-out).",
+    ["action_category", "outcome"],
+)
+
+AUDIT_SINK_EVENTS = Counter(
+    "gateway_audit_sink_events_total",
+    "Per-sink delivery attempts.",
+    ["sink", "outcome"],  # outcome: success|timeout|error
+)
+
+AUDIT_SINK_QUEUE_DEPTH = Gauge(
+    "gateway_audit_sink_queue_depth",
+    "Current queue depth for each audit sink.",
+    ["sink"],
+)
+
+AUDIT_EVENTS_DROPPED = Counter(
+    "gateway_audit_events_dropped_total",
+    "Audit events dropped before reaching a sink.",
+    ["sink", "reason"],  # reason: queue_full|serialize_error
+)
+
 # Methods that represent session lifecycle transitions.
 _SESSION_START_METHODS = frozenset({"start_session"})
 _SESSION_STOP_METHODS = frozenset({"stop_session"})
