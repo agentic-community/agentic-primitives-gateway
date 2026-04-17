@@ -20,6 +20,7 @@ import uuid
 from collections.abc import AsyncIterator
 from typing import Any
 
+from agentic_primitives_gateway import metrics
 from agentic_primitives_gateway.agents.checkpoint_utils import (
     apply_provider_overrides,
     restore_auth_context,
@@ -37,6 +38,8 @@ from agentic_primitives_gateway.agents.team_prompts import (
 )
 from agentic_primitives_gateway.agents.team_store import TeamStore
 from agentic_primitives_gateway.agents.tools import ToolDefinition, build_tool_list
+from agentic_primitives_gateway.audit.emit import emit_audit_event
+from agentic_primitives_gateway.audit.models import AuditAction, AuditOutcome, ResourceType
 from agentic_primitives_gateway.context import get_authenticated_principal
 from agentic_primitives_gateway.models.agents import AgentSpec, PrimitiveConfig
 from agentic_primitives_gateway.models.tasks import TaskStatus
@@ -44,6 +47,18 @@ from agentic_primitives_gateway.models.teams import TeamRunPhase, TeamRunRespons
 from agentic_primitives_gateway.registry import registry
 
 logger = logging.getLogger(__name__)
+
+
+def _emit_team_event(action: str, outcome: AuditOutcome, team_name: str, team_run_id: str) -> None:
+    """Shorthand for team run lifecycle emits."""
+    emit_audit_event(
+        action=action,
+        outcome=outcome,
+        resource_type=ResourceType.TEAM,
+        resource_id=team_name,
+        metadata={"team_run_id": team_run_id},
+    )
+
 
 # How long a worker waits before re-checking the board (seconds)
 _POLL_INTERVAL = 1.0
@@ -422,31 +437,43 @@ class TeamRunner:
         assert self._agent_store is not None
         assert self._agent_runner is not None
 
-        await self._team_checkpoint(team_spec, team_run_id, message, "planning")
-        logger.info("Team[%s] run=%s phase=planning", team_spec.name, team_run_id)
-        await self._run_planner(team_spec, team_run_id, message)
+        _emit_team_event(AuditAction.TEAM_RUN_START, AuditOutcome.SUCCESS, team_spec.name, team_run_id)
+        metrics.TEAM_RUNS.labels(team_name=team_spec.name, status="start").inc()
+        run_status = "failed"
+        run_action = AuditAction.TEAM_RUN_FAILED
+        run_outcome = AuditOutcome.ERROR
+        try:
+            await self._team_checkpoint(team_spec, team_run_id, message, "planning")
+            logger.info("Team[%s] run=%s phase=planning", team_spec.name, team_run_id)
+            await self._run_planner(team_spec, team_run_id, message)
 
-        await self._team_checkpoint(team_spec, team_run_id, message, "execution")
-        logger.info("Team[%s] run=%s phase=execution", team_spec.name, team_run_id)
-        workers_used = await self._run_with_replanning(team_spec, team_run_id, message)
+            await self._team_checkpoint(team_spec, team_run_id, message, "execution")
+            logger.info("Team[%s] run=%s phase=execution", team_spec.name, team_run_id)
+            workers_used = await self._run_with_replanning(team_spec, team_run_id, message)
 
-        await self._team_checkpoint(team_spec, team_run_id, message, "synthesis")
-        logger.info("Team[%s] run=%s phase=synthesis", team_spec.name, team_run_id)
-        response = await self._run_synthesizer(team_spec, team_run_id, message)
+            await self._team_checkpoint(team_spec, team_run_id, message, "synthesis")
+            logger.info("Team[%s] run=%s phase=synthesis", team_spec.name, team_run_id)
+            response = await self._run_synthesizer(team_spec, team_run_id, message)
 
-        await self._delete_team_checkpoint(team_run_id, team_spec=team_spec)
-        all_tasks = await registry.tasks.list_tasks(team_run_id)
-        done_count = sum(1 for t in all_tasks if t.status == TaskStatus.DONE)
+            await self._delete_team_checkpoint(team_run_id, team_spec=team_spec)
+            all_tasks = await registry.tasks.list_tasks(team_run_id)
+            done_count = sum(1 for t in all_tasks if t.status == TaskStatus.DONE)
+            run_status = "complete"
+            run_action = AuditAction.TEAM_RUN_COMPLETE
+            run_outcome = AuditOutcome.SUCCESS
 
-        return TeamRunResponse(
-            response=response,
-            team_run_id=team_run_id,
-            team_name=team_spec.name,
-            phase=TeamRunPhase.DONE,
-            tasks_created=len(all_tasks),
-            tasks_completed=done_count,
-            workers_used=workers_used,
-        )
+            return TeamRunResponse(
+                response=response,
+                team_run_id=team_run_id,
+                team_name=team_spec.name,
+                phase=TeamRunPhase.DONE,
+                tasks_created=len(all_tasks),
+                tasks_completed=done_count,
+                workers_used=workers_used,
+            )
+        finally:
+            _emit_team_event(run_action, run_outcome, team_spec.name, team_run_id)
+            metrics.TEAM_RUNS.labels(team_name=team_spec.name, status=run_status).inc()
 
     async def run_stream(
         self,
@@ -461,6 +488,11 @@ class TeamRunner:
         cancel_event = asyncio.Event()
         self._cancel_events[team_run_id] = cancel_event
 
+        _emit_team_event(AuditAction.TEAM_RUN_START, AuditOutcome.SUCCESS, team_spec.name, team_run_id)
+        metrics.TEAM_RUNS.labels(team_name=team_spec.name, status="start").inc()
+        run_status = "failed"
+        run_action = AuditAction.TEAM_RUN_FAILED
+        run_outcome = AuditOutcome.ERROR
         try:
             yield {"type": "team_start", "team_run_id": team_run_id, "team_name": team_spec.name}
 
@@ -526,8 +558,13 @@ class TeamRunner:
                 "tasks_completed": done_count,
                 "workers_used": workers_used,
             }
+            run_status = "cancelled" if cancel_event.is_set() else "complete"
+            run_action = AuditAction.TEAM_RUN_CANCELLED if cancel_event.is_set() else AuditAction.TEAM_RUN_COMPLETE
+            run_outcome = AuditOutcome.DENY if cancel_event.is_set() else AuditOutcome.SUCCESS
         finally:
             self._cancel_events.pop(team_run_id, None)
+            _emit_team_event(run_action, run_outcome, team_spec.name, team_run_id)
+            metrics.TEAM_RUNS.labels(team_name=team_spec.name, status=run_status).inc()
 
     # ── Phase 1: Planning ────────────────────────────────────────────
 

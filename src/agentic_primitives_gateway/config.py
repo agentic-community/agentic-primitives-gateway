@@ -353,6 +353,9 @@ class LoggingConfig(BaseModel):
 AUDIT_SINK_ALIASES: dict[str, str] = {
     "noop": "agentic_primitives_gateway.audit.sinks.noop.NoopAuditSink",
     "stdout_json": "agentic_primitives_gateway.audit.sinks.stdout_json.StdoutJsonSink",
+    "file": "agentic_primitives_gateway.audit.sinks.file.RotatingFileAuditSink",
+    "redis_stream": "agentic_primitives_gateway.audit.sinks.redis_stream.RedisStreamAuditSink",
+    "observability": "agentic_primitives_gateway.audit.sinks.observability.ObservabilityProviderSink",
 }
 
 

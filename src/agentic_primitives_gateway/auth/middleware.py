@@ -8,6 +8,7 @@ from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.responses import JSONResponse, Response
 
+from agentic_primitives_gateway import metrics
 from agentic_primitives_gateway.audit.emit import emit_audit_event
 from agentic_primitives_gateway.audit.models import AuditAction, AuditOutcome
 from agentic_primitives_gateway.auth.base import AuthBackend
@@ -87,6 +88,11 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
                 http_path=path,
                 metadata={"backend": backend_name},
             )
+            metrics.AUTH_EVENTS.labels(
+                backend=backend_name,
+                outcome="failure",
+                principal_type="unknown",
+            ).inc()
             return JSONResponse(
                 status_code=401,
                 content={"detail": "Invalid or missing credentials"},
@@ -102,4 +108,9 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
             http_path=path,
             metadata={"backend": backend_name},
         )
+        metrics.AUTH_EVENTS.labels(
+            backend=backend_name,
+            outcome="success",
+            principal_type=principal.type,
+        ).inc()
         return await call_next(request)

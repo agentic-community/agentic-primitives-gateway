@@ -18,9 +18,11 @@ from agentic_primitives_gateway.context import (
     _service_credentials,
     get_authenticated_principal,
     get_aws_credentials,
+    get_correlation_id,
     get_provider_override,
     set_authenticated_principal,
     set_aws_credentials,
+    set_correlation_id,
     set_provider_overrides,
     set_service_credentials,
 )
@@ -56,6 +58,9 @@ def serialize_auth_context() -> dict[str, Any]:
             "aws_session_token_present": aws_creds.session_token is not None,
             "aws_region": aws_creds.region,
         }
+    correlation_id = get_correlation_id()
+    if correlation_id:
+        data["correlation_id"] = correlation_id
     return data
 
 
@@ -88,6 +93,10 @@ def restore_auth_context(data: dict[str, Any]) -> AuthenticatedPrincipal:
     svc_data = data.get("service_credentials")
     if svc_data:
         set_service_credentials(svc_data)
+
+    correlation_id = data.get("correlation_id")
+    if correlation_id:
+        set_correlation_id(correlation_id)
 
     return principal
 

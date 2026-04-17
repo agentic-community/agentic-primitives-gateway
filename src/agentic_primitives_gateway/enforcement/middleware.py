@@ -8,6 +8,7 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
+from agentic_primitives_gateway import metrics
 from agentic_primitives_gateway.audit.emit import emit_audit_event
 from agentic_primitives_gateway.audit.models import AuditAction, AuditOutcome
 from agentic_primitives_gateway.context import get_authenticated_principal
@@ -196,6 +197,8 @@ class PolicyEnforcementMiddleware(BaseHTTPMiddleware):
             resource=resource,
         )
 
+        action_category = action.split(":", 1)[0] if ":" in action else action
+
         if not allowed:
             logger.warning(
                 "Policy denied: principal=%s action=%s resource=%s",
@@ -212,6 +215,7 @@ class PolicyEnforcementMiddleware(BaseHTTPMiddleware):
                 http_path=path,
                 metadata={"cedar_principal": principal, "cedar_action": action},
             )
+            metrics.POLICY_DECISIONS.labels(decision="deny", action_category=action_category).inc()
             return JSONResponse(
                 status_code=403,
                 content={"detail": "Forbidden by policy"},
@@ -225,4 +229,5 @@ class PolicyEnforcementMiddleware(BaseHTTPMiddleware):
             http_path=path,
             metadata={"cedar_principal": principal, "cedar_action": action},
         )
+        metrics.POLICY_DECISIONS.labels(decision="allow", action_category=action_category).inc()
         return await call_next(request)

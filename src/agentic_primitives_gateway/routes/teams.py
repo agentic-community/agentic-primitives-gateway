@@ -7,6 +7,8 @@ from starlette.responses import Response, StreamingResponse
 
 from agentic_primitives_gateway.agents.team_runner import TeamRunner
 from agentic_primitives_gateway.agents.team_store import TeamStore
+from agentic_primitives_gateway.audit.emit import emit_audit_event
+from agentic_primitives_gateway.audit.models import AuditAction, AuditOutcome, ResourceType
 from agentic_primitives_gateway.auth.access import require_access, require_owner_or_admin
 from agentic_primitives_gateway.models.teams import (
     CreateTeamRequest,
@@ -63,9 +65,17 @@ async def create_team(request: CreateTeamRequest) -> TeamSpec:
     if existing is not None:
         raise HTTPException(status_code=409, detail=f"Team '{spec.name}' already exists")
     try:
-        return await store.create(spec)
+        created = await store.create(spec)
     except KeyError:
         raise HTTPException(status_code=409, detail=f"Team '{spec.name}' already exists") from None
+    emit_audit_event(
+        action=AuditAction.TEAM_CREATE,
+        outcome=AuditOutcome.SUCCESS,
+        resource_type=ResourceType.TEAM,
+        resource_id=spec.name,
+        metadata={"workers": list(spec.workers), "planner": spec.planner, "synthesizer": spec.synthesizer},
+    )
+    return created
 
 
 @router.get("", response_model=TeamListResponse)
@@ -123,7 +133,15 @@ async def update_team(name: str, request: UpdateTeamRequest) -> TeamSpec:
         raise HTTPException(status_code=404, detail=f"Team '{name}' not found")
     require_owner_or_admin(require_principal(), existing.owner_id)
     updates = {k: v for k, v in request.model_dump().items() if v is not None}
-    return await store.update(name, updates)
+    result = await store.update(name, updates)
+    emit_audit_event(
+        action=AuditAction.TEAM_UPDATE,
+        outcome=AuditOutcome.SUCCESS,
+        resource_type=ResourceType.TEAM,
+        resource_id=name,
+        metadata={"fields": sorted(updates.keys())},
+    )
+    return result
 
 
 @router.delete("/{name}")
@@ -134,6 +152,12 @@ async def delete_team(name: str) -> dict[str, str]:
         raise HTTPException(status_code=404, detail=f"Team '{name}' not found")
     require_owner_or_admin(require_principal(), spec.owner_id)
     await store.delete(name)
+    emit_audit_event(
+        action=AuditAction.TEAM_DELETE,
+        outcome=AuditOutcome.SUCCESS,
+        resource_type=ResourceType.TEAM,
+        resource_id=name,
+    )
     return {"status": "deleted"}
 
 

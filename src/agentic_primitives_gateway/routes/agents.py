@@ -9,6 +9,8 @@ from agentic_primitives_gateway.agents.namespace import resolve_actor_id, resolv
 from agentic_primitives_gateway.agents.runner import AgentRunner
 from agentic_primitives_gateway.agents.store import AgentStore
 from agentic_primitives_gateway.agents.tools import _TOOL_CATALOG, build_tool_list
+from agentic_primitives_gateway.audit.emit import emit_audit_event
+from agentic_primitives_gateway.audit.models import AuditAction, AuditOutcome, ResourceType
 from agentic_primitives_gateway.auth.access import require_access, require_owner_or_admin
 from agentic_primitives_gateway.context import (
     get_provider_override,
@@ -71,9 +73,17 @@ async def create_agent(request: CreateAgentRequest) -> AgentSpec:
     if existing is not None:
         raise HTTPException(status_code=409, detail=f"Agent '{spec.name}' already exists")
     try:
-        return await store.create(spec)
+        created = await store.create(spec)
     except KeyError:
         raise HTTPException(status_code=409, detail=f"Agent '{spec.name}' already exists") from None
+    emit_audit_event(
+        action=AuditAction.AGENT_CREATE,
+        outcome=AuditOutcome.SUCCESS,
+        resource_type=ResourceType.AGENT,
+        resource_id=spec.name,
+        metadata={"model": spec.model},
+    )
+    return created
 
 
 @router.get("", response_model=AgentListResponse)
@@ -151,7 +161,15 @@ async def update_agent(name: str, request: UpdateAgentRequest) -> AgentSpec:
         raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
     require_owner_or_admin(require_principal(), existing.owner_id)
     updates = {k: v for k, v in request.model_dump().items() if v is not None}
-    return await store.update(name, updates)
+    result = await store.update(name, updates)
+    emit_audit_event(
+        action=AuditAction.AGENT_UPDATE,
+        outcome=AuditOutcome.SUCCESS,
+        resource_type=ResourceType.AGENT,
+        resource_id=name,
+        metadata={"fields": sorted(updates.keys())},
+    )
+    return result
 
 
 @router.delete("/{name}")
@@ -162,6 +180,12 @@ async def delete_agent(name: str) -> dict[str, str]:
         raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
     require_owner_or_admin(require_principal(), spec.owner_id)
     await store.delete(name)
+    emit_audit_event(
+        action=AuditAction.AGENT_DELETE,
+        outcome=AuditOutcome.SUCCESS,
+        resource_type=ResourceType.AGENT,
+        resource_id=name,
+    )
     return {"status": "deleted"}
 
 

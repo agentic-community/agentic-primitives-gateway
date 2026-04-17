@@ -76,6 +76,49 @@ AUDIT_EVENTS_DROPPED = Counter(
     ["sink", "reason"],  # reason: queue_full|serialize_error
 )
 
+# ── Governance: business-level signals ─────────────────────────────
+#
+# Label cardinality is bounded by configuration or taxonomy — never
+# by principal or resource identifiers.  If a label's cardinality is
+# bounded by something dynamic (e.g. agent_name), call it out here so
+# future contributors don't add per-user labels without thinking.
+
+AUTH_EVENTS = Counter(
+    "gateway_auth_events_total",
+    "Authentication outcomes.",
+    ["backend", "outcome", "principal_type"],  # principal_type: user|service|anonymous
+)
+
+POLICY_DECISIONS = Counter(
+    "gateway_policy_decisions_total",
+    "Policy enforcement outcomes (first segment of the Cedar action is the category).",
+    ["decision", "action_category"],  # decision: allow|deny
+)
+
+CREDENTIAL_OPS = Counter(
+    "gateway_credential_operations_total",
+    "Credential resolver/writer operations.",
+    ["op", "service", "outcome"],  # op: resolve|read|write|delete
+)
+
+AGENT_RUNS = Counter(
+    "gateway_agent_runs_total",
+    "Agent run lifecycle outcomes (agent_name bounded by configured specs).",
+    ["agent_name", "status"],  # status: start|complete|failed|cancelled
+)
+
+TEAM_RUNS = Counter(
+    "gateway_team_runs_total",
+    "Team run lifecycle outcomes (team_name bounded by configured specs).",
+    ["team_name", "status"],
+)
+
+ACCESS_DENIALS = Counter(
+    "gateway_access_denials_total",
+    "Resource-level access check denials.",
+    ["resource_type"],
+)
+
 # Methods that represent session lifecycle transitions.
 _SESSION_START_METHODS = frozenset({"start_session"})
 _SESSION_STOP_METHODS = frozenset({"stop_session"})

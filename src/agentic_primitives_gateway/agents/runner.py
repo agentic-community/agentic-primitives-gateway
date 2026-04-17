@@ -8,6 +8,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any
 
+from agentic_primitives_gateway import metrics
 from agentic_primitives_gateway.agents.checkpoint import CheckpointStore
 from agentic_primitives_gateway.agents.checkpoint_utils import (
     apply_provider_overrides,
@@ -28,11 +29,38 @@ from agentic_primitives_gateway.agents.tools import (
     execute_tool,
     to_llm_tools,
 )
+from agentic_primitives_gateway.audit.emit import emit_audit_event
+from agentic_primitives_gateway.audit.models import AuditAction, AuditOutcome, ResourceType
 from agentic_primitives_gateway.context import get_authenticated_principal
 from agentic_primitives_gateway.models.agents import AgentSpec, ChatResponse, ToolArtifact
 from agentic_primitives_gateway.registry import registry
 
 logger = logging.getLogger(__name__)
+
+
+def _emit_run_event(
+    action: str,
+    outcome: AuditOutcome,
+    agent_name: str,
+    *,
+    session_id: str,
+    depth: int,
+    turns_used: int | None = None,
+    tools_called: int | None = None,
+) -> None:
+    """Shorthand for agent run lifecycle emits — keeps the runner code terse."""
+    metadata: dict[str, Any] = {"session_id": session_id, "depth": depth}
+    if turns_used is not None:
+        metadata["turns_used"] = turns_used
+    if tools_called is not None:
+        metadata["tools_called"] = tools_called
+    emit_audit_event(
+        action=action,
+        outcome=outcome,
+        resource_type=ResourceType.AGENT,
+        resource_id=agent_name,
+        metadata=metadata,
+    )
 
 
 # ── Shared mutable state for a single agent run ─────────────────────
@@ -103,7 +131,17 @@ class AgentRunner:
             )
 
         ctx = await self._init_context(spec, message, session_id or uuid.uuid4().hex[:16], _depth)
-
+        _emit_run_event(
+            AuditAction.AGENT_RUN_START,
+            AuditOutcome.SUCCESS,
+            spec.name,
+            session_id=ctx.session_id,
+            depth=_depth,
+        )
+        metrics.AGENT_RUNS.labels(agent_name=spec.name, status="start").inc()
+        run_status = "failed"
+        run_action = AuditAction.AGENT_RUN_FAILED
+        run_outcome = AuditOutcome.ERROR
         try:
             while ctx.turns_used < spec.max_turns:
                 ctx.turns_used += 1
@@ -137,8 +175,21 @@ class AgentRunner:
             else:
                 ctx.content = f"I've reached the maximum number of turns ({spec.max_turns}). Here's what I have so far: {ctx.content}"
                 ctx.messages.append({"role": "assistant", "content": ctx.content})
+            run_status = "complete"
+            run_action = AuditAction.AGENT_RUN_COMPLETE
+            run_outcome = AuditOutcome.SUCCESS
         finally:
             await self._finalize(ctx, message)
+            _emit_run_event(
+                run_action,
+                run_outcome,
+                spec.name,
+                session_id=ctx.session_id,
+                depth=_depth,
+                turns_used=ctx.turns_used,
+                tools_called=len(ctx.tools_called),
+            )
+            metrics.AGENT_RUNS.labels(agent_name=spec.name, status=run_status).inc()
 
         return ChatResponse(
             response=ctx.content,
@@ -174,6 +225,17 @@ class AgentRunner:
         ctx = await self._init_context(spec, message, session_id or uuid.uuid4().hex[:16], _depth)
         yield {"type": "stream_start", "session_id": ctx.session_id}
 
+        _emit_run_event(
+            AuditAction.AGENT_RUN_START,
+            AuditOutcome.SUCCESS,
+            spec.name,
+            session_id=ctx.session_id,
+            depth=_depth,
+        )
+        metrics.AGENT_RUNS.labels(agent_name=spec.name, status="start").inc()
+        run_status = "failed"
+        run_action = AuditAction.AGENT_RUN_FAILED
+        run_outcome = AuditOutcome.ERROR
         try:
             while ctx.turns_used < spec.max_turns:
                 ctx.turns_used += 1
@@ -214,8 +276,21 @@ class AgentRunner:
             else:
                 ctx.content = f"I've reached the maximum number of turns ({spec.max_turns}). Here's what I have so far: {ctx.content}"
                 ctx.messages.append({"role": "assistant", "content": ctx.content})
+            run_status = "complete"
+            run_action = AuditAction.AGENT_RUN_COMPLETE
+            run_outcome = AuditOutcome.SUCCESS
         finally:
             await self._finalize(ctx, message)
+            _emit_run_event(
+                run_action,
+                run_outcome,
+                spec.name,
+                session_id=ctx.session_id,
+                depth=_depth,
+                turns_used=ctx.turns_used,
+                tools_called=len(ctx.tools_called),
+            )
+            metrics.AGENT_RUNS.labels(agent_name=spec.name, status=run_status).inc()
 
         yield {
             "type": "done",

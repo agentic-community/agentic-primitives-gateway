@@ -7,6 +7,9 @@ import logging
 import httpx
 from fastapi import APIRouter, HTTPException
 
+from agentic_primitives_gateway import metrics
+from agentic_primitives_gateway.audit.emit import emit_audit_event
+from agentic_primitives_gateway.audit.models import AuditAction, AuditOutcome, ResourceType
 from agentic_primitives_gateway.context import get_access_token
 from agentic_primitives_gateway.credentials.base import CredentialResolver
 from agentic_primitives_gateway.credentials.models import (
@@ -88,21 +91,55 @@ async def write_credentials(body: CredentialUpdateRequest) -> dict[str, str]:
     principal = require_principal()
     access_token = _require_access_token()
 
+    changed_keys = sorted((body.attributes or {}).keys())
     try:
         await writer.write(principal, access_token, body)
     except NotImplementedError:
+        emit_audit_event(
+            action=AuditAction.CREDENTIAL_WRITE,
+            outcome=AuditOutcome.ERROR,
+            resource_type=ResourceType.CREDENTIAL,
+            resource_id=principal.id,
+            reason="not_configured",
+            metadata={"keys": changed_keys},
+        )
         raise HTTPException(status_code=501, detail="Credential writing is not configured") from None
     except httpx.HTTPStatusError as e:
+        emit_audit_event(
+            action=AuditAction.CREDENTIAL_WRITE,
+            outcome=AuditOutcome.FAILURE,
+            resource_type=ResourceType.CREDENTIAL,
+            resource_id=principal.id,
+            reason=f"idp_{e.response.status_code}",
+            metadata={"keys": changed_keys},
+        )
+        metrics.CREDENTIAL_OPS.labels(op="write", service="user_profile", outcome="failure").inc()
         logger.warning("Credential write failed: %s %s", e.response.status_code, e.response.text[:200])
         raise HTTPException(
             status_code=502,
             detail=f"Identity provider returned {e.response.status_code}",
         ) from None
     except Exception:
+        emit_audit_event(
+            action=AuditAction.CREDENTIAL_WRITE,
+            outcome=AuditOutcome.ERROR,
+            resource_type=ResourceType.CREDENTIAL,
+            resource_id=principal.id,
+            metadata={"keys": changed_keys},
+        )
+        metrics.CREDENTIAL_OPS.labels(op="write", service="user_profile", outcome="error").inc()
         logger.exception("Credential write failed")
         raise HTTPException(status_code=502, detail="Failed to write credentials to identity provider") from None
 
     _invalidate_cache(principal.id)
+    emit_audit_event(
+        action=AuditAction.CREDENTIAL_WRITE,
+        outcome=AuditOutcome.SUCCESS,
+        resource_type=ResourceType.CREDENTIAL,
+        resource_id=principal.id,
+        metadata={"keys": changed_keys},
+    )
+    metrics.CREDENTIAL_OPS.labels(op="write", service="user_profile", outcome="success").inc()
     return {"status": "updated"}
 
 
@@ -116,18 +153,51 @@ async def delete_credential(key: str) -> dict[str, str]:
     try:
         await writer.delete(principal, access_token, key)
     except NotImplementedError:
+        emit_audit_event(
+            action=AuditAction.CREDENTIAL_DELETE,
+            outcome=AuditOutcome.ERROR,
+            resource_type=ResourceType.CREDENTIAL,
+            resource_id=principal.id,
+            reason="not_configured",
+            metadata={"keys": [key]},
+        )
         raise HTTPException(status_code=501, detail="Credential deletion is not configured") from None
     except httpx.HTTPStatusError as e:
+        emit_audit_event(
+            action=AuditAction.CREDENTIAL_DELETE,
+            outcome=AuditOutcome.FAILURE,
+            resource_type=ResourceType.CREDENTIAL,
+            resource_id=principal.id,
+            reason=f"idp_{e.response.status_code}",
+            metadata={"keys": [key]},
+        )
+        metrics.CREDENTIAL_OPS.labels(op="delete", service="user_profile", outcome="failure").inc()
         logger.warning("Credential delete failed: %s %s", e.response.status_code, e.response.text[:200])
         raise HTTPException(
             status_code=502,
             detail=f"Identity provider returned {e.response.status_code}",
         ) from None
     except Exception:
+        emit_audit_event(
+            action=AuditAction.CREDENTIAL_DELETE,
+            outcome=AuditOutcome.ERROR,
+            resource_type=ResourceType.CREDENTIAL,
+            resource_id=principal.id,
+            metadata={"keys": [key]},
+        )
+        metrics.CREDENTIAL_OPS.labels(op="delete", service="user_profile", outcome="error").inc()
         logger.exception("Credential delete failed")
         raise HTTPException(status_code=502, detail="Failed to delete credential") from None
 
     _invalidate_cache(principal.id)
+    emit_audit_event(
+        action=AuditAction.CREDENTIAL_DELETE,
+        outcome=AuditOutcome.SUCCESS,
+        resource_type=ResourceType.CREDENTIAL,
+        resource_id=principal.id,
+        metadata={"keys": [key]},
+    )
+    metrics.CREDENTIAL_OPS.labels(op="delete", service="user_profile", outcome="success").inc()
     return {"status": "deleted"}
 
 

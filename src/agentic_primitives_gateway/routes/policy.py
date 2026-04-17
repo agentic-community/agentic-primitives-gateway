@@ -2,6 +2,8 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 
+from agentic_primitives_gateway.audit.emit import emit_audit_event
+from agentic_primitives_gateway.audit.models import AuditAction, AuditOutcome, ResourceType
 from agentic_primitives_gateway.models.enums import Primitive
 from agentic_primitives_gateway.models.policy import (
     CreatePolicyEngineRequest,
@@ -52,7 +54,15 @@ async def create_policy_engine(request: CreatePolicyEngineRequest) -> PolicyEngi
         description=request.description,
         config=request.config or None,
     )
-    return PolicyEngineInfo(**result)
+    info = PolicyEngineInfo(**result)
+    emit_audit_event(
+        action="policy.engine.create",
+        outcome=AuditOutcome.SUCCESS,
+        resource_type=ResourceType.POLICY_ENGINE,
+        resource_id=info.policy_engine_id,
+        metadata={"name": request.name},
+    )
+    return info
 
 
 @router.get("/engines", response_model=ListPolicyEnginesResponse)
@@ -78,6 +88,12 @@ async def get_policy_engine(engine_id: str) -> PolicyEngineInfo:
 async def delete_policy_engine(engine_id: str) -> Response:
     require_admin()
     await registry.policy.delete_policy_engine(engine_id)
+    emit_audit_event(
+        action="policy.engine.delete",
+        outcome=AuditOutcome.SUCCESS,
+        resource_type=ResourceType.POLICY_ENGINE,
+        resource_id=engine_id,
+    )
     return Response(status_code=204)
 
 
@@ -92,7 +108,15 @@ async def create_policy(engine_id: str, request: CreatePolicyRequest) -> PolicyI
         policy_body=request.policy_body,
         description=request.description,
     )
-    return PolicyInfo(**result)
+    info = PolicyInfo(**result)
+    emit_audit_event(
+        action=AuditAction.POLICY_CREATE,
+        outcome=AuditOutcome.SUCCESS,
+        resource_type=ResourceType.POLICY,
+        resource_id=info.policy_id,
+        metadata={"engine_id": engine_id},
+    )
+    return info
 
 
 @router.get("/engines/{engine_id}/policies", response_model=ListPoliciesResponse)
@@ -125,6 +149,13 @@ async def update_policy(engine_id: str, policy_id: str, request: UpdatePolicyReq
         policy_body=request.policy_body,
         description=request.description,
     )
+    emit_audit_event(
+        action=AuditAction.POLICY_UPDATE,
+        outcome=AuditOutcome.SUCCESS,
+        resource_type=ResourceType.POLICY,
+        resource_id=policy_id,
+        metadata={"engine_id": engine_id},
+    )
     return PolicyInfo(**result)
 
 
@@ -132,6 +163,13 @@ async def update_policy(engine_id: str, policy_id: str, request: UpdatePolicyReq
 async def delete_policy(engine_id: str, policy_id: str) -> Response:
     require_admin()
     await registry.policy.delete_policy(engine_id=engine_id, policy_id=policy_id)
+    emit_audit_event(
+        action=AuditAction.POLICY_DELETE,
+        outcome=AuditOutcome.SUCCESS,
+        resource_type=ResourceType.POLICY,
+        resource_id=policy_id,
+        metadata={"engine_id": engine_id},
+    )
     return Response(status_code=204)
 
 
