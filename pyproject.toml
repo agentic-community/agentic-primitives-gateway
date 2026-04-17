@@ -19,7 +19,7 @@ dependencies = [
 
 [project.optional-dependencies]
 mem0 = [
-    "mem0ai>=0.1.0",
+    "mem0ai>=2.0.0",
     "pymilvus>=2.4.0",
 ]
 agentcore = [
@@ -81,6 +81,7 @@ packages = ["src/agentic_primitives_gateway"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 markers = [
     "integration: real AWS integration tests (require credentials)",
     "browser: browser automation tests (require playwright)",

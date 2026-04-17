@@ -283,6 +283,6 @@ class RedisSpecStore(SpecStore[T]):
 
 def _get_redis(url: str) -> Any:
     """Create an async Redis client."""
-    import redis.asyncio as aioredis
+    import redis.asyncio
 
-    return aioredis.from_url(url, decode_responses=True)
+    return redis.asyncio.from_url(url, decode_responses=True)
