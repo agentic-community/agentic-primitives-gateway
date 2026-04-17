@@ -44,6 +44,9 @@ class _FakeProvider:
     async def boom(self) -> None:
         raise ValueError("nope")
 
+    async def not_supported(self) -> None:
+        raise NotImplementedError("backend doesn't support this")
+
     async def stream(self) -> AsyncIterator[int]:
         yield 1
         yield 2
@@ -93,6 +96,26 @@ async def test_async_call_failure_emits_provider_call_with_error(audit_router):
     assert len(events) == 1
     assert events[0].outcome == AuditOutcome.FAILURE
     assert events[0].metadata["error_type"] == "ValueError"
+
+
+@pytest.mark.asyncio
+async def test_not_implemented_emits_distinct_outcome(audit_router):
+    """``NotImplementedError`` is how providers signal "optional method not supported".
+
+    It must not pollute the ``failure`` bucket used by compliance dashboards —
+    audit records it as ``not_implemented`` and the Prometheus error counter
+    is skipped.
+    """
+    proxy = MetricsProxy(_FakeProvider(), primitive="memory", provider_name="mem0")
+    with pytest.raises(NotImplementedError):
+        await proxy.not_supported()
+
+    await asyncio.sleep(0.02)
+    events = [e for e in audit_router.events if e.action == AuditAction.PROVIDER_CALL]
+    assert len(events) == 1
+    assert events[0].outcome == AuditOutcome.NOT_IMPLEMENTED
+    # error_type is intentionally NOT set on not_implemented events.
+    assert "error_type" not in events[0].metadata
 
 
 @pytest.mark.asyncio

@@ -31,6 +31,10 @@ class AuditOutcome(StrEnum):
     SUCCESS = "success"
     FAILURE = "failure"
     ERROR = "error"
+    # Provider deliberately does not implement the requested operation.
+    # Distinct from ``failure`` so compliance dashboards don't count
+    # "backend doesn't support this optional method" as a real failure.
+    NOT_IMPLEMENTED = "not_implemented"
 
 
 class ResourceType(StrEnum):

@@ -212,6 +212,24 @@ Every audit event, log line, and response header carries `request_id` and `corre
 
 This is the intended workflow: one identifier, three lenses.
 
+## Web UI audit viewer
+
+When the `redis_stream` sink is configured (see Pattern 2 above), admins
+get an in-browser audit viewer at `/ui/audit`:
+
+- **Live tail** — SSE feed of new events as they're written, with pause/clear
+  controls and a client-side ring buffer (1000 events max).
+- **Historical browse** — paginated `XREVRANGE` over the stream, newest-first,
+  with filters for action, outcome, actor, correlation ID, resource type.
+- **Empty state** — if the sink isn't configured yet, the page shows a
+  ready-to-paste YAML snippet and a link back to this guide.
+
+The page is gated by the `admin` scope on the principal (returned by
+`GET /api/v1/auth/whoami`).  Non-admins get a 403 panel; the nav link is
+hidden entirely.  Regular users have no visibility into the audit stream
+via the UI — consumption by non-admins happens through the audit sinks
+themselves (log shipper, SIEM, etc.) according to your retention policy.
+
 ## See Also
 
 - [Governance](../concepts/governance.md) — conceptual overview

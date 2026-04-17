@@ -219,6 +219,30 @@ class MetricsProxy:
     def _record_error(self, method_name: str, duration_ms: float, exc: BaseException) -> None:
         primitive = self._primitive
         provider_name = self._provider_name
+
+        # ``NotImplementedError`` is how primitives declare "this optional
+        # operation isn't supported by my backend" (e.g. mem0 doesn't
+        # implement ``get_last_turns``).  Callers catch it and degrade
+        # gracefully; the route layer translates it to 501.  Auditing it
+        # as a generic ``failure`` would pollute compliance dashboards
+        # with non-incidents — emit ``not_implemented`` instead and skip
+        # the Prometheus error counter.
+        if isinstance(exc, NotImplementedError):
+            REQUEST_COUNT.labels(
+                primitive=primitive,
+                provider=provider_name,
+                method=method_name,
+                status="not_implemented",
+            ).inc()
+            _emit_provider_call_event(
+                primitive=primitive,
+                provider_name=provider_name,
+                method_name=method_name,
+                outcome="not_implemented",
+                duration_ms=duration_ms,
+            )
+            return
+
         REQUEST_COUNT.labels(
             primitive=primitive,
             provider=provider_name,
@@ -315,7 +339,11 @@ def _emit_provider_call_event(
     except ImportError:  # pragma: no cover
         return
 
-    audit_outcome = AuditOutcome.SUCCESS if outcome == "success" else AuditOutcome.FAILURE
+    audit_outcome = {
+        "success": AuditOutcome.SUCCESS,
+        "failure": AuditOutcome.FAILURE,
+        "not_implemented": AuditOutcome.NOT_IMPLEMENTED,
+    }.get(outcome, AuditOutcome.FAILURE)
     metadata: dict[str, Any] = {
         "primitive": primitive,
         "provider": provider_name,

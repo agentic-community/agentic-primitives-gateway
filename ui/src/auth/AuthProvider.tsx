@@ -8,7 +8,7 @@ import {
 } from "react";
 import { UserManager, type User } from "oidc-client-ts";
 import { useNavigate } from "react-router-dom";
-import { setApiAuthToken } from "../api/client";
+import { api, setApiAuthToken } from "../api/client";
 
 interface AuthConfig {
   backend: string;
@@ -30,6 +30,10 @@ interface AuthContextValue {
   logout: () => void;
   /** Auth backend type from server config. */
   backend: string;
+  /** True once the whoami check has resolved. False while loading. */
+  principalLoaded: boolean;
+  /** Whether the authenticated principal has admin scope (from /whoami). */
+  isAdmin: boolean;
 }
 
 const AuthContext = createContext<AuthContextValue>({
@@ -39,6 +43,8 @@ const AuthContext = createContext<AuthContextValue>({
   login: () => {},
   logout: () => {},
   backend: "noop",
+  principalLoaded: false,
+  isAdmin: false,
 });
 
 export function useAuth() {
@@ -58,6 +64,8 @@ export default function AuthProvider({
   const [user, setUserState] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [backend, setBackend] = useState("noop");
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [principalLoaded, setPrincipalLoaded] = useState(false);
   const managerRef = useRef<UserManager | null>(null);
   const initRef = useRef(false);
   const navigate = useNavigate();
@@ -204,9 +212,42 @@ export default function AuthProvider({
 
   const token = user?.access_token || "";
 
+  // After the initial auth phase resolves, fetch the principal to learn
+  // whether the user is an admin (used to gate the audit nav + page).
+  // Re-runs when the token changes so silent-renew picks up claim changes.
+  useEffect(() => {
+    if (loading) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const principal = await api.whoami();
+        if (cancelled) return;
+        setIsAdmin(principal.is_admin);
+      } catch {
+        // 401 on api_key/jwt with no creds, or 5xx — default to non-admin.
+        if (cancelled) return;
+        setIsAdmin(false);
+      } finally {
+        if (!cancelled) setPrincipalLoaded(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [loading, token]);
+
   return (
     <AuthContext.Provider
-      value={{ user, loading, token, login, logout, backend }}
+      value={{
+        user,
+        loading,
+        token,
+        login,
+        logout,
+        backend,
+        principalLoaded,
+        isAdmin,
+      }}
     >
       {children}
     </AuthContext.Provider>
