@@ -115,9 +115,9 @@ class RedisTasksProvider(TasksProvider):
     """Redis-backed task board with atomic Lua-based operations."""
 
     def __init__(self, redis_url: str = "redis://localhost:6379/0", **kwargs: Any) -> None:
-        import redis.asyncio as aioredis
+        import redis.asyncio
 
-        self._redis = aioredis.from_url(redis_url, decode_responses=True)
+        self._redis = redis.asyncio.from_url(redis_url, decode_responses=True)
         self._redis_url = redis_url
         self._scripts: dict[str, Any] = {}
         logger.info("RedisTasksProvider initialized (url=%s)", redis_url.split("@")[-1])

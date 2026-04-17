@@ -76,9 +76,9 @@ class RedisSessionRegistry(SessionRegistry):
     """
 
     def __init__(self, redis_url: str = "redis://localhost:6379/0", ttl: int = 3600) -> None:
-        import redis.asyncio as aioredis
+        import redis.asyncio
 
-        self._redis = aioredis.from_url(redis_url, decode_responses=True)
+        self._redis = redis.asyncio.from_url(redis_url, decode_responses=True)
         self._ttl = ttl
         logger.info("RedisSessionRegistry initialized (url=%s)", redis_url.split("@")[-1])
 

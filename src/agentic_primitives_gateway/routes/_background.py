@@ -73,9 +73,9 @@ class RedisEventStore(EventStore):
     """Redis-backed event persistence for cross-replica visibility."""
 
     def __init__(self, redis_url: str = "redis://localhost:6379/0") -> None:
-        import redis.asyncio as aioredis
+        import redis.asyncio
 
-        self._redis = aioredis.from_url(redis_url, decode_responses=True)
+        self._redis = redis.asyncio.from_url(redis_url, decode_responses=True)
         logger.info("RedisEventStore initialized (url=%s)", redis_url.split("@")[-1])
 
     @staticmethod
