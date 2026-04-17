@@ -1,14 +1,18 @@
 """Admin-only audit viewer routes.
 
-Reads the ``gateway:audit`` Redis stream written by
-:class:`RedisStreamAuditSink`.  Three endpoints:
+Backed by any :class:`AuditReader` on the configured audit router
+(today only :class:`RedisStreamAuditSink`; future Postgres / SQLite /
+object-store sinks can implement the same protocol without changes
+here).  Three endpoints:
 
-* ``GET /api/v1/audit/status`` — is the stream sink configured? what's the
-  current stream length and MAXLEN?
+* ``GET /api/v1/audit/status`` — is a reader configured?  Backend
+  metadata (stream name, MAXLEN, etc.) surfaced verbatim from
+  ``reader.describe()``.
 * ``GET /api/v1/audit/events`` — paginated historical browse via
-  ``XREVRANGE`` with in-process filtering.
-* ``GET /api/v1/audit/events/stream`` — SSE live tail via ``XREAD`` with
-  ``$`` so the connection only returns new events.
+  ``reader.list_events()`` with in-process filtering.
+* ``GET /api/v1/audit/events/stream`` — SSE live tail via
+  ``reader.tail()`` which yields new events as they land plus a
+  keepalive tick when the backend is idle.
 
 All three require the admin scope.  The enforcement middleware exempts
 this subtree so operators without pre-loaded Cedar policies can still
@@ -17,7 +21,6 @@ reach the viewer (it's admin-gated server-side anyway).
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from collections.abc import AsyncIterator
 from typing import Any
@@ -25,9 +28,9 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
+from agentic_primitives_gateway.audit.base import AuditReader
 from agentic_primitives_gateway.audit.emit import get_audit_router
 from agentic_primitives_gateway.audit.models import AuditEvent, AuditOutcome, ResourceType
-from agentic_primitives_gateway.audit.sinks.redis_stream import RedisStreamAuditSink
 from agentic_primitives_gateway.routes._helpers import require_admin
 
 logger = logging.getLogger(__name__)
@@ -38,29 +41,25 @@ router = APIRouter(
     dependencies=[Depends(require_admin)],
 )
 
-# Over-read factor: we pull up to N*5 raw entries per XRANGE call so that
+# Over-read factor: pull up to N*5 raw entries per reader call so
 # in-process filters (action, outcome, actor) rarely starve the page.
-# Capped at 2500 to bound worst-case Redis bandwidth per request.
+# Capped at 2500 to bound worst-case bandwidth per request.
 _OVERREAD_MULTIPLIER = 5
 _OVERREAD_CAP = 2500
 
-# XREAD block interval for the live stream.  Short enough that
-# keepalive frames fire roughly once a second (proxies tend to close
-# idle SSE connections around 30-60s).
-_XREAD_BLOCK_MS = 1000
 
+def _find_reader() -> AuditReader | None:
+    """First sink on the installed router that implements :class:`AuditReader`.
 
-def _find_stream_sink() -> RedisStreamAuditSink | None:
-    """Locate the first ``RedisStreamAuditSink`` on the installed router.
-
-    Multi-sink deployments (prod + archive) are rare enough that we pick
-    the first match today; revisit if operators need per-sink views.
+    Multi-reader deployments (prod stream + archive DB, say) are rare
+    enough that we pick the first match today; revisit if operators need
+    per-reader views.
     """
     router_obj = get_audit_router()
     if router_obj is None:
         return None
     for sink in router_obj.sinks:
-        if isinstance(sink, RedisStreamAuditSink):
+        if isinstance(sink, AuditReader):
             return sink
     return None
 
@@ -76,7 +75,7 @@ def _match_event(
     resource_id: str | None,
     correlation_id: str | None,
 ) -> bool:
-    """In-process filter predicate — Redis streams have no native filtering."""
+    """In-process filter predicate — backends have no native filtering."""
     if action is not None and event.action != action:
         return False
     if action_category is not None:
@@ -89,61 +88,56 @@ def _match_event(
         return False
     if resource_type is not None and event.resource_type != resource_type:
         return False
-    if resource_id is not None and event.resource_id != resource_id:
-        return False
     # A series of ``if mismatch: return False`` is more readable here than
     # collapsing the last check into a single boolean return.
+    if resource_id is not None and event.resource_id != resource_id:
+        return False
     if correlation_id is not None and event.correlation_id != correlation_id:  # noqa: SIM103
         return False
     return True
 
 
-def _parse_entry(entry_id: str, fields: dict[str, str]) -> AuditEvent | None:
-    """Decode a single stream entry's ``event`` field.
-
-    Drops entries that fail to parse — a malformed event on the stream
-    (e.g. schema v1 reader meeting a v2 entry) should not 500 the list
-    endpoint.  We log and skip.
-    """
-    raw = fields.get("event")
-    if raw is None:
-        return None
-    try:
-        return AuditEvent.model_validate_json(raw)
-    except Exception:
-        logger.warning("Audit stream entry %s failed to parse; skipping", entry_id)
-        return None
-
-
 @router.get("/status")
 async def audit_status() -> dict[str, Any]:
-    """Report whether the audit stream sink is configured and its size."""
-    sink = _find_stream_sink()
-    if sink is None:
+    """Report whether a reader-capable sink is configured and its size.
+
+    The response shape is deliberately backend-agnostic.  Fields known to
+    the UI today (``stream_sink_configured``, ``stream_name``,
+    ``length``, ``maxlen``) are kept for compatibility; additional
+    backend-specific fields returned by ``reader.describe()`` are spliced
+    in under the top-level keys the UI already renders.
+    """
+    reader = _find_reader()
+    if reader is None:
         return {
             "stream_sink_configured": False,
             "stream_name": None,
             "length": None,
             "maxlen": None,
+            "backend": None,
         }
-    try:
-        length = await sink.redis.xlen(sink.stream)
-    except Exception:
-        logger.exception("Audit status: xlen failed")
-        length = None
+    describe = reader.describe()
+    length = await reader.count()
     return {
         "stream_sink_configured": True,
-        "stream_name": sink.stream,
+        # Legacy fields preserved for the existing UI.  Readers that
+        # don't have a "stream name" can omit ``stream_name`` from
+        # ``describe()`` and the UI falls back to the backend label.
+        "stream_name": describe.get("stream_name"),
+        "maxlen": describe.get("maxlen"),
         "length": length,
-        "maxlen": sink.maxlen,
+        "backend": describe.get("backend"),
+        # Pass through any additional backend-specific metadata for
+        # forward-compatible UI rendering.
+        **{k: v for k, v in describe.items() if k not in {"stream_name", "maxlen", "backend"}},
     }
 
 
 @router.get("/events")
 async def list_audit_events(
-    start: str = Query("-", description="Stream ID to start from (inclusive). '-' = oldest, or an explicit XRANGE id."),
-    end: str = Query("+", description="Stream ID to end at (inclusive). '+' = newest."),
-    count: int = Query(100, ge=1, le=500, description="Max number of matching events to return."),
+    start: str = Query("-", description="Backend-specific cursor for the start of the window. '-' = oldest."),
+    end: str = Query("+", description="Backend-specific cursor for the end of the window. '+' = newest."),
+    count: int = Query(100, ge=1, le=500, description="Max matching events to return."),
     action: str | None = None,
     action_category: str | None = None,
     outcome: AuditOutcome | None = None,
@@ -152,34 +146,28 @@ async def list_audit_events(
     resource_id: str | None = None,
     correlation_id: str | None = None,
 ) -> dict[str, Any]:
-    """Paginated historical browse backed by ``XREVRANGE``.
+    """Paginated historical browse.
 
-    Returns newest-first.  ``next`` is the oldest entry ID we inspected;
-    pass it as ``end`` on the next request to continue paging backward.
+    Returns newest-first.  ``next`` is the cursor of the last entry the
+    reader inspected — pass it as ``end`` on the next request to continue
+    paging backward.  ``None`` indicates the window is exhausted.
     """
-    sink = _find_stream_sink()
-    if sink is None:
+    reader = _find_reader()
+    if reader is None:
         raise HTTPException(
             status_code=409,
-            detail="Audit stream sink is not configured. Enable 'redis_stream' in audit.sinks.",
+            detail=("No audit reader configured. Enable a reader-capable sink (e.g. 'redis_stream') in audit.sinks."),
         )
 
     batch = min(count * _OVERREAD_MULTIPLIER, _OVERREAD_CAP)
     try:
-        entries: list[tuple[str, dict[str, str]]] = await sink.redis.xrevrange(
-            sink.stream, max=end, min=start, count=batch
-        )
+        raw_events, next_cursor = await reader.list_events(start=start, end=end, count=batch)
     except Exception as exc:
-        logger.exception("Audit list: xrevrange failed")
-        raise HTTPException(status_code=503, detail=f"Audit stream read failed: {exc}") from None
+        logger.exception("Audit list: reader.list_events failed")
+        raise HTTPException(status_code=503, detail=f"Audit read failed: {exc}") from None
 
     matched: list[dict[str, Any]] = []
-    last_scanned_id: str | None = None
-    for entry_id, fields in entries:
-        last_scanned_id = entry_id
-        event = _parse_entry(entry_id, fields)
-        if event is None:
-            continue
+    for event in raw_events:
         if _match_event(
             event,
             action=action,
@@ -194,11 +182,7 @@ async def list_audit_events(
             if len(matched) >= count:
                 break
 
-    # ``next`` is the ID of the last entry we inspected — continuing from it
-    # means "older than this" on the subsequent request.  None when the
-    # stream is exhausted.
-    next_cursor = last_scanned_id if len(entries) == batch else None
-    return {"events": matched, "next": next_cursor, "scanned": len(entries)}
+    return {"events": matched, "next": next_cursor, "scanned": len(raw_events)}
 
 
 @router.get("/events/stream")
@@ -212,71 +196,44 @@ async def stream_audit_events(
     resource_id: str | None = None,
     correlation_id: str | None = None,
 ) -> StreamingResponse:
-    """SSE live tail — yields new events as they are XADD'd.
+    """SSE live tail — yields new events as they are written.
 
-    Starts at ``$`` (strictly-new events only).  Emits comment frames as
-    keepalives every poll interval so idle connections stay warm behind
-    reverse proxies.
+    The underlying reader's ``tail()`` yields ``AuditEvent`` on write,
+    or ``None`` as a keepalive tick — the route turns each into either
+    a ``data:`` frame or a ``: keepalive`` comment frame.
     """
-    sink = _find_stream_sink()
-    if sink is None:
+    reader = _find_reader()
+    if reader is None:
         raise HTTPException(
             status_code=409,
-            detail="Audit stream sink is not configured. Enable 'redis_stream' in audit.sinks.",
+            detail=("No audit reader configured. Enable a reader-capable sink (e.g. 'redis_stream') in audit.sinks."),
         )
 
-    redis_client = sink.redis
-    stream_name = sink.stream
-
     async def _generate() -> AsyncIterator[str]:
-        last_id: str = "$"
-        while True:
+        async for item in reader.tail():
             if await request.is_disconnected():
                 return
-            try:
-                resp = await redis_client.xread(
-                    {stream_name: last_id},
-                    count=100,
-                    block=_XREAD_BLOCK_MS,
-                )
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                logger.exception("Audit SSE: xread failed")
-                # Back off briefly so a persistent Redis outage doesn't
-                # spin the event loop.
-                await asyncio.sleep(1.0)
-                continue
-
-            if not resp:
-                # No new entries this tick — emit a comment frame to keep
-                # the SSE connection alive (ignored by clients).
+            if item is None:
+                # Reader signaled "no new events this tick" — emit an SSE
+                # keepalive so the connection stays warm behind reverse
+                # proxies and the disconnect check runs.
                 yield ": keepalive\n\n"
                 continue
-
-            for _stream, stream_entries in resp:
-                for entry_id, fields in stream_entries:
-                    last_id = entry_id
-                    event = _parse_entry(entry_id, fields)
-                    if event is None:
-                        continue
-                    if not _match_event(
-                        event,
-                        action=action,
-                        action_category=action_category,
-                        outcome=outcome,
-                        actor_id=actor_id,
-                        resource_type=resource_type,
-                        resource_id=resource_id,
-                        correlation_id=correlation_id,
-                    ):
-                        continue
-                    # Reuse the sink's JSON shape exactly (Pydantic's
-                    # ``model_dump_json`` is compact + identical to what
-                    # ``RedisStreamAuditSink`` writes) so consumers see
-                    # the same serialization regardless of which endpoint
-                    # they read from.
-                    yield f"data: {event.model_dump_json()}\n\n"
+            if not _match_event(
+                item,
+                action=action,
+                action_category=action_category,
+                outcome=outcome,
+                actor_id=actor_id,
+                resource_type=resource_type,
+                resource_id=resource_id,
+                correlation_id=correlation_id,
+            ):
+                continue
+            # Reuse the sink's JSON shape exactly (Pydantic's compact
+            # ``model_dump_json``) so consumers see identical
+            # serialization regardless of which endpoint they read from.
+            yield f"data: {item.model_dump_json()}\n\n"
 
     return StreamingResponse(
         _generate(),

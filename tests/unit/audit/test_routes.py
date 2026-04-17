@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import AsyncIterator
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -46,24 +47,64 @@ def _non_admin_backend() -> AsyncMock:
     return backend
 
 
-class _FakeRedisSink:
-    """Stand-in for RedisStreamAuditSink that exposes the same accessors."""
+class _FakeReader:
+    """In-memory :class:`AuditReader` for route tests.
 
-    def __init__(self, *, entries: list[tuple[str, dict[str, str]]] | None = None) -> None:
-        self.name = "redis_stream"
-        self._stream = "gateway:audit"
-        self._maxlen = 100_000
-        self.redis = AsyncMock()
-        self.redis.xlen = AsyncMock(return_value=len(entries or []))
-        self.redis.xrevrange = AsyncMock(return_value=list(reversed(entries or [])))
+    Mirrors the protocol shape without any Redis dependency — lets us
+    test the route layer in isolation and validates that the route code
+    is backend-agnostic.
+    """
 
-    @property
-    def stream(self) -> str:
-        return self._stream
+    def __init__(
+        self,
+        *,
+        entries: list[tuple[str, AuditEvent]] | None = None,
+        describe_extra: dict[str, Any] | None = None,
+    ) -> None:
+        self.name = "fake_reader"
+        # entries[i] = (cursor_id, event), stored oldest-first.
+        self._entries: list[tuple[str, AuditEvent]] = list(entries or [])
+        self._describe = {
+            "backend": "fake_reader",
+            "stream_name": "test:stream",
+            "maxlen": 100_000,
+            **(describe_extra or {}),
+        }
+        # Hooks the tests override to drive ``tail()`` behavior.
+        self.tail_script: list[AuditEvent | None] | None = None
 
-    @property
-    def maxlen(self) -> int:
-        return self._maxlen
+    def describe(self) -> dict[str, Any]:
+        return dict(self._describe)
+
+    async def count(self) -> int | None:
+        return len(self._entries)
+
+    async def list_events(
+        self,
+        *,
+        start: str,
+        end: str,
+        count: int,
+    ) -> tuple[list[AuditEvent], str | None]:
+        # Oldest→newest in ``self._entries``; "newest-first" view reverses it.
+        reversed_entries = list(reversed(self._entries))
+        sliced = reversed_entries[:count]
+        events = [evt for _, evt in sliced]
+        last_id = sliced[-1][0] if sliced else None
+        next_cursor = last_id if len(sliced) == count else None
+        return events, next_cursor
+
+    async def tail(self) -> AsyncIterator[AuditEvent | None]:
+        # Default: empty forever (tests override via ``tail_script``).
+        if self.tail_script is None:
+            while True:
+                yield None
+        for item in self.tail_script:
+            yield item
+        # After script exhausts, yield keepalives so the consumer can
+        # exit cleanly via request.is_disconnected.
+        while True:
+            yield None
 
     async def emit(self, event: AuditEvent) -> None:  # pragma: no cover
         pass
@@ -76,14 +117,15 @@ def _event_entry(
     outcome: AuditOutcome = AuditOutcome.SUCCESS,
     actor_id: str | None = "alice",
     correlation_id: str | None = "corr-1",
-) -> tuple[str, dict[str, str]]:
+) -> tuple[str, AuditEvent]:
+    """Build an ``(id, AuditEvent)`` pair for ``_FakeReader``."""
     event = AuditEvent(
         action=action,
         outcome=outcome,
         actor_id=actor_id,
         correlation_id=correlation_id,
     )
-    return entry_id, {"event": event.model_dump_json()}
+    return entry_id, event
 
 
 # ── whoami ─────────────────────────────────────────────────────────────
@@ -172,8 +214,9 @@ async def test_audit_status_reports_unconfigured_when_no_sink():
 
 @pytest.mark.asyncio
 async def test_audit_status_reports_configured_stream():
-    fake_sink = _FakeRedisSink(entries=[_event_entry(f"0-{i}") for i in range(1, 8)])
-    with patch.object(audit_routes, "_find_stream_sink", return_value=fake_sink):
+    # Entries oldest-first; length reported by ``reader.count()``.
+    fake = _FakeReader(entries=[_event_entry(f"0-{i}") for i in range(1, 8)])
+    with patch.object(audit_routes, "_find_reader", return_value=fake):
         app = _make_app(_admin_backend())
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -181,33 +224,45 @@ async def test_audit_status_reports_configured_stream():
             assert resp.status_code == 200
             body = resp.json()
             assert body["stream_sink_configured"] is True
-            assert body["stream_name"] == "gateway:audit"
+            assert body["stream_name"] == "test:stream"
             assert body["length"] == 7
             assert body["maxlen"] == 100_000
+            assert body["backend"] == "fake_reader"
+
+
+@pytest.mark.asyncio
+async def test_audit_status_passes_through_backend_metadata():
+    """Extra ``describe()`` fields surface as top-level keys on /status."""
+    fake = _FakeReader(describe_extra={"table_name": "audit_events", "retention_days": 90})
+    with patch.object(audit_routes, "_find_reader", return_value=fake):
+        app = _make_app(_admin_backend())
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            body = (await client.get("/api/v1/audit/status")).json()
+            assert body["table_name"] == "audit_events"
+            assert body["retention_days"] == 90
 
 
 # ── list events ────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_list_events_returns_409_when_sink_not_configured():
-    with patch.object(audit_routes, "_find_stream_sink", return_value=None):
+async def test_list_events_returns_409_when_reader_not_configured():
+    with patch.object(audit_routes, "_find_reader", return_value=None):
         app = _make_app(_admin_backend())
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get("/api/v1/audit/events")
             assert resp.status_code == 409
-            assert "not configured" in resp.json()["detail"]
+            assert "No audit reader" in resp.json()["detail"]
 
 
 @pytest.mark.asyncio
 async def test_list_events_returns_newest_first_and_parses_events():
-    # Simulate xrevrange returning two entries newest-first.
-    entries = [_event_entry("0-2", action="policy.allow"), _event_entry("0-1")]
-    fake_sink = _FakeRedisSink()
-    fake_sink.redis.xrevrange = AsyncMock(return_value=entries)
-
-    with patch.object(audit_routes, "_find_stream_sink", return_value=fake_sink):
+    # Oldest-first input; reader reverses to newest-first.
+    entries = [_event_entry("0-1"), _event_entry("0-2", action="policy.allow")]
+    fake = _FakeReader(entries=entries)
+    with patch.object(audit_routes, "_find_reader", return_value=fake):
         app = _make_app(_admin_backend())
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -216,21 +271,19 @@ async def test_list_events_returns_newest_first_and_parses_events():
             body = resp.json()
             assert [e["action"] for e in body["events"]] == ["policy.allow", "auth.success"]
             assert body["scanned"] == 2
-            # Batch under the cap → stream exhausted → next is None.
+            # Batch under the cap → exhausted → next is None.
             assert body["next"] is None
 
 
 @pytest.mark.asyncio
 async def test_list_events_filters_by_action():
     entries = [
-        _event_entry("0-3", action="policy.deny", outcome=AuditOutcome.DENY),
-        _event_entry("0-2", action="auth.failure", outcome=AuditOutcome.FAILURE),
         _event_entry("0-1", action="policy.deny", outcome=AuditOutcome.DENY),
+        _event_entry("0-2", action="auth.failure", outcome=AuditOutcome.FAILURE),
+        _event_entry("0-3", action="policy.deny", outcome=AuditOutcome.DENY),
     ]
-    fake_sink = _FakeRedisSink()
-    fake_sink.redis.xrevrange = AsyncMock(return_value=entries)
-
-    with patch.object(audit_routes, "_find_stream_sink", return_value=fake_sink):
+    fake = _FakeReader(entries=entries)
+    with patch.object(audit_routes, "_find_reader", return_value=fake):
         app = _make_app(_admin_backend())
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -244,14 +297,12 @@ async def test_list_events_filters_by_action():
 @pytest.mark.asyncio
 async def test_list_events_filters_by_category_and_outcome():
     entries = [
-        _event_entry("0-3", action="policy.deny", outcome=AuditOutcome.DENY),
+        _event_entry("0-1", action="policy.deny", outcome=AuditOutcome.DENY),
         _event_entry("0-2", action="policy.allow", outcome=AuditOutcome.ALLOW),
-        _event_entry("0-1", action="auth.failure", outcome=AuditOutcome.FAILURE),
+        _event_entry("0-3", action="auth.failure", outcome=AuditOutcome.FAILURE),
     ]
-    fake_sink = _FakeRedisSink()
-    fake_sink.redis.xrevrange = AsyncMock(return_value=entries)
-
-    with patch.object(audit_routes, "_find_stream_sink", return_value=fake_sink):
+    fake = _FakeReader(entries=entries)
+    with patch.object(audit_routes, "_find_reader", return_value=fake):
         app = _make_app(_admin_backend())
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -263,14 +314,12 @@ async def test_list_events_filters_by_category_and_outcome():
 
 @pytest.mark.asyncio
 async def test_list_events_pagination_cursor_returned_when_batch_full():
-    # Batch size is count * 5 (default count=100 → batch=500).  Give
-    # the fake exactly `batch` entries so it looks full and `next` is set.
-    batch_size = 5 * 5  # count=5 → batch=25
-    entries = [_event_entry(f"0-{i}") for i in range(batch_size, 0, -1)]
-    fake_sink = _FakeRedisSink()
-    fake_sink.redis.xrevrange = AsyncMock(return_value=entries)
-
-    with patch.object(audit_routes, "_find_stream_sink", return_value=fake_sink):
+    # Over-read batch = count * 5; give the fake exactly that many
+    # entries so the reader reports a non-None next cursor.
+    batch_size = 5 * 5
+    entries = [_event_entry(f"0-{i}") for i in range(1, batch_size + 1)]
+    fake = _FakeReader(entries=entries)
+    with patch.object(audit_routes, "_find_reader", return_value=fake):
         app = _make_app(_admin_backend())
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -280,33 +329,12 @@ async def test_list_events_pagination_cursor_returned_when_batch_full():
             assert body["next"] is not None
 
 
-@pytest.mark.asyncio
-async def test_list_events_skips_malformed_entries():
-    entries = [
-        ("0-2", {"event": "not-json-at-all"}),
-        _event_entry("0-1"),
-    ]
-    fake_sink = _FakeRedisSink()
-    fake_sink.redis.xrevrange = AsyncMock(return_value=entries)
-
-    with patch.object(audit_routes, "_find_stream_sink", return_value=fake_sink):
-        app = _make_app(_admin_backend())
-        transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get("/api/v1/audit/events")
-            assert resp.status_code == 200
-            body = resp.json()
-            # The malformed entry is silently skipped.
-            assert len(body["events"]) == 1
-            assert body["scanned"] == 2
-
-
 # ── live stream ────────────────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_stream_returns_409_when_sink_not_configured():
-    with patch.object(audit_routes, "_find_stream_sink", return_value=None):
+async def test_stream_returns_409_when_reader_not_configured():
+    with patch.object(audit_routes, "_find_reader", return_value=None):
         app = _make_app(_admin_backend())
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -316,44 +344,30 @@ async def test_stream_returns_409_when_sink_not_configured():
 
 @pytest.mark.asyncio
 async def test_stream_generator_emits_matching_events():
-    """Unit-test the generator directly so we avoid the infinite SSE loop.
+    """Verify the route consumes ``reader.tail()`` and applies filters.
 
-    The endpoint is a long-running async generator that yields "keepalive"
-    comment frames forever when no events are available — not easily tested
-    end-to-end via an ASGI client.  Calling the generator directly lets us
-    pull N events, then break out cleanly.
+    Driven by a scripted tail — the reader yields one matching and one
+    non-matching event, then the fake request signals disconnect.
     """
-    # Fresh entries batch on first xread; subsequent calls return empty.
-    fake_sink = _FakeRedisSink()
+    allow_id, allow_evt = _event_entry("0-1", action="policy.allow", outcome=AuditOutcome.ALLOW)
+    _success_id, success_evt = _event_entry("0-2", action="auth.success")
+    fake = _FakeReader()
+    fake.tail_script = [allow_evt, success_evt]
+
+    # After the route pulls both scripted events the tail falls through
+    # to yielding ``None`` keepalives; the disconnect check exits the loop.
+    fake_request = type("FakeRequest", (), {})()
     call_count = {"n": 0}
 
-    async def _xread(streams: dict[str, Any], count: int, block: int) -> Any:
+    async def _is_disconnected() -> bool:
         call_count["n"] += 1
-        if call_count["n"] == 1:
-            return [
-                (
-                    "gateway:audit",
-                    [
-                        _event_entry("0-1", action="policy.allow", outcome=AuditOutcome.ALLOW),
-                        _event_entry("0-2", action="auth.success"),
-                    ],
-                )
-            ]
-        # Once all matching events have been emitted, flip the mock
-        # disconnect flag so the generator exits cleanly.
-        fake_request.is_disconnected = AsyncMock(return_value=True)
-        return []
+        # Allow a few iterations so both events + the keepalive fire,
+        # then signal disconnect.
+        return call_count["n"] > 5
 
-    fake_sink.redis.xread = _xread
+    fake_request.is_disconnected = _is_disconnected
 
-    # Minimal request stub with an is_disconnected coroutine the endpoint
-    # polls on each tick.  ASGITransport doesn't easily expose disconnect;
-    # the generator path is the integration surface we care about.
-    fake_request = type("FakeRequest", (), {})()
-    fake_request.is_disconnected = AsyncMock(return_value=False)
-
-    with patch.object(audit_routes, "_find_stream_sink", return_value=fake_sink):
-        # Call the route function directly to obtain the StreamingResponse.
+    with patch.object(audit_routes, "_find_reader", return_value=fake):
         response = await audit_routes.stream_audit_events(
             request=fake_request,
             action="policy.allow",
@@ -367,34 +381,32 @@ async def test_stream_generator_emits_matching_events():
         chunks: list[str] = []
         async for chunk in response.body_iterator:
             chunks.append(chunk if isinstance(chunk, str) else chunk.decode())
-            # Cap collection at a few chunks to stay defensive.
             if len(chunks) >= 5:
                 break
 
     combined = "".join(chunks)
-    # Only the policy.allow event emits; auth.success gets filtered.
     assert "policy.allow" in combined
     assert "auth.success" not in combined
+    # allow_id is unused for this assertion but kept to document the fixture shape.
+    assert allow_id == "0-1"
 
 
 @pytest.mark.asyncio
 async def test_stream_generator_emits_keepalive_on_idle():
-    fake_sink = _FakeRedisSink()
-    call_count = {"n": 0}
-
-    async def _xread(streams: dict[str, Any], count: int, block: int) -> Any:
-        call_count["n"] += 1
-        if call_count["n"] >= 2:
-            # After the first keepalive, signal disconnect so the loop exits.
-            fake_request.is_disconnected = AsyncMock(return_value=True)
-        return []
-
-    fake_sink.redis.xread = _xread
+    """When the reader yields ``None``, the route emits an SSE keepalive."""
+    fake = _FakeReader()
+    fake.tail_script = []  # default behavior: yield None forever
 
     fake_request = type("FakeRequest", (), {})()
-    fake_request.is_disconnected = AsyncMock(return_value=False)
+    call_count = {"n": 0}
 
-    with patch.object(audit_routes, "_find_stream_sink", return_value=fake_sink):
+    async def _is_disconnected() -> bool:
+        call_count["n"] += 1
+        return call_count["n"] > 3
+
+    fake_request.is_disconnected = _is_disconnected
+
+    with patch.object(audit_routes, "_find_reader", return_value=fake):
         response = await audit_routes.stream_audit_events(
             request=fake_request,
             action=None,
@@ -416,14 +428,13 @@ async def test_stream_generator_emits_keepalive_on_idle():
 
 @pytest.mark.asyncio
 async def test_stream_generator_stops_on_client_disconnect():
-    """Disconnecting clients should not leave the xread loop running."""
-    fake_sink = _FakeRedisSink()
-    fake_sink.redis.xread = AsyncMock(return_value=[])
+    """The route checks disconnect inside the tail loop."""
+    fake = _FakeReader()
 
     fake_request = type("FakeRequest", (), {})()
     fake_request.is_disconnected = AsyncMock(return_value=True)
 
-    with patch.object(audit_routes, "_find_stream_sink", return_value=fake_sink):
+    with patch.object(audit_routes, "_find_reader", return_value=fake):
         response = await audit_routes.stream_audit_events(
             request=fake_request,
             action=None,
@@ -436,10 +447,8 @@ async def test_stream_generator_stops_on_client_disconnect():
         )
         chunks = [chunk async for chunk in response.body_iterator]
 
-    # Immediate disconnect → no frames emitted at all.
+    # First keepalive from tail() hits is_disconnected → immediate exit.
     assert chunks == []
-    # xread should not have been called (we check disconnect first).
-    fake_sink.redis.xread.assert_not_called()
 
 
 # ── helper parity ──────────────────────────────────────────────────────
@@ -516,7 +525,13 @@ def test_match_event_honors_each_filter_field():
 
 
 def test_parse_entry_returns_none_for_missing_event_field():
-    from agentic_primitives_gateway.routes.audit import _parse_entry
+    """The Redis sink's parser is the authoritative malformed-entry handler.
+
+    Moved here from the route layer when the ``AuditReader`` protocol
+    absorbed backend-specific parsing — the route layer only sees
+    already-parsed ``AuditEvent`` instances.
+    """
+    from agentic_primitives_gateway.audit.sinks.redis_stream import _parse_entry
 
     assert _parse_entry("0-1", {}) is None
     assert _parse_entry("0-2", {"event": "not json"}) is None

@@ -258,6 +258,48 @@ audit:
       config: {...}
 ```
 
+### Read-back via `AuditReader`
+
+The UI audit viewer (`/ui/audit`) and the `GET /api/v1/audit/{status,events,events/stream}`
+endpoints are backend-agnostic — they iterate `router.sinks` and dispatch
+against the first sink that implements the `AuditReader` protocol:
+
+```python
+from collections.abc import AsyncIterator
+from typing import Any
+
+from agentic_primitives_gateway.audit.base import AuditReader, AuditSink
+from agentic_primitives_gateway.audit.models import AuditEvent
+
+class MyDurableSink(AuditSink):
+    """Write-only.  UI viewer will ignore this sink."""
+    async def emit(self, event: AuditEvent) -> None: ...
+
+class MyQueryableSink(AuditSink):
+    """Implements AuditReader too — UI viewer can query it."""
+    async def emit(self, event: AuditEvent) -> None: ...
+
+    # AuditReader protocol — surfaces in /api/v1/audit/*.
+    def describe(self) -> dict[str, Any]:
+        return {"backend": "my_queryable", "retention_days": 90}
+
+    async def count(self) -> int | None: ...
+
+    async def list_events(
+        self, *, start: str, end: str, count: int,
+    ) -> tuple[list[AuditEvent], str | None]: ...
+
+    async def tail(self) -> AsyncIterator[AuditEvent | None]:
+        """Yield new events or ``None`` as a keepalive tick."""
+        ...
+```
+
+Today only `RedisStreamAuditSink` implements `AuditReader`.  A custom
+Postgres, SQLite, or S3-index sink can plug in without changing the
+route layer or UI.  Write-only sinks (`stdout_json`, `file`,
+`observability`, `noop`) stay silent — their audit data is consumed
+externally (SIEM, Langfuse trace explorer, etc.).
+
 ## See Also
 
 - [Governance](../concepts/governance.md) — conceptual overview
