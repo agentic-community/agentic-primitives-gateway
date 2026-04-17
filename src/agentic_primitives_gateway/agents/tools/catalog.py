@@ -8,11 +8,13 @@ binding context parameters and optionally including delegation tools.
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from functools import partial
 from typing import Any
 
+from agentic_primitives_gateway import metrics
 from agentic_primitives_gateway.agents.tools.handlers import (
     agent_create,
     agent_delegate_to,
@@ -51,6 +53,8 @@ from agentic_primitives_gateway.agents.tools.handlers import (
     tools_invoke,
     tools_search,
 )
+from agentic_primitives_gateway.audit.emit import emit_audit_event
+from agentic_primitives_gateway.audit.models import AuditAction, AuditOutcome, ResourceType
 from agentic_primitives_gateway.models.agents import PrimitiveConfig
 
 logger = logging.getLogger(__name__)
@@ -736,12 +740,46 @@ async def execute_tool(
     tool_input: dict[str, Any],
     tools: list[ToolDefinition],
 ) -> str:
-    """Execute a tool by name with the given input."""
+    """Execute a tool by name with the given input.
+
+    Emits a ``tool.call`` audit event and increments
+    ``gateway_tool_calls_total`` regardless of outcome.  The event
+    records only the tool name, duration, and (on failure) the error
+    class — never the tool input, which can legitimately carry
+    credentials or secrets passed by the LLM.
+    """
     for tool in tools:
         if tool.name == tool_name:
+            start = time.perf_counter()
+            status = "failure"
+            error_type: str | None = None
             try:
-                return await tool.handler(**tool_input)
-            except TypeError:
-                logger.warning("Tool %s handler type error, retrying with raw input", tool_name)
-                return str(await tool.handler(**tool_input))
+                try:
+                    result = await tool.handler(**tool_input)
+                except TypeError:
+                    logger.warning("Tool %s handler type error, retrying with raw input", tool_name)
+                    result = str(await tool.handler(**tool_input))
+                status = "success"
+                return result
+            except Exception as exc:
+                error_type = type(exc).__name__
+                raise
+            finally:
+                duration_ms = round((time.perf_counter() - start) * 1000.0, 3)
+                metrics.TOOL_CALLS.labels(tool_name=tool_name, status=status).inc()
+                metadata: dict[str, Any] = {
+                    "tool_name": tool_name,
+                    "primitive": tool.primitive,
+                    "duration_ms": duration_ms,
+                }
+                if error_type:
+                    metadata["error_type"] = error_type
+                emit_audit_event(
+                    action=AuditAction.TOOL_CALL,
+                    outcome=AuditOutcome.SUCCESS if status == "success" else AuditOutcome.FAILURE,
+                    resource_type=ResourceType.TOOL,
+                    resource_id=tool_name,
+                    duration_ms=duration_ms,
+                    metadata=metadata,
+                )
     raise ValueError(f"Unknown tool: {tool_name}")

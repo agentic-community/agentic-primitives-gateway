@@ -104,6 +104,12 @@ class AuditAction:
     TOOL_CALL = "tool.call"
     LLM_GENERATE = "llm.generate"
 
+    # Generic primitive invocation (emitted by MetricsProxy for every
+    # provider method call).  Useful as a universal audit trail across
+    # memory / tools / browser / code_interpreter / identity / policy /
+    # evaluations / tasks / observability.
+    PROVIDER_CALL = "provider.call"
+
     # Resource access control
     RESOURCE_ACCESS_DENIED = "resource.access.denied"
 

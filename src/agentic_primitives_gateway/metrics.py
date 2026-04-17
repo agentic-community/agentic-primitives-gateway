@@ -7,7 +7,10 @@ filter and aggregate by either dimension in a multi-provider setup.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
+import time
+from collections.abc import AsyncIterator
 from typing import Any
 
 from prometheus_client import Counter, Gauge, Histogram
@@ -119,17 +122,50 @@ ACCESS_DENIALS = Counter(
     ["resource_type"],
 )
 
+# tool_name is bounded by the static ``_TOOL_CATALOG`` plus dynamic
+# ``call_<agent>`` names for agent-as-tool delegation — still bounded by
+# the set of configured agents.
+TOOL_CALLS = Counter(
+    "gateway_tool_calls_total",
+    "Agent tool invocations.",
+    ["tool_name", "status"],  # status: success|failure
+)
+
+# model is bounded by configured LLM backends; kind: input|output|total.
+LLM_TOKENS = Counter(
+    "gateway_llm_tokens_total",
+    "LLM token usage reported by the provider (skipped when usage is not returned).",
+    ["model", "kind"],
+)
+
+LLM_REQUESTS = Counter(
+    "gateway_llm_requests_total",
+    "LLM provider invocations.",
+    ["model", "status"],  # status: success|failure
+)
+
 # Methods that represent session lifecycle transitions.
 _SESSION_START_METHODS = frozenset({"start_session"})
 _SESSION_STOP_METHODS = frozenset({"stop_session"})
 
 
 class MetricsProxy:
-    """Transparent proxy that records Prometheus metrics on every method call.
+    """Transparent proxy that records Prometheus metrics + audit events.
 
     Wraps a provider instance so that all public async methods are
     automatically instrumented with request counts, error counts, latency
     histograms, and (for session-bearing primitives) active-session gauges.
+
+    The proxy also emits a ``provider.call`` audit event per method call
+    so every primitive invocation lands in the audit stream with a
+    uniform shape (primitive, provider, method, duration, outcome).
+    Primitive-specific audit enrichment (LLM token counts, for example)
+    layers on top inside the primitive's ABC.
+
+    Handles both plain coroutines (``async def``) and async generators
+    (``async def`` + ``yield``).  The generator wrapper times the entire
+    generator lifetime, not just its creation, so streaming LLM calls
+    get accurate duration and get audited on close.
     """
 
     def __init__(self, provider: Any, primitive: str, provider_name: str) -> None:
@@ -142,7 +178,11 @@ class MetricsProxy:
     # for duck-typed access patterns.
     def __getattr__(self, name: str) -> Any:
         attr = getattr(self._provider, name)
-        if callable(attr) and asyncio.iscoroutinefunction(attr) and not name.startswith("_"):
+        if name.startswith("_") or not callable(attr):
+            return attr
+        if inspect.isasyncgenfunction(attr):
+            return self._wrap_async_gen(name, attr)
+        if asyncio.iscoroutinefunction(attr):
             return self._wrap_async(name, attr)
         return attr
 
@@ -150,11 +190,64 @@ class MetricsProxy:
     def __isinstance_check__(self, cls: type) -> bool:  # pragma: no cover
         return isinstance(self._provider, cls)
 
+    # ── Shared recording helpers ────────────────────────────────────
+
+    def _record_success(self, method_name: str, duration_ms: float) -> None:
+        primitive = self._primitive
+        provider_name = self._provider_name
+        REQUEST_COUNT.labels(
+            primitive=primitive,
+            provider=provider_name,
+            method=method_name,
+            status="success",
+        ).inc()
+
+        # Track active sessions for browser / code_interpreter.
+        if method_name in _SESSION_START_METHODS:
+            ACTIVE_SESSIONS.labels(primitive=primitive, provider=provider_name).inc()
+        elif method_name in _SESSION_STOP_METHODS:
+            ACTIVE_SESSIONS.labels(primitive=primitive, provider=provider_name).dec()
+
+        _emit_provider_call_event(
+            primitive=primitive,
+            provider_name=provider_name,
+            method_name=method_name,
+            outcome="success",
+            duration_ms=duration_ms,
+        )
+
+    def _record_error(self, method_name: str, duration_ms: float, exc: BaseException) -> None:
+        primitive = self._primitive
+        provider_name = self._provider_name
+        REQUEST_COUNT.labels(
+            primitive=primitive,
+            provider=provider_name,
+            method=method_name,
+            status="error",
+        ).inc()
+        ERROR_COUNT.labels(
+            primitive=primitive,
+            provider=provider_name,
+            method=method_name,
+            error_type=type(exc).__name__,
+        ).inc()
+        _emit_provider_call_event(
+            primitive=primitive,
+            provider_name=provider_name,
+            method_name=method_name,
+            outcome="failure",
+            duration_ms=duration_ms,
+            error_type=type(exc).__name__,
+        )
+
+    # ── Wrappers ────────────────────────────────────────────────────
+
     def _wrap_async(self, method_name: str, func: Any) -> Any:
         primitive = self._primitive
         provider_name = self._provider_name
 
         async def wrapper(*args: Any, **kwargs: Any) -> Any:
+            start = time.perf_counter()
             with REQUEST_DURATION.labels(
                 primitive=primitive,
                 provider=provider_name,
@@ -162,39 +255,79 @@ class MetricsProxy:
             ).time():
                 try:
                     result = await func(*args, **kwargs)
-                    REQUEST_COUNT.labels(
-                        primitive=primitive,
-                        provider=provider_name,
-                        method=method_name,
-                        status="success",
-                    ).inc()
-
-                    # Track active sessions for browser / code_interpreter.
-                    if method_name in _SESSION_START_METHODS:
-                        ACTIVE_SESSIONS.labels(
-                            primitive=primitive,
-                            provider=provider_name,
-                        ).inc()
-                    elif method_name in _SESSION_STOP_METHODS:
-                        ACTIVE_SESSIONS.labels(
-                            primitive=primitive,
-                            provider=provider_name,
-                        ).dec()
-
-                    return result
                 except Exception as exc:
-                    REQUEST_COUNT.labels(
-                        primitive=primitive,
-                        provider=provider_name,
-                        method=method_name,
-                        status="error",
-                    ).inc()
-                    ERROR_COUNT.labels(
-                        primitive=primitive,
-                        provider=provider_name,
-                        method=method_name,
-                        error_type=type(exc).__name__,
-                    ).inc()
+                    self._record_error(method_name, (time.perf_counter() - start) * 1000.0, exc)
                     raise
+                self._record_success(method_name, (time.perf_counter() - start) * 1000.0)
+                return result
 
         return wrapper
+
+    def _wrap_async_gen(self, method_name: str, func: Any) -> Any:
+        primitive = self._primitive
+        provider_name = self._provider_name
+        record_success = self._record_success
+        record_error = self._record_error
+
+        async def wrapper(*args: Any, **kwargs: Any) -> AsyncIterator[Any]:
+            start = time.perf_counter()
+            timer = REQUEST_DURATION.labels(
+                primitive=primitive,
+                provider=provider_name,
+                method=method_name,
+            ).time()
+            timer.__enter__()
+            gen = func(*args, **kwargs)
+            try:
+                async for item in gen:
+                    yield item
+            except Exception as exc:
+                timer.__exit__(type(exc), exc, None)
+                record_error(method_name, (time.perf_counter() - start) * 1000.0, exc)
+                raise
+            else:
+                timer.__exit__(None, None, None)
+                record_success(method_name, (time.perf_counter() - start) * 1000.0)
+
+        return wrapper
+
+
+def _emit_provider_call_event(
+    *,
+    primitive: str,
+    provider_name: str,
+    method_name: str,
+    outcome: str,
+    duration_ms: float,
+    error_type: str | None = None,
+) -> None:
+    """Emit a generic ``provider.call`` audit event.
+
+    Deferred import: ``metrics`` is imported extremely early in the
+    process lifecycle (before ``audit.emit``), so the top-level
+    ``metrics.py`` module must not itself import the audit subsystem.
+    Instead, we resolve the helper lazily — which is also a no-op when
+    the audit router isn't installed (tests, library use).
+    """
+    try:
+        from agentic_primitives_gateway.audit.emit import emit_audit_event
+        from agentic_primitives_gateway.audit.models import AuditAction, AuditOutcome
+    except ImportError:  # pragma: no cover
+        return
+
+    audit_outcome = AuditOutcome.SUCCESS if outcome == "success" else AuditOutcome.FAILURE
+    metadata: dict[str, Any] = {
+        "primitive": primitive,
+        "provider": provider_name,
+        "method": method_name,
+        "duration_ms": round(duration_ms, 3),
+    }
+    if error_type:
+        metadata["error_type"] = error_type
+    emit_audit_event(
+        action=AuditAction.PROVIDER_CALL,
+        outcome=audit_outcome,
+        resource_id=f"{primitive}/{provider_name}",
+        duration_ms=round(duration_ms, 3),
+        metadata=metadata,
+    )
