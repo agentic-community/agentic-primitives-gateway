@@ -68,6 +68,14 @@ export function useAuditStream(
       return;
     }
 
+    // Filter changed (or first connect): start with a fresh buffer so the
+    // user only sees events matching the new filter.  The server also
+    // applies the filter on its side, but leftover events from the old
+    // filter would linger in the buffer until the 1000-cap pushed them
+    // out — visually indistinguishable from "the filter didn't work".
+    setEvents([]);
+    setDropped(0);
+
     const controller = new AbortController();
     let cancelled = false;
     setStatus("connecting");
