@@ -178,7 +178,7 @@ class Mem0MemoryProvider(SyncRunnerMixin, MemoryProvider):
 
         def _search():
             with _with_aws_env(creds):
-                return client.search(query, user_id=namespace, limit=top_k)
+                return client.search(query, filters={"user_id": namespace}, limit=top_k)
 
         results = await self._run_sync(_search)
 
@@ -221,7 +221,7 @@ class Mem0MemoryProvider(SyncRunnerMixin, MemoryProvider):
 
         def _list():
             with _with_aws_env(creds):
-                return client.get_all(user_id=namespace)
+                return client.get_all(filters={"user_id": namespace})
 
         all_memories = await self._run_sync(_list)
 
@@ -243,7 +243,7 @@ class Mem0MemoryProvider(SyncRunnerMixin, MemoryProvider):
     async def healthcheck(self) -> bool:
         try:
             client = self._get_client()
-            await self._run_sync(client.get_all, user_id="__healthcheck__")
+            await self._run_sync(client.get_all, filters={"user_id": "__healthcheck__"})
             return True
         except Exception:
             logger.exception("Mem0 healthcheck failed")
@@ -251,7 +251,7 @@ class Mem0MemoryProvider(SyncRunnerMixin, MemoryProvider):
 
     @staticmethod
     def _find_by_key_sync(client: Any, namespace: str, key: str) -> dict[str, Any] | None:
-        all_memories = client.get_all(user_id=namespace)
+        all_memories = client.get_all(filters={"user_id": namespace})
         entries = all_memories.get("results", all_memories) if isinstance(all_memories, dict) else all_memories
         for entry in entries:
             if entry.get("metadata", {}).get(Mem0MemoryProvider._KEY_FIELD) == key:

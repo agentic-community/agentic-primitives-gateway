@@ -128,6 +128,7 @@ class TestMem0MemoryProvider:
 
         result = await provider.retrieve(namespace="ns", key="missing")
         assert result is None
+        provider._client.get_all.assert_called_with(filters={"user_id": "ns"})
 
     @pytest.mark.asyncio
     async def test_search(self, mock_get_creds):
@@ -151,6 +152,7 @@ class TestMem0MemoryProvider:
 
         assert len(results) == 1
         assert results[0].score == 0.9
+        provider._client.search.assert_called_once_with("test", filters={"user_id": "ns"}, limit=5)
 
     @pytest.mark.asyncio
     async def test_search_list_format(self, mock_get_creds):

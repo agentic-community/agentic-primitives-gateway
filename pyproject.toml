@@ -19,7 +19,7 @@ dependencies = [
 
 [project.optional-dependencies]
 mem0 = [
-    "mem0ai>=0.1.0",
+    "mem0ai>=2.0.0",
     "pymilvus>=2.4.0",
 ]
 agentcore = [
