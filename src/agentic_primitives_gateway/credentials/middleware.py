@@ -8,6 +8,9 @@ from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.responses import Response
 
+from agentic_primitives_gateway import metrics
+from agentic_primitives_gateway.audit.emit import emit_audit_event
+from agentic_primitives_gateway.audit.models import AuditAction, AuditOutcome, ResourceType
 from agentic_primitives_gateway.context import (
     get_authenticated_principal,
     get_aws_credentials,
@@ -69,6 +72,22 @@ class CredentialResolutionMiddleware(BaseHTTPMiddleware):
         # Populate service credentials if not already set by headers
         if not has_service_headers and resolved.service_credentials:
             set_service_credentials(resolved.service_credentials)
+
+        # Audit what was resolved (names only — never values).
+        resolved_services: list[str] = (
+            sorted(resolved.service_credentials.keys()) if resolved.service_credentials else []
+        )
+        if resolved.aws is not None:
+            resolved_services.append("aws")
+        if resolved_services:
+            emit_audit_event(
+                action=AuditAction.CREDENTIAL_RESOLVE,
+                outcome=AuditOutcome.SUCCESS,
+                resource_type=ResourceType.CREDENTIAL,
+                metadata={"services": resolved_services, "source": "oidc"},
+            )
+            for service in resolved_services:
+                metrics.CREDENTIAL_OPS.labels(op="resolve", service=service, outcome="success").inc()
 
         return await call_next(request)
 

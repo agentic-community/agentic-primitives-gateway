@@ -54,7 +54,8 @@ cedar = [
     "cedarpy>=4.0.0",
 ]
 redis = [
-    "redis[hiredis]>=5.0.0",
+    # 5.0.1 introduced async ``aclose()``; use it instead of deprecated ``close()``.
+    "redis[hiredis]>=5.0.1",
 ]
 jwt = [
     "PyJWT[crypto]>=2.8.0",

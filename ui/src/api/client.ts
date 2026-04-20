@@ -3,6 +3,9 @@ import type {
   AgentMemoryResponse,
   AgentSpec,
   AgentToolsResponse,
+  AuditFilters,
+  AuditListResponse,
+  AuditStatus,
   ChatRequest,
   ChatResponse,
   CreateAgentRequest,
@@ -23,6 +26,7 @@ import type {
   ToolCatalogResponse,
   UpdateAgentRequest,
   UpdateTeamRequest,
+  WhoAmIResponse,
 } from "./types";
 
 class ApiError extends Error {
@@ -310,6 +314,27 @@ export const api = {
     fetch(`/api/v1/policy/engines/${engineId}/policies/${policyId}`, {
       method: "DELETE",
     }),
+
+  // Auth / whoami
+  whoami: () => request<WhoAmIResponse>("/api/v1/auth/whoami"),
+
+  // Audit (admin-only)
+  auditStatus: () => request<AuditStatus>("/api/v1/audit/status"),
+  listAuditEvents: (filters: AuditFilters = {}, start = "-", end = "+", count = 100) => {
+    const qs = new URLSearchParams({ start, end, count: String(count) });
+    for (const [k, v] of Object.entries(filters)) {
+      if (v !== undefined && v !== "") qs.set(k, String(v));
+    }
+    return request<AuditListResponse>(`/api/v1/audit/events?${qs}`);
+  },
+  streamAuditEvents: (filters: AuditFilters = {}, signal?: AbortSignal) => {
+    const qs = new URLSearchParams();
+    for (const [k, v] of Object.entries(filters)) {
+      if (v !== undefined && v !== "") qs.set(k, String(v));
+    }
+    const path = `/api/v1/audit/events/stream${qs.toString() ? "?" + qs : ""}`;
+    return sseGetStream(path, signal);
+  },
 };
 
 /** Check if an error message indicates missing user credentials. */

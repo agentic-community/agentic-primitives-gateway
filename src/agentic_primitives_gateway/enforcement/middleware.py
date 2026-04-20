@@ -8,6 +8,9 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
+from agentic_primitives_gateway import metrics
+from agentic_primitives_gateway.audit.emit import emit_audit_event
+from agentic_primitives_gateway.audit.models import AuditAction, AuditOutcome
 from agentic_primitives_gateway.context import get_authenticated_principal
 from agentic_primitives_gateway.enforcement.base import PolicyEnforcer
 
@@ -24,6 +27,7 @@ _EXEMPT_PREFIXES = (
     "/ui",
     "/api/v1/providers",
     "/api/v1/policy",
+    "/api/v1/auth/whoami",
     "/auth/config",
 )
 
@@ -194,6 +198,8 @@ class PolicyEnforcementMiddleware(BaseHTTPMiddleware):
             resource=resource,
         )
 
+        action_category = action.split(":", 1)[0] if ":" in action else action
+
         if not allowed:
             logger.warning(
                 "Policy denied: principal=%s action=%s resource=%s",
@@ -201,9 +207,28 @@ class PolicyEnforcementMiddleware(BaseHTTPMiddleware):
                 action,
                 resource,
             )
+            emit_audit_event(
+                action=AuditAction.POLICY_DENY,
+                outcome=AuditOutcome.DENY,
+                resource_id=resource,
+                reason="cedar_deny",
+                http_method=request.method,
+                http_path=path,
+                metadata={"cedar_principal": principal, "cedar_action": action},
+            )
+            metrics.POLICY_DECISIONS.labels(decision="deny", action_category=action_category).inc()
             return JSONResponse(
                 status_code=403,
                 content={"detail": "Forbidden by policy"},
             )
 
+        emit_audit_event(
+            action=AuditAction.POLICY_ALLOW,
+            outcome=AuditOutcome.ALLOW,
+            resource_id=resource,
+            http_method=request.method,
+            http_path=path,
+            metadata={"cedar_principal": principal, "cedar_action": action},
+        )
+        metrics.POLICY_DECISIONS.labels(decision="allow", action_category=action_category).inc()
         return await call_next(request)

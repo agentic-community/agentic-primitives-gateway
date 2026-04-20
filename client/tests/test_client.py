@@ -1183,6 +1183,28 @@ class TestMissingMethods:
             assert result["backend"] == "noop"
 
     @pytest.mark.asyncio
+    async def test_whoami(self, make_client) -> None:
+        async with make_client() as client:
+            result = await client.whoami()
+            assert result["id"] == "noop"
+            assert result["is_admin"] is True
+
+    @pytest.mark.asyncio
+    async def test_audit_status(self, make_client) -> None:
+        async with make_client() as client:
+            result = await client.audit_status()
+            assert result["stream_sink_configured"] is True
+            assert result["stream_name"] == "gateway:audit"
+            assert result["length"] == 3
+
+    @pytest.mark.asyncio
+    async def test_list_audit_events(self, make_client) -> None:
+        async with make_client() as client:
+            result = await client.list_audit_events(count=10, outcome="success")
+            assert result["events"][0]["action"] == "auth.success"
+            assert result["next"] is None
+
+    @pytest.mark.asyncio
     async def test_list_providers(self, make_client) -> None:
         async with make_client() as client:
             result = await client.list_providers()

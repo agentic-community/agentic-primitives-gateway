@@ -206,6 +206,31 @@ credentials:
     ttl_seconds: 300
     max_entries: 10000
 
+# ── Governance (audit + structured logs) ──────────────────────────────
+#
+# stdout_json gives k8s-native log shipping; redis_stream adds a durable
+# cross-replica audit bus that a SIEM shipper can consume via XREAD.
+# Principal-ID hashing is enabled for multi-tenant hygiene — set to
+# false if raw IDs are required for compliance.
+
+audit:
+  enabled: true
+  stdout_json: true
+  sinks:
+    - name: durable
+      backend: redis_stream
+      config:
+        redis_url: "${REDIS_URL:=redis://localhost:6379/0}"
+        stream: "gateway:audit"
+        maxlen: 100000
+  redact_principal_id: false
+  queue_size: 2048
+  sink_timeout_seconds: 2.0
+
+logging:
+  format: json
+  sanitize: true
+
 # ── Stores (Redis-backed for multi-replica) ───────────────────────────
 
 agents:

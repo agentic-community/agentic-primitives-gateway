@@ -14,8 +14,11 @@ const links = [
   { to: "/docs", label: "API Docs", external: true },
 ];
 
+// Links rendered only for principals with the admin scope (via /whoami).
+const adminLinks = [{ to: "/audit", label: "Audit", end: false }];
+
 export default function Sidebar() {
-  const { user, logout, backend } = useAuth();
+  const { user, logout, backend, isAdmin } = useAuth();
   const username = user?.profile?.preferred_username || user?.profile?.name || user?.profile?.sub || "";
   const location = useLocation();
   const activeAgent = decodeURIComponent(location.pathname.match(/\/agents\/([^/]+)\/chat/)?.[1] ?? "");
@@ -99,6 +102,30 @@ export default function Sidebar() {
               </span>
             </NavLink>
           ),
+        )}
+        {isAdmin && (
+          <>
+            <div className="mt-3 px-3 pb-1 text-[10px] font-mono uppercase tracking-wider text-gray-400 dark:text-gray-500">
+              Admin
+            </div>
+            {adminLinks.map((link) => (
+              <NavLink
+                key={link.to}
+                to={link.to}
+                end={link.end}
+                className={({ isActive }) =>
+                  cn(
+                    "block rounded px-3 py-1.5 text-sm",
+                    isActive
+                      ? "bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 font-medium"
+                      : "text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-800",
+                  )
+                }
+              >
+                {link.label}
+              </NavLink>
+            ))}
+          </>
         )}
       </nav>
 

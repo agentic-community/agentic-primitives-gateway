@@ -274,3 +274,89 @@ export interface CredentialStatusResponse {
   server_credentials: string; // "never" | "fallback" | "always"
   required_credentials: string[]; // e.g. ["aws", "langfuse"]
 }
+
+// ── Auth / Audit ─────────────────────────────────────────────────────
+
+export interface WhoAmIResponse {
+  id: string;
+  type: string;
+  is_admin: boolean;
+  groups: string[];
+  scopes: string[];
+}
+
+// Runtime-iterable lists for the two audit enums.  Deriving the TS union
+// type from these arrays (via ``typeof ... [number]``) keeps the type and
+// the UI dropdowns in lockstep — add a value here and the compiler
+// enforces exhaustive handling everywhere it's used.  Mirror the server
+// ``AuditOutcome`` / ``ResourceType`` StrEnums in ``audit/models.py``.
+export const AUDIT_OUTCOMES = [
+  "allow",
+  "deny",
+  "success",
+  "failure",
+  "error",
+  "not_implemented",
+] as const;
+export type AuditOutcome = (typeof AUDIT_OUTCOMES)[number];
+
+export const AUDIT_RESOURCE_TYPES = [
+  "agent",
+  "team",
+  "policy",
+  "policy_engine",
+  "credential",
+  "session",
+  "tool",
+  "http",
+  "memory",
+  "user",
+  "llm",
+] as const;
+export type AuditResourceType = (typeof AUDIT_RESOURCE_TYPES)[number];
+
+export interface AuditEvent {
+  schema_version: "1";
+  event_id: string;
+  timestamp: string;
+  action: string;
+  outcome: AuditOutcome;
+  actor_id: string | null;
+  actor_type: string | null;
+  actor_groups: string[];
+  resource_type: AuditResourceType | null;
+  resource_id: string | null;
+  request_id: string | null;
+  correlation_id: string | null;
+  source_ip: string | null;
+  user_agent: string | null;
+  http_method: string | null;
+  http_path: string | null;
+  http_status: number | null;
+  duration_ms: number | null;
+  reason: string | null;
+  metadata: Record<string, unknown>;
+}
+
+export interface AuditStatus {
+  stream_sink_configured: boolean;
+  stream_name: string | null;
+  length: number | null;
+  maxlen: number | null;
+}
+
+export interface AuditListResponse {
+  events: AuditEvent[];
+  next: string | null;
+  scanned: number;
+}
+
+export interface AuditFilters {
+  action?: string;
+  action_category?: string;
+  outcome?: AuditOutcome;
+  actor_id?: string;
+  resource_type?: AuditResourceType;
+  resource_id?: string;
+  correlation_id?: string;
+}

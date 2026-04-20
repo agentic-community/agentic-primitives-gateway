@@ -6,7 +6,31 @@ from typing import Any
 
 
 class LLMProvider(ABC):
-    """Abstract base class for LLM gateway providers."""
+    """Abstract base class for LLM gateway providers.
+
+    The ABC automatically wraps subclass ``route_request`` and
+    ``route_request_stream`` methods with audit emission and LLM-specific
+    Prometheus metrics (``gateway_llm_requests_total``, ``gateway_llm_tokens_total``)
+    via ``__init_subclass__``.  Provider subclasses therefore do not need
+    to emit anything themselves — the enrichment is inherited.
+    """
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        # Local import — avoids a top-level cycle between providers and the
+        # audit subsystem (providers are imported extremely early).
+        from agentic_primitives_gateway.primitives.llm._audit import (
+            wrap_route_request,
+            wrap_route_request_stream,
+        )
+
+        own = cls.__dict__
+        if "route_request" in own:
+            cls.route_request = wrap_route_request(own["route_request"])  # type: ignore[method-assign]
+        if "route_request_stream" in own:
+            cls.route_request_stream = wrap_route_request_stream(  # type: ignore[method-assign]
+                own["route_request_stream"]
+            )
 
     @abstractmethod
     async def route_request(self, model_request: dict[str, Any]) -> dict[str, Any]: ...

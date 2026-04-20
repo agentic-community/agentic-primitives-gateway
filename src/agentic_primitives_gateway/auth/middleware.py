@@ -8,6 +8,9 @@ from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.responses import JSONResponse, Response
 
+from agentic_primitives_gateway import metrics
+from agentic_primitives_gateway.audit.emit import emit_audit_event
+from agentic_primitives_gateway.audit.models import AuditAction, AuditOutcome
 from agentic_primitives_gateway.auth.base import AuthBackend
 from agentic_primitives_gateway.auth.models import ANONYMOUS_PRINCIPAL, NOOP_PRINCIPAL
 from agentic_primitives_gateway.context import set_authenticated_principal
@@ -56,6 +59,7 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
         # No backend configured — noop pass-through (dev mode, full access)
         if backend is None:
             set_authenticated_principal(NOOP_PRINCIPAL)
+            request.state.principal = NOOP_PRINCIPAL
             return await call_next(request)
 
         # Exempt paths get anonymous principal (non-admin) without validation
@@ -63,16 +67,32 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
         for prefix in AUTH_EXEMPT_PREFIXES:
             if path.startswith(prefix):
                 set_authenticated_principal(ANONYMOUS_PRINCIPAL)
+                request.state.principal = ANONYMOUS_PRINCIPAL
                 return await call_next(request)
         for suffix in AUTH_EXEMPT_SUFFIXES:
             if path.endswith(suffix):
                 set_authenticated_principal(ANONYMOUS_PRINCIPAL)
+                request.state.principal = ANONYMOUS_PRINCIPAL
                 return await call_next(request)
 
         principal = await backend.authenticate(request)
+        backend_name = type(backend).__name__
 
         if principal is None:
             logger.warning("Authentication failed for %s %s", request.method, path)
+            emit_audit_event(
+                action=AuditAction.AUTH_FAILURE,
+                outcome=AuditOutcome.FAILURE,
+                reason="invalid_or_missing_credentials",
+                http_method=request.method,
+                http_path=path,
+                metadata={"backend": backend_name},
+            )
+            metrics.AUTH_EVENTS.labels(
+                backend=backend_name,
+                outcome="failure",
+                principal_type="unknown",
+            ).inc()
             return JSONResponse(
                 status_code=401,
                 content={"detail": "Invalid or missing credentials"},
@@ -80,4 +100,17 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
             )
 
         set_authenticated_principal(principal)
+        request.state.principal = principal
+        emit_audit_event(
+            action=AuditAction.AUTH_SUCCESS,
+            outcome=AuditOutcome.SUCCESS,
+            http_method=request.method,
+            http_path=path,
+            metadata={"backend": backend_name},
+        )
+        metrics.AUTH_EVENTS.labels(
+            backend=backend_name,
+            outcome="success",
+            principal_type=principal.type,
+        ).inc()
         return await call_next(request)

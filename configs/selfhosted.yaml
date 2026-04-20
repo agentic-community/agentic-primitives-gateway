@@ -30,6 +30,26 @@
 
 allow_server_credentials: fallback
 
+## Governance — production-recommended audit setup.
+## stdout_json is k8s-native (piped to Loki/Datadog/CloudWatch by your log
+## collector); redis_stream gives a durable cross-replica bus that a SIEM
+## shipper can consume via XREAD. See docs/guides/observability.md.
+audit:
+  enabled: true
+  stdout_json: true
+  sinks:
+    - name: durable
+      backend: redis_stream
+      config:
+        redis_url: "${REDIS_URL:=redis://localhost:6379/0}"
+        stream: "gateway:audit"
+        maxlen: 100000
+
+## Structured JSON logs with secret-pattern scrubbing on by default.
+logging:
+  format: json
+  sanitize: true
+
 providers:
   # Memory: mem0 with Milvus vector store
   memory:

@@ -1,8 +1,10 @@
 import { BrowserRouter, Route, Routes } from "react-router-dom";
 import AuthProvider, { useAuth } from "./auth/AuthProvider";
+import AdminGuard from "./components/AdminGuard";
 import Layout from "./components/Layout";
 import AgentChat from "./pages/AgentChat";
 import AgentList from "./pages/AgentList";
+import Audit from "./pages/Audit";
 import Dashboard from "./pages/Dashboard";
 import PolicyManager from "./pages/PolicyManager";
 import PrimitiveExplorer from "./pages/PrimitiveExplorer";
@@ -46,6 +48,14 @@ export default function App() {
                 <Route path="policies" element={<PolicyManager />} />
                 <Route path="explorer" element={<PrimitiveExplorer />} />
                 <Route path="settings" element={<Settings />} />
+                <Route
+                  path="audit"
+                  element={
+                    <AdminGuard>
+                      <Audit />
+                    </AdminGuard>
+                  }
+                />
               </Route>
               {/* Callback route is handled inside AuthProvider before rendering */}
               <Route path="callback" element={<CallbackPage />} />

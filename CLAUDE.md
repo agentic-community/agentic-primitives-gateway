@@ -18,6 +18,7 @@ FastAPI service providing pluggable primitives (memory, observability, llm, tool
   - `enforcement/` — Policy enforcement layer: `base.py` (PolicyEnforcer ABC), `noop.py` (default allow-all), `cedar.py` (local Cedar evaluation via cedarpy), `middleware.py` (Starlette middleware mapping requests to Cedar principals/actions/resources)
   - `auth/` — Authentication subsystem: `base.py` (AuthBackend ABC), `models.py` (AuthenticatedPrincipal), `noop.py`, `api_key.py`, `jwt.py` (OIDC/JWKS), `middleware.py` (AuthenticationMiddleware), `access.py` (check_access, require_access)
   - `credentials/` — Per-user credential resolution subsystem: `base.py` (CredentialResolver ABC), `models.py` (ResolvedCredentials, APG_PREFIX), `noop.py` (default no-op), `oidc.py` (OIDC resolver with Admin API + userinfo fallback, convention-based apg.* mapping), `cache.py` (in-memory LRU), `middleware.py` (CredentialResolutionMiddleware), `writer/` (CredentialWriter ABC, `noop.py`, `keycloak.py` with Admin API + User Profile auto-declaration)
+  - `audit/` — Governance event subsystem: `base.py` (AuditSink ABC), `models.py` (AuditEvent + AuditAction taxonomy), `router.py` (fan-out router with per-sink async queues + graceful shutdown), `emit.py` (`emit_audit_event()` helper), `middleware.py` (emits `http.request` events), `redaction.py` (metadata + log-line secret scrubbing), `log_formatter.py` (JSON formatter + sanitization filter), `sinks/{noop,stdout_json}.py` (Phase A; file/redis/observability sinks follow)
   - `routes/_background.py` — `BackgroundRunManager` (asyncio.Task + Queue decoupling), `EventStore` ABC, `RedisEventStore`, `sse_response()` helper, `reconnect_event_generator()` for SSE reconnection
   - `agents/` — Declarative agent orchestration
     - `runner.py` — `AgentRunner` with `_RunContext` dataclass; `run()` (non-streaming) and `run_stream()` (SSE) share init/request/finalize via helpers
@@ -145,6 +146,12 @@ pre-commit run --all-files # Run all hooks on entire repo
 - **ServerCredentialMode** — `allow_server_credentials` is a three-way enum (`never`/`fallback`/`always`).
 - **Keycloak credential writer** — Uses the Admin REST API via a service account (requires `manage-users` + `manage-realm` roles). Auto-declares new `apg.*` attributes in Keycloak's User Profile config. Falls back to Account API if admin creds unavailable. Only reads/writes `apg.*` attributes.
 - **Credential resolver Admin API mode** — When admin credentials are configured, the OIDC resolver reads user attributes directly from the Keycloak Admin API instead of userinfo. This bypasses the need for protocol mappers. Falls back to userinfo when admin creds are unavailable.
+- **Audit is NOT a primitive** — `audit/` is a separate subsystem (like `auth/`, `enforcement/`, `credentials/`). A single `AuditRouter` fans `AuditEvent` records out to N pluggable `AuditSink`s with per-sink async queues + isolated failure semantics + graceful shutdown. `StdoutJsonSink` is always-on by default (k8s-native log shipping story). Call sites use `emit_audit_event(action, outcome, …)` which auto-fills `request_id` / `correlation_id` / actor fields from contextvars. `AUDIT_SINK_ALIASES` in `config.py` map short names to sink classes. Audit events and app logs are separate streams (stdout JSON sink writes directly, not through `logging`).
+- **Audit at the ABC/proxy boundary, not per-provider** — primitive call audit lives at cross-cutting chokepoints, not duplicated in every provider. `MetricsProxy` in `metrics.py` emits a generic `provider.call` event for every wrapped primitive method (both coroutines and async generators) alongside its Prometheus metrics. LLM-specific enrichment (`llm.generate` + `gateway_llm_requests_total` + `gateway_llm_tokens_total`) is injected by `LLMProvider.__init_subclass__` via `primitives/llm/_audit.py`, which wraps `route_request` / `route_request_stream` on every subclass automatically. Provider implementations stay clean.
+- **Correlation ID** — `correlation_id` contextvar in `context.py` is set by `RequestContextMiddleware` from the `x-correlation-id` header (falling back to `request_id`). Returned as a response header. Threaded across sub-agent + background runs to stitch multi-step workflows together in audit + logs.
+- **JSON logs + sanitization** — `logging.format: json` enables `JsonLogFormatter` in `audit/log_formatter.py`; `logging.sanitize: true` (default) attaches `LogSanitizationFilter` that scrubs Bearer tokens, AWS access keys, JWTs, and `apg.*` key=value pairs from application log lines.
+- **Audit UI viewer** — `/ui/audit` (admin-only) renders audit events with live tail + paginated history. Backed by `routes/audit.py` (`GET /api/v1/audit/{status,events,events/stream}`). Admin-gating comes from `GET /api/v1/auth/whoami`; React uses `AdminGuard` + sidebar conditional rendering. Empty state points at `docs/guides/observability.md` when no reader is configured.
+- **Audit read/write split (AuditReader protocol)** — writing is `AuditSink` (every backend); reading is the optional `AuditReader` protocol in `audit/base.py` (`describe` / `count` / `list_events` / `tail`). `RedisStreamAuditSink` implements both; write-only sinks (stdout, file, observability) don't. `routes/audit.py` picks the first `isinstance(sink, AuditReader)` from `router.sinks` — backend-agnostic so a future `PostgresAuditSink` or `SQLiteAuditSink` plugs in without route changes. `tail()` yields `AuditEvent | None` (None = keepalive tick); the route translates these to SSE `data:` / `: keepalive` frames.
 
 ## Style
 
@@ -156,6 +163,57 @@ pre-commit run --all-files # Run all hooks on entire repo
 - Pre-commit hooks enforce Ruff on every commit: `pre-commit install`
 - `make lint` to check, `make format` to auto-fix, `make typecheck` for mypy
 - `auth/` follows the same subsystem patterns as `enforcement/` (ABC + pluggable backends + middleware)
+
+## Security Principles
+
+This project follows a **security-first** design. Every feature must maintain these properties.
+
+### Authentication & Authorization
+
+- **All routes require authentication** unless explicitly exempt. New routers MUST use `dependencies=[Depends(require_principal)]`. New endpoints MUST call `require_principal()` or use a router-level dependency.
+- **Exempt paths are explicit and minimal.** The only exempt paths are health probes (`/healthz`, `/readyz`), metrics (`/metrics`), OpenAPI docs (`/docs`, `/redoc`, `/openapi.json`), auth config (`/auth/config`), UI static files (`/ui`), and A2A discovery (`/.well-known/agent.json`). Adding a new exempt path requires justification.
+- **Noop auth grants admin access** — it exists only for local development. Production deployments MUST use `jwt` or `api_key` auth backends.
+- **Cedar enforcement is default-deny** when active. No loaded policies = all requests blocked.
+- **Resource ownership** is enforced at the route level. Agents and teams have `owner_id` + `shared_with`. Mutations (update, delete) require `require_owner_or_admin()`. Read access uses `require_access()` which checks ownership, admin scope, sharing, and group membership.
+- **Session ownership** is tracked for browser and code_interpreter sessions. Only the creator (or admin) can interact with a session via `SessionOwnershipStore.require_owner()`.
+
+### Multi-Tenant by Design
+
+- **Request-scoped credential isolation.** AWS credentials, service credentials, provider routing, and authenticated principals are stored in Python `contextvars` (`context.py`). No shared mutable state between requests, even under concurrent load.
+- **User-scoped memory.** Declarative agents always append `:u:{user_id}` to memory namespaces and actor IDs via `resolve_knowledge_namespace()` and `resolve_actor_id()`. Two users on the same agent have fully isolated memory and conversation history.
+- **Per-user credential resolution.** When OIDC credential resolution is enabled, each user's backend credentials (Langfuse keys, MCP tokens) are read from their OIDC attributes — not shared server credentials.
+- **Credential pass-through.** The gateway does not use shared service credentials by default. `allow_server_credentials` is a three-way enum (`never`/`fallback`/`always`) — `never` is the most secure, `fallback` allows server creds when per-user creds are unavailable.
+
+### Multi-Replica Capable
+
+- **No local-only state in production.** File-backed stores (`FileAgentStore`, `FileTeamStore`) are dev-only. Production uses Redis-backed stores for agents, teams, tasks, sessions, events, and checkpoints.
+- **Startup safety guard.** `_warn_replica_unsafe_config()` warns when Redis is enabled for some stores but local-only backends are used for others.
+- **Atomic operations.** `HSETNX` for agent/team creation prevents race conditions. Distributed locking (`SET NX`) for checkpoint recovery prevents multiple replicas claiming the same orphan.
+- **Cross-replica visibility.** Session ownership, background run events, and run status are persisted to Redis when configured.
+
+### Defense in Depth
+
+- **Layered middleware stack** (outermost to innermost): CORS → RequestContext → Audit → Auth → CredentialResolution → PolicyEnforcement → route handler. Each layer enforces a different security boundary.
+- **Auth validates identity.** Enforcement evaluates authorization. Ownership checks guard individual resources. All three must pass.
+- **Frozen principal.** `AuthenticatedPrincipal` is a frozen dataclass — once set by auth middleware, it cannot be mutated downstream.
+- **Audit trail.** Every authentication attempt, policy decision, credential resolution, resource access denial, and session lifecycle event is logged with request/correlation IDs for forensic tracing. Audit events include `AUTH_SUCCESS`, `AUTH_FAILURE`, `POLICY_ALLOW`, `POLICY_DENY`, `CREDENTIAL_RESOLVE`, `RESOURCE_ACCESS_DENIED`, etc.
+- **Log sanitization.** The `LogSanitizationFilter` and audit redaction system strip credentials, tokens, and secrets from log output. Credential-bearing headers (`X-AWS-Secret-Access-Key`, `X-Cred-*`) are never logged in plaintext.
+
+### Build & Supply Chain Security
+
+- **Pinned GitHub Actions.** All CI actions use commit SHAs, not mutable tags (e.g., `actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5` not `actions/checkout@v4`).
+- **Secret scanning.** TruffleHog runs on every commit via pre-commit hook (`--only-verified --fail`) and in CI. Accidentally committed secrets are scrubbed with `git filter-repo`.
+- **Dependency version constraints.** All dependencies in `pyproject.toml` have minimum version pins (`>=`). Upper bounds are set where breaking API changes are known (e.g., `langfuse>=3.0.0,<4.0.0`).
+- **Docker image attestation.** The build workflow uses `actions/attest-build-provenance` to generate SLSA provenance for published images.
+- **Workflow permissions.** CI workflows set explicit `permissions` blocks — `contents: read` by default, elevated only where needed.
+
+### Secure Coding Practices
+
+- **Input validation at system boundaries.** All request/response types are Pydantic models. FastAPI validates input before route handlers execute. Internal code trusts validated types.
+- **No credential storage in provider instances.** Providers resolve credentials per-request via `get_service_credentials_or_defaults()` or `get_boto3_session()` from contextvars. Provider `__init__` may store config-level defaults but never per-user secrets.
+- **Path traversal prevention.** Static file serving uses `resolve()` + `startswith()` containment checks. User-controlled paths are validated before filesystem access.
+- **Exception handlers don't leak internals.** The global exception handler returns generic error messages. Stack traces go to server logs (with sanitization), not to clients.
+- **Thread-safe async bridges.** `SyncRunnerMixin` provides `_run_sync()` for wrapping blocking SDK calls in `loop.run_in_executor()`. Sync client wrappers use dedicated `httpx.Client` instances (not `asyncio.new_event_loop()` bridges that conflict with framework event loops).
 
 ## Web UI
 
@@ -195,24 +253,33 @@ After completing ANY task or feature, verify ALL of these before considering it 
 9. All new code paths must have unit tests — providers, routes, translation functions, edge cases
 10. Integration tests for providers that talk to external services
 
+### Security Must Be Maintained
+11. New routes MUST have authentication (`Depends(require_principal)`) — add a test that verifies 401 without credentials
+12. New resources MUST have ownership checks (`require_access` for reads, `require_owner_or_admin` for mutations)
+13. No hardcoded secrets, credentials, or tokens in code or config defaults — use `${ENV_VAR:=}` patterns
+14. Credential-bearing data must not appear in logs — verify audit redaction covers new fields
+15. Providers must resolve credentials per-request from context, not store them in instance state
+
 ### Documentation Must Be Updated
-11. **`README.md`** — update architecture diagram AND primitives table if providers/features changed
-12. **`docs/`** — update relevant mkdocs pages (api/, concepts/, guides/) for any new or changed functionality
-13. **`CLAUDE.md`** — add one-line reference for new providers/patterns in Key Patterns section
-14. **Examples** — update or add examples that demonstrate the feature
+16. **`README.md`** — update architecture diagram AND primitives table if providers/features changed
+17. **`docs/`** — update relevant mkdocs pages (api/, concepts/, guides/) for any new or changed functionality
+18. **`CLAUDE.md`** — add one-line reference for new providers/patterns in Key Patterns section
+19. **Examples** — update or add examples that demonstrate the feature
 
 ## Adding a New Provider
 
 When adding a new provider to any primitive, update ALL of these:
 
 1. Provider implementation in `src/agentic_primitives_gateway/primitives/<primitive>/<name>.py`
-2. Unit tests in `tests/test_<primitive>_<name>.py`
-3. Integration tests in `tests/integration/test_<primitive>_<name>.py`
-4. `pyproject.toml` — optional deps group if new packages
+   - Resolve credentials per-request via `get_service_credentials_or_defaults()` or `get_boto3_session()` — never store per-user secrets in `__init__`
+   - Use `SyncRunnerMixin` for blocking SDK calls
+2. Unit tests in `tests/unit/primitives/<primitive>/test_<name>.py`
+3. Integration tests in `tests/integration/<primitive>/test_<name>.py`
+4. `pyproject.toml` — optional deps group if new packages, pin minimum version
 5. `configs/kitchen-sink.yaml` — add backend entry
 6. `CLAUDE.md` — add one-line provider reference in Key Patterns
 7. `README.md` — update architecture diagram AND primitives table
-8. `docs/` — update relevant API reference and guides
+8. `docs/` — update relevant API reference and primitive guide
 9. Any relevant config YAML presets
 10. Any relevant example agents
 11. Update the client if new functionality is exposed

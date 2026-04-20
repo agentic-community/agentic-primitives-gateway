@@ -46,6 +46,25 @@ async def auth_config() -> dict:
     return {"backend": auth.backend}
 
 
+@router.get("/api/v1/auth/whoami")
+async def whoami() -> dict:
+    """Return the authenticated principal for the UI.
+
+    Used by the web UI to render admin-only navigation and gate the audit
+    viewer route.  Goes through ``AuthenticationMiddleware`` — noop auth
+    returns the noop admin principal; JWT / api_key backends return 401
+    when credentials are missing or invalid.
+    """
+    principal = require_principal()
+    return {
+        "id": principal.id,
+        "type": principal.type,
+        "is_admin": principal.is_admin,
+        "groups": sorted(principal.groups),
+        "scopes": sorted(principal.scopes),
+    }
+
+
 async def _check_provider(primitive: str, provider_name: str) -> tuple[str, str, str, str]:
     """Run a single provider healthcheck with a timeout.
 
