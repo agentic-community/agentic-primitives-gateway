@@ -11,8 +11,13 @@ import LoadingSpinner from "../components/LoadingSpinner";
 import SharedWithInput from "../components/SharedWithInput";
 import { useTeams } from "../hooks/useTeams";
 
+type TeamFormMode = "create" | "edit" | "fork";
+
 interface TeamFormProps {
   initial?: TeamSpec;
+  /** ``"create"`` = POST /teams; ``"edit"`` = PUT /teams/{name};
+   *  ``"fork"`` = POST /teams/{source}/fork + optional version update. */
+  mode?: TeamFormMode;
   onDone: () => void;
   onCancel: () => void;
 }
@@ -88,8 +93,10 @@ function AgentSelect({
   );
 }
 
-function TeamForm({ initial, onDone, onCancel }: TeamFormProps) {
-  const isEdit = !!initial;
+function TeamForm({ initial, mode: modeProp, onDone, onCancel }: TeamFormProps) {
+  const mode: TeamFormMode = modeProp ?? (initial ? "edit" : "create");
+  const isEdit = mode === "edit";
+  const isFork = mode === "fork";
   const [name, setName] = useState(initial?.name ?? "");
   const [description, setDescription] = useState(initial?.description ?? "");
   const [planner, setPlanner] = useState(initial?.planner ?? "");
@@ -127,6 +134,36 @@ function TeamForm({ initial, onDone, onCancel }: TeamFormProps) {
             checkpointing_enabled: checkpointingEnabled,
           };
           await api.updateTeam(name, updates);
+        } else if (isFork && initial) {
+          // Fork first, then layer edits on top as a new version if the
+          // user changed anything beyond the name.
+          const sourceQualified = `${initial.owner_id}:${initial.name}`;
+          const forked = await api.forkTeam(sourceQualified, { target_name: name });
+          const edited =
+            description !== initial.description ||
+            planner !== initial.planner ||
+            synthesizer !== initial.synthesizer ||
+            JSON.stringify(workers) !== JSON.stringify(initial.workers) ||
+            globalMaxTurns !== initial.global_max_turns ||
+            globalTimeout !== initial.global_timeout_seconds ||
+            sharedMemory !== !!initial.shared_memory_namespace ||
+            JSON.stringify(sharedWith) !== JSON.stringify(initial.shared_with) ||
+            checkpointingEnabled !== initial.checkpointing_enabled;
+          if (edited) {
+            const targetQualified = `${forked.owner_id}:${forked.team_name}`;
+            await api.createTeamVersion(targetQualified, {
+              description,
+              planner,
+              synthesizer,
+              workers,
+              global_max_turns: globalMaxTurns,
+              global_timeout_seconds: globalTimeout,
+              shared_memory_namespace: sharedMemory ? "team:{team_name}" : null,
+              shared_with: sharedWith,
+              checkpointing_enabled: checkpointingEnabled,
+              commit_message: "post-fork edits",
+            });
+          }
         } else {
           const req: CreateTeamRequest = {
             name,
@@ -144,12 +181,16 @@ function TeamForm({ initial, onDone, onCancel }: TeamFormProps) {
         }
         onDone();
       } catch (err) {
-        setError(err instanceof Error ? err.message : `Failed to ${isEdit ? "update" : "create"} team`);
+        setError(
+          err instanceof Error
+            ? err.message
+            : `Failed to ${isEdit ? "update" : isFork ? "fork" : "create"} team`,
+        );
       } finally {
         setSubmitting(false);
       }
     },
-    [name, description, planner, synthesizer, workers, globalMaxTurns, globalTimeout, sharedMemory, sharedWith, checkpointingEnabled, isEdit, onDone],
+    [name, description, planner, synthesizer, workers, globalMaxTurns, globalTimeout, sharedMemory, sharedWith, checkpointingEnabled, isEdit, isFork, initial, onDone],
   );
 
   return (
@@ -158,8 +199,19 @@ function TeamForm({ initial, onDone, onCancel }: TeamFormProps) {
       className="rounded-lg border border-gray-200 dark:border-gray-800 p-4 space-y-3"
     >
       <div className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-        {isEdit ? `Edit ${name}` : "Create Team"}
+        {isEdit
+          ? `Edit ${name}`
+          : isFork && initial
+            ? `Fork ${initial.owner_id}:${initial.name}`
+            : "Create Team"}
       </div>
+      {isFork && (
+        <p className="text-[11px] text-gray-500 dark:text-gray-400">
+          Forking will create a new team in your namespace.  Rename it if
+          you want, and any field you change here lands in the fork's
+          first new version.
+        </p>
+      )}
       {error && <p className="text-xs text-red-600 dark:text-red-400">{error}</p>}
 
       <div className="grid grid-cols-2 gap-3">
@@ -244,7 +296,17 @@ function TeamForm({ initial, onDone, onCancel }: TeamFormProps) {
           disabled={submitting || !planner || !synthesizer || workers.length === 0}
           className="rounded bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
         >
-          {submitting ? (isEdit ? "Saving..." : "Creating...") : isEdit ? "Save" : "Create"}
+          {submitting
+            ? isEdit
+              ? "Saving..."
+              : isFork
+                ? "Forking..."
+                : "Creating..."
+            : isEdit
+              ? "Save"
+              : isFork
+                ? "Fork"
+                : "Create"}
         </button>
         <button
           type="button"
@@ -263,6 +325,9 @@ export default function TeamList() {
   const [deleting, setDeleting] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
+  // Same pattern as AgentList: fork opens a prefilled form; no call to
+  // the server until the user clicks Save.
+  const [forking, setForking] = useState<TeamSpec | null>(null);
 
   const handleDelete = useCallback(
     async (name: string) => {
@@ -314,12 +379,22 @@ export default function TeamList() {
       ) : (
         <div className="space-y-2">
           {teams.map((team) => (
-            <div key={team.name}>
+            <div key={`${team.owner_id}:${team.name}`}>
               {editing === team.name ? (
                 <TeamForm
                   initial={team}
+                  mode="edit"
                   onDone={() => { setEditing(null); refresh(); }}
                   onCancel={() => setEditing(null)}
+                />
+              ) : forking &&
+                forking.owner_id === team.owner_id &&
+                forking.name === team.name ? (
+                <TeamForm
+                  initial={team}
+                  mode="fork"
+                  onDone={() => { setForking(null); refresh(); }}
+                  onCancel={() => setForking(null)}
                 />
               ) : (
                 <div className="rounded-lg border border-gray-200 dark:border-gray-800 px-4 py-3">
@@ -389,13 +464,10 @@ export default function TeamList() {
                       </Link>
                       <button
                         type="button"
-                        onClick={async () => {
-                          try {
-                            const v = await api.forkTeam(`${team.owner_id}:${team.name}`, { target_name: team.name });
-                            window.location.assign(`/ui/teams/${v.owner_id}:${v.team_name}/versions`);
-                          } catch (e) {
-                            alert(e instanceof Error ? e.message : "Fork failed");
-                          }
+                        onClick={() => {
+                          setForking(team);
+                          setEditing(null);
+                          setCreating(false);
                         }}
                         className="rounded border border-gray-300 dark:border-gray-700 px-2 py-1 text-xs text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"
                         title="Fork into my namespace"

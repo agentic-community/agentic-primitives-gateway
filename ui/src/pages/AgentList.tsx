@@ -7,15 +7,23 @@ import PrimitivesSelector from "../components/PrimitivesSelector";
 import SharedWithInput from "../components/SharedWithInput";
 import { useAgents } from "../hooks/useAgents";
 
+type FormMode = "create" | "edit" | "fork";
+
 interface AgentFormProps {
-  /** If provided, the form is in edit mode for this agent. */
+  /** If provided, the form is prefilled from this spec. */
   initial?: AgentSpec;
+  /** ``"create"`` = POST /agents; ``"edit"`` = PUT /agents/{name};
+   *  ``"fork"`` = POST /agents/{source}/fork then optionally
+   *  POST /versions to apply any other edits. */
+  mode?: FormMode;
   onDone: () => void;
   onCancel: () => void;
 }
 
-function AgentForm({ initial, onDone, onCancel }: AgentFormProps) {
-  const isEdit = !!initial;
+function AgentForm({ initial, mode: modeProp, onDone, onCancel }: AgentFormProps) {
+  const mode: FormMode = modeProp ?? (initial ? "edit" : "create");
+  const isEdit = mode === "edit";
+  const isFork = mode === "fork";
   const [name, setName] = useState(initial?.name ?? "");
   const [model, setModel] = useState(initial?.model ?? "");
   const [description, setDescription] = useState(initial?.description ?? "");
@@ -52,6 +60,40 @@ function AgentForm({ initial, onDone, onCancel }: AgentFormProps) {
             checkpointing_enabled: checkpointingEnabled,
           };
           await api.updateAgent(name, updates);
+        } else if (isFork && initial) {
+          // Fork the source identity into the caller's namespace under the
+          // (possibly renamed) ``name``.  Then, if any other field was
+          // edited in the form, layer a new version on top of the freshly
+          // forked v1 so the user sees their edits immediately.
+          const sourceQualified = `${initial.owner_id}:${initial.name}`;
+          const forked = await api.forkAgent(sourceQualified, {
+            target_name: name,
+          });
+          const edited =
+            model !== initial.model ||
+            description !== initial.description ||
+            systemPrompt !== initial.system_prompt ||
+            maxTurns !== initial.max_turns ||
+            temperature !== initial.temperature ||
+            JSON.stringify(primitives) !== JSON.stringify(initial.primitives) ||
+            JSON.stringify(providerOverrides) !== JSON.stringify(initial.provider_overrides) ||
+            JSON.stringify(sharedWith) !== JSON.stringify(initial.shared_with) ||
+            checkpointingEnabled !== initial.checkpointing_enabled;
+          if (edited) {
+            const targetQualified = `${forked.owner_id}:${forked.agent_name}`;
+            await api.createAgentVersion(targetQualified, {
+              model,
+              description,
+              system_prompt: systemPrompt,
+              max_turns: maxTurns,
+              temperature,
+              primitives,
+              provider_overrides: providerOverrides,
+              shared_with: sharedWith,
+              checkpointing_enabled: checkpointingEnabled,
+              commit_message: "post-fork edits",
+            });
+          }
         } else {
           await api.createAgent({
             name,
@@ -68,12 +110,16 @@ function AgentForm({ initial, onDone, onCancel }: AgentFormProps) {
         }
         onDone();
       } catch (err) {
-        setError(err instanceof Error ? err.message : `Failed to ${isEdit ? "update" : "create"} agent`);
+        setError(
+          err instanceof Error
+            ? err.message
+            : `Failed to ${isEdit ? "update" : isFork ? "fork" : "create"} agent`,
+        );
       } finally {
         setSubmitting(false);
       }
     },
-    [name, model, description, systemPrompt, maxTurns, temperature, primitives, providerOverrides, sharedWith, checkpointingEnabled, isEdit, onDone],
+    [name, model, description, systemPrompt, maxTurns, temperature, primitives, providerOverrides, sharedWith, checkpointingEnabled, isEdit, isFork, initial, onDone],
   );
 
   return (
@@ -82,8 +128,19 @@ function AgentForm({ initial, onDone, onCancel }: AgentFormProps) {
       className="rounded-lg border border-gray-200 dark:border-gray-800 p-4 space-y-3"
     >
       <div className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-        {isEdit ? `Edit ${name}` : "Create Agent"}
+        {isEdit
+          ? `Edit ${name}`
+          : isFork && initial
+            ? `Fork ${initial.owner_id}:${initial.name}`
+            : "Create Agent"}
       </div>
+      {isFork && (
+        <p className="text-[11px] text-gray-500 dark:text-gray-400">
+          Forking will create a new agent in your namespace.  Rename it if
+          you want, and any field you change here lands in the fork's
+          first new version.
+        </p>
+      )}
       {error && (
         <p className="text-xs text-red-600 dark:text-red-400">{error}</p>
       )}
@@ -168,7 +225,17 @@ function AgentForm({ initial, onDone, onCancel }: AgentFormProps) {
           disabled={submitting}
           className="rounded bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
         >
-          {submitting ? (isEdit ? "Saving..." : "Creating...") : isEdit ? "Save" : "Create"}
+          {submitting
+            ? isEdit
+              ? "Saving..."
+              : isFork
+                ? "Forking..."
+                : "Creating..."
+            : isEdit
+              ? "Save"
+              : isFork
+                ? "Fork"
+                : "Create"}
         </button>
         <button
           type="button"
@@ -187,6 +254,9 @@ export default function AgentList() {
   const [deleting, setDeleting] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
+  // When set, we render the AgentForm in "fork" mode prefilled from this
+  // agent.  The fork request doesn't fire until the user clicks Save.
+  const [forking, setForking] = useState<AgentSpec | null>(null);
 
   const handleDelete = useCallback(
     async (name: string) => {
@@ -240,12 +310,22 @@ export default function AgentList() {
       ) : (
         <div className="space-y-2">
           {agents.map((agent) => (
-            <div key={agent.name}>
+            <div key={`${agent.owner_id}:${agent.name}`}>
               {editing === agent.name ? (
                 <AgentForm
                   initial={agent}
+                  mode="edit"
                   onDone={() => { setEditing(null); refresh(); }}
                   onCancel={() => setEditing(null)}
+                />
+              ) : forking &&
+                forking.owner_id === agent.owner_id &&
+                forking.name === agent.name ? (
+                <AgentForm
+                  initial={agent}
+                  mode="fork"
+                  onDone={() => { setForking(null); refresh(); }}
+                  onCancel={() => setForking(null)}
                 />
               ) : (
                 <div className="rounded-lg border border-gray-200 dark:border-gray-800 px-4 py-3">
@@ -301,6 +381,32 @@ export default function AgentList() {
                       </div>
                     </div>
                     <div className="flex items-center gap-1.5 shrink-0">
+                      <Link
+                        to={`/agents/${agent.owner_id}:${agent.name}/versions`}
+                        className="rounded border border-gray-300 dark:border-gray-700 px-2 py-1 text-xs text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"
+                        title="Version history"
+                      >
+                        Versions
+                      </Link>
+                      <Link
+                        to={`/agents/${agent.owner_id}:${agent.name}/lineage`}
+                        className="rounded border border-gray-300 dark:border-gray-700 px-2 py-1 text-xs text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"
+                        title="Lineage graph"
+                      >
+                        Lineage
+                      </Link>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setForking(agent);
+                          setEditing(null);
+                          setCreating(false);
+                        }}
+                        className="rounded border border-gray-300 dark:border-gray-700 px-2 py-1 text-xs text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"
+                        title="Fork into my namespace"
+                      >
+                        Fork
+                      </button>
                       <Link
                         to={`/agents/${agent.name}/chat`}
                         className="rounded bg-indigo-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-indigo-700"
