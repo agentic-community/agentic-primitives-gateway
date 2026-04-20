@@ -347,20 +347,21 @@ class TestAgentStore:
         assert resp.status_code == 200
         assert resp.json()["system_prompt"] == "I was seeded."
 
-    def test_seed_overwrites_existing(self, tmp_path: Any) -> None:
+    async def test_seed_overwrites_existing_system_namespace(self, tmp_path: Any) -> None:
+        """Seeding updates an existing ``system`` namespace spec in place.
+
+        Under the versioned store, the system namespace is owned by config,
+        so reseeding a changed spec bumps it to version 2 and re-deploys.
+        """
         path = str(tmp_path / "agents.json")
         store = FileAgentStore(path=path)
-        set_agent_store(store)
-        client = TestClient(app)
 
-        # Create via API
-        client.post(
-            "/api/v1/agents",
-            json={**SAMPLE_AGENT, "description": "API created"},
-        )
+        await store.seed_async({"test-agent": {"model": "m1", "description": "First"}})
+        await store.seed_async({"test-agent": {"model": "m2", "description": "Second"}})
 
-        # Seed with same name but different description — config wins
-        store.seed({"test-agent": {"model": "other-model", "description": "Seeded"}})
-
-        resp = client.get("/api/v1/agents/test-agent")
-        assert resp.json()["description"] == "Seeded"  # Config overwrites
+        spec = await store.resolve_qualified("system", "test-agent")
+        assert spec is not None
+        assert spec.description == "Second"
+        assert spec.model == "m2"
+        versions = await store.list_versions("test-agent", "system")
+        assert len(versions) == 2

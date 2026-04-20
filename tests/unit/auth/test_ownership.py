@@ -277,33 +277,24 @@ class TestTeamSpecDefaults:
 
 
 class TestSeedInjectsWildcard:
-    def test_file_agent_store_seed_adds_wildcard(self, agent_store):
+    async def test_file_agent_store_seed_adds_wildcard(self, agent_store):
         """Seeding from config injects shared_with=['*'] by default."""
-        agent_store.seed({"seeded": {"model": "m"}})
-
-        import asyncio
-
-        spec = asyncio.get_event_loop().run_until_complete(agent_store.get("seeded"))
+        await agent_store.seed_async({"seeded": {"model": "m"}})
+        spec = await agent_store.get("seeded")
         assert spec is not None
         assert spec.shared_with == ["*"]
         assert spec.owner_id == "system"
 
-    def test_file_agent_store_seed_respects_explicit(self, agent_store):
+    async def test_file_agent_store_seed_respects_explicit(self, agent_store):
         """Seeding from config respects explicitly set shared_with."""
-        agent_store.seed({"private": {"model": "m", "shared_with": ["engineering"]}})
-
-        import asyncio
-
-        spec = asyncio.get_event_loop().run_until_complete(agent_store.get("private"))
+        await agent_store.seed_async({"private": {"model": "m", "shared_with": ["engineering"]}})
+        spec = await agent_store.get("private")
         assert spec is not None
         assert spec.shared_with == ["engineering"]
 
-    def test_file_team_store_seed_adds_wildcard(self, team_store):
+    async def test_file_team_store_seed_adds_wildcard(self, team_store):
         """Seeding teams from config injects shared_with=['*'] by default."""
-        team_store.seed({"t": {"planner": "p", "synthesizer": "s", "workers": ["w"]}})
-
-        import asyncio
-
-        spec = asyncio.get_event_loop().run_until_complete(team_store.get("t"))
+        await team_store.seed_async({"t": {"planner": "p", "synthesizer": "s", "workers": ["w"]}})
+        spec = await team_store.get("t")
         assert spec is not None
         assert spec.shared_with == ["*"]

@@ -16,41 +16,50 @@ import pytest
 
 from agentic_primitives_gateway.agents.namespace import resolve_actor_id
 from agentic_primitives_gateway.auth.models import ANONYMOUS_PRINCIPAL, AuthenticatedPrincipal
+from agentic_primitives_gateway.models.agents import AgentSpec
+
+
+def _spec(name: str, owner_id: str = "system") -> AgentSpec:
+    return AgentSpec(name=name, model="m", owner_id=owner_id)
 
 
 class TestResolveActorId:
     def test_anonymous_always_scoped(self):
-        result = resolve_actor_id("my-agent", ANONYMOUS_PRINCIPAL)
-        assert result == "my-agent:u:anonymous"
+        result = resolve_actor_id(_spec("my-agent"), ANONYMOUS_PRINCIPAL)
+        assert result == "system:my-agent:u:anonymous"
 
     def test_none_principal_raises(self):
         with pytest.raises(AttributeError):
-            resolve_actor_id("my-agent", None)  # type: ignore[arg-type]
+            resolve_actor_id(_spec("my-agent"), None)  # type: ignore[arg-type]
 
     def test_authenticated_user_scoped(self):
         p = AuthenticatedPrincipal(id="alice", type="user")
-        result = resolve_actor_id("my-agent", p)
-        assert result == "my-agent:u:alice"
+        result = resolve_actor_id(_spec("my-agent"), p)
+        assert result == "system:my-agent:u:alice"
 
     def test_noop_principal_scoped(self):
         from agentic_primitives_gateway.auth.models import NOOP_PRINCIPAL
 
-        result = resolve_actor_id("my-agent", NOOP_PRINCIPAL)
-        assert result == "my-agent:u:noop"
+        result = resolve_actor_id(_spec("my-agent"), NOOP_PRINCIPAL)
+        assert result == "system:my-agent:u:noop"
 
     def test_different_users_different_actor_ids(self):
         alice = AuthenticatedPrincipal(id="alice", type="user")
         bob = AuthenticatedPrincipal(id="bob", type="user")
-        assert resolve_actor_id("agent", alice) != resolve_actor_id("agent", bob)
+        assert resolve_actor_id(_spec("agent"), alice) != resolve_actor_id(_spec("agent"), bob)
 
     def test_same_user_different_agents(self):
         p = AuthenticatedPrincipal(id="alice", type="user")
-        assert resolve_actor_id("agent-a", p) != resolve_actor_id("agent-b", p)
+        assert resolve_actor_id(_spec("agent-a"), p) != resolve_actor_id(_spec("agent-b"), p)
+
+    def test_different_owners_different_actor_ids(self):
+        p = AuthenticatedPrincipal(id="alice", type="user")
+        assert resolve_actor_id(_spec("agent", "alice"), p) != resolve_actor_id(_spec("agent", "bob"), p)
 
     def test_service_principal_scoped(self):
         p = AuthenticatedPrincipal(id="ci-bot", type="service")
-        result = resolve_actor_id("my-agent", p)
-        assert result == "my-agent:u:ci-bot"
+        result = resolve_actor_id(_spec("my-agent"), p)
+        assert result == "system:my-agent:u:ci-bot"
 
 
 class TestRunnerUsesActorId:
@@ -71,7 +80,7 @@ class TestRunnerUsesActorId:
         with patch("agentic_primitives_gateway.agents.runner.registry"):
             ctx = await runner._init_context(spec, "hello", "sess-1", 0)
 
-        assert ctx.actor_id == "test-agent:u:alice"
+        assert ctx.actor_id == "system:test-agent:u:alice"
 
     @pytest.mark.asyncio
     async def test_init_context_sets_actor_id_noop(self):
@@ -88,7 +97,7 @@ class TestRunnerUsesActorId:
         with patch("agentic_primitives_gateway.agents.runner.registry"):
             ctx = await runner._init_context(spec, "hello", "sess-1", 0)
 
-        assert ctx.actor_id == "test-agent:u:noop"
+        assert ctx.actor_id == "system:test-agent:u:noop"
 
     @pytest.mark.asyncio
     async def test_finalize_stores_with_actor_id(self):

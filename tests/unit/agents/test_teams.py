@@ -96,7 +96,7 @@ async def test_team_store_crud(tmp_path: Any) -> None:
 @pytest.mark.asyncio
 async def test_team_store_seed(tmp_path: Any) -> None:
     store = FileTeamStore(path=str(tmp_path / "teams.json"))
-    store.seed(
+    await store.seed_async(
         {
             "my-team": {
                 "planner": "planner-agent",

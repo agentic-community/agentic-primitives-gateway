@@ -45,8 +45,9 @@ class TestFileAgentStoreLoadFailure:
         path = tmp_path / "agents.json"
         path.write_text("not valid json!!!")
         store = FileAgentStore(path=str(path))
-        # Should not raise, just log and continue with empty store
-        assert store._agents == {}
+        # Should not raise, just log and continue with empty state.
+        assert store._state.versions == {}
+        assert store._state.identities == {}
 
     async def test_update_nonexistent_raises(self, tmp_path) -> None:
         store = FileAgentStore(path=str(tmp_path / "agents.json"))

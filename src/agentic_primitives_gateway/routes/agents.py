@@ -5,7 +5,10 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from starlette.responses import Response, StreamingResponse
 
-from agentic_primitives_gateway.agents.namespace import resolve_actor_id, resolve_knowledge_namespace_for_name
+from agentic_primitives_gateway.agents.namespace import (
+    resolve_actor_id,
+    resolve_knowledge_namespace_for_identity,
+)
 from agentic_primitives_gateway.agents.runner import AgentRunner
 from agentic_primitives_gateway.agents.store import AgentStore
 from agentic_primitives_gateway.agents.tools import _TOOL_CATALOG, build_tool_list
@@ -259,7 +262,12 @@ async def get_agent_memory(name: str, session_id: str | None = None) -> AgentMem
         )
 
     # Resolve knowledge namespace (user-scoped — same as runner)
-    namespace = resolve_knowledge_namespace_for_name(name, mem_config.namespace, require_principal())
+    namespace = resolve_knowledge_namespace_for_identity(
+        name=name,
+        owner_id=spec.owner_id,
+        namespace_template=mem_config.namespace,
+        principal=require_principal(),
+    )
 
     # Get all known namespaces from the provider
     stores: list[MemoryStoreInfo] = []
@@ -378,7 +386,7 @@ async def list_sessions(name: str) -> dict:
     if spec.provider_overrides:
         set_provider_overrides(spec.provider_overrides)
 
-    actor_id = resolve_actor_id(name, require_principal())
+    actor_id = resolve_actor_id(spec, require_principal())
     sessions: list[dict[str, Any]] = []
     try:
         sessions = await registry.memory.list_sessions(actor_id)
@@ -404,7 +412,7 @@ async def cleanup_sessions(name: str, keep: int = 5) -> dict:
     if spec.provider_overrides:
         set_provider_overrides(spec.provider_overrides)
 
-    actor_id = resolve_actor_id(name, require_principal())
+    actor_id = resolve_actor_id(spec, require_principal())
     deleted_count = 0
     try:
         sessions = await registry.memory.list_sessions(actor_id)
@@ -434,7 +442,7 @@ async def delete_session(name: str, session_id: str) -> dict:
     if spec.provider_overrides:
         set_provider_overrides(spec.provider_overrides)
 
-    actor_id = resolve_actor_id(name, require_principal())
+    actor_id = resolve_actor_id(spec, require_principal())
     try:
         await registry.memory.delete_session(actor_id=actor_id, session_id=session_id)
     except (NotImplementedError, Exception):
@@ -538,7 +546,7 @@ async def get_session_history(name: str, session_id: str) -> SessionHistoryRespo
     if spec.provider_overrides:
         set_provider_overrides(spec.provider_overrides)
 
-    actor_id = resolve_actor_id(name, require_principal())
+    actor_id = resolve_actor_id(spec, require_principal())
     messages: list[dict[str, str]] = []
     try:
         turns = await registry.memory.get_last_turns(actor_id=actor_id, session_id=session_id, k=50)

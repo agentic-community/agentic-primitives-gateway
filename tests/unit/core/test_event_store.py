@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -195,39 +194,7 @@ class TestBackgroundRunManagerAsync:
 
 
 class TestRedisStoreSeeding:
-    """Test the seed() method on RedisAgentStore and RedisTeamStore."""
+    """Redis seeding moved to the versioned store — covered by Phase 1 tests."""
 
-    async def test_agent_store_seed(self) -> None:
-        from agentic_primitives_gateway.agents.redis_store import _AGENT_KEY, RedisAgentStore
-
-        store_data: dict[str, dict[str, str]] = {}
-        mock_r = AsyncMock()
-
-        async def hget(key, field):
-            return store_data.get(key, {}).get(field)
-
-        async def hset(key, field, value):
-            store_data.setdefault(key, {})[field] = value
-
-        mock_r.hget = AsyncMock(side_effect=hget)
-        mock_r.hset = AsyncMock(side_effect=hset)
-
-        with patch("agentic_primitives_gateway.agents.base_store._get_redis", return_value=mock_r):
-            RedisAgentStore(redis_url="redis://test:6379/0")
-
-        # Manually call the async seed logic
-        from agentic_primitives_gateway.models.agents import AgentSpec
-
-        specs = {"test-agent": {"model": "m1", "system_prompt": "hello"}}
-        for name, spec_dict in specs.items():
-            new_spec = AgentSpec(name=name, **spec_dict)
-            existing = await mock_r.hget(_AGENT_KEY, name)
-            assert existing is None
-            await mock_r.hset(_AGENT_KEY, name, json.dumps(new_spec.model_dump(), default=str))
-
-        # Verify it was stored
-        raw = await mock_r.hget(_AGENT_KEY, "test-agent")
-        assert raw is not None
-        data = json.loads(raw)
-        assert data["name"] == "test-agent"
-        assert data["model"] == "m1"
+    # Obsolete — see tests/unit/agents/test_versioned_store_redis.py (Phase 1).
+    pass

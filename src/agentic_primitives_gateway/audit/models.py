@@ -95,6 +95,16 @@ class AuditAction:
     AGENT_RUN_CANCELLED = "agent.run.cancelled"
     AGENT_DELEGATE = "agent.delegate"
 
+    # Agent versioning — immutable version lifecycle.  ``resource_id`` for
+    # these events is the qualified identity ``"{owner_id}:{name}"`` so
+    # dashboards can filter by fork.
+    AGENT_VERSION_CREATE = "agent.version.create"
+    AGENT_VERSION_PROPOSE = "agent.version.propose"
+    AGENT_VERSION_APPROVE = "agent.version.approve"
+    AGENT_VERSION_REJECT = "agent.version.reject"
+    AGENT_VERSION_DEPLOY = "agent.version.deploy"
+    AGENT_FORK = "agent.fork"
+
     # Teams
     TEAM_CREATE = "team.create"
     TEAM_UPDATE = "team.update"
@@ -103,6 +113,14 @@ class AuditAction:
     TEAM_RUN_COMPLETE = "team.run.complete"
     TEAM_RUN_FAILED = "team.run.failed"
     TEAM_RUN_CANCELLED = "team.run.cancelled"
+
+    # Team versioning — see agent versioning notes above.
+    TEAM_VERSION_CREATE = "team.version.create"
+    TEAM_VERSION_PROPOSE = "team.version.propose"
+    TEAM_VERSION_APPROVE = "team.version.approve"
+    TEAM_VERSION_REJECT = "team.version.reject"
+    TEAM_VERSION_DEPLOY = "team.version.deploy"
+    TEAM_FORK = "team.fork"
 
     # Tool + LLM invocations
     TOOL_CALL = "tool.call"

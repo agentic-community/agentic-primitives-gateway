@@ -21,7 +21,6 @@ from agentic_primitives_gateway.agents.namespace import (
     resolve_knowledge_namespace,
     resolve_shared_pools,
 )
-from agentic_primitives_gateway.agents.store import AgentStore
 from agentic_primitives_gateway.agents.tools import (
     MAX_AGENT_DEPTH,
     ToolDefinition,
@@ -29,6 +28,7 @@ from agentic_primitives_gateway.agents.tools import (
     execute_tool,
     to_llm_tools,
 )
+from agentic_primitives_gateway.agents.versioned_agent_store import VersionedAgentStore as AgentStore
 from agentic_primitives_gateway.audit.emit import emit_audit_event
 from agentic_primitives_gateway.audit.models import AuditAction, AuditOutcome, ResourceType
 from agentic_primitives_gateway.context import get_authenticated_principal
@@ -331,7 +331,7 @@ class AgentRunner:
         if principal is None:
             raise RuntimeError("Cannot run agent without an authenticated principal")
         knowledge_ns = resolve_knowledge_namespace(spec, principal)
-        actor_id = resolve_actor_id(spec.name, principal)
+        actor_id = resolve_actor_id(spec, principal)
 
         pools = resolve_shared_pools(spec, principal)
         tools = build_tool_list(
