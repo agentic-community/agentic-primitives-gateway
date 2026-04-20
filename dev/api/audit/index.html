@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../evaluations/">
+        <link rel="prev" href="../teams/">
       
       
-        <link rel="next" href="../teams/">
+        <link rel="next" href="../../examples/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>Agents - Agentic Primitives Gateway</title>
+        <title>Audit - Agentic Primitives Gateway</title>
       
     
     
@@ -76,7 +76,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#agents-api" class="md-skip">
+        <a href="#audit-api-reference" class="md-skip">
           Skip to content
         </a>
       
@@ -113,7 +113,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Agents
+              Audit
             
           </span>
         </div>
@@ -2711,37 +2711,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Agents
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../agents/" class="md-nav__link">
         
   
   
@@ -2757,260 +2730,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#crud" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        CRUD
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="CRUD">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#create-agent" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Create Agent
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#chat" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Chat
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Chat">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#non-streaming-chat" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Non-Streaming Chat
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#streaming-chat" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Streaming Chat
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#sessions" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Sessions
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Sessions">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#sse-reconnect-stream" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        SSE Reconnect Stream
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#cancel-active-run" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Cancel Active Run
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#list-sessions" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        List Sessions
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#get-session-history" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Get Session History
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#check-background-run-status" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Check Background Run Status
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#export" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Export
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Export">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#export-agent" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Export Agent
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#session-cleanup" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Session Cleanup
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Session Cleanup">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#cleanup-sessions" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Cleanup Sessions
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#introspection" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Introspection
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Introspection">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#list-agent-tools" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        List Agent Tools
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#tool-catalog" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Tool Catalog
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -3048,10 +2767,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../audit/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Audit
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -3067,6 +2813,264 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#auditevent-schema" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AuditEvent Schema
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="AuditEvent Schema">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#fields" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fields
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#action-taxonomy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Action Taxonomy
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Action Taxonomy">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#authentication" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Authentication
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#policy-enforcement" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Policy Enforcement
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#credentials" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Credentials
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#agents" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Agents
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#teams" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Teams
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tools-and-llm" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tools and LLM
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#resource-access" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Resource Access
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#http-provider-call-sessions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        HTTP + Provider Call + Sessions
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#outcome-values" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Outcome Values
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#resource-types" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Resource Types
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#redaction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Redaction
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#schema-evolution" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Schema Evolution
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sink-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sink Configuration
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Sink Configuration">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#built-in-sink-aliases" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Built-in Sink Aliases
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#custom-sinks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Custom Sinks
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#read-back-via-auditreader" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Read-back via AuditReader
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#see-also" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        See Also
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -3195,22 +3199,22 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#crud" class="md-nav__link">
+  <a href="#auditevent-schema" class="md-nav__link">
     <span class="md-ellipsis">
       
-        CRUD
+        AuditEvent Schema
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="CRUD">
+    <nav class="md-nav" aria-label="AuditEvent Schema">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#create-agent" class="md-nav__link">
+  <a href="#fields" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Create Agent
+        Fields
       
     </span>
   </a>
@@ -3223,22 +3227,22 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#chat" class="md-nav__link">
+  <a href="#action-taxonomy" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Chat
+        Action Taxonomy
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Chat">
+    <nav class="md-nav" aria-label="Action Taxonomy">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#non-streaming-chat" class="md-nav__link">
+  <a href="#authentication" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Non-Streaming Chat
+        Authentication
       
     </span>
   </a>
@@ -3246,10 +3250,76 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#streaming-chat" class="md-nav__link">
+  <a href="#policy-enforcement" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Streaming Chat
+        Policy Enforcement
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#credentials" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Credentials
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#agents" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Agents
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#teams" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Teams
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tools-and-llm" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tools and LLM
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#resource-access" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Resource Access
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#http-provider-call-sessions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        HTTP + Provider Call + Sessions
       
     </span>
   </a>
@@ -3262,22 +3332,66 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#sessions" class="md-nav__link">
+  <a href="#outcome-values" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Sessions
+        Outcome Values
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Sessions">
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#resource-types" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Resource Types
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#redaction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Redaction
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#schema-evolution" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Schema Evolution
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sink-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sink Configuration
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Sink Configuration">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#sse-reconnect-stream" class="md-nav__link">
+  <a href="#built-in-sink-aliases" class="md-nav__link">
     <span class="md-ellipsis">
       
-        SSE Reconnect Stream
+        Built-in Sink Aliases
       
     </span>
   </a>
@@ -3285,10 +3399,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#cancel-active-run" class="md-nav__link">
+  <a href="#custom-sinks" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Cancel Active Run
+        Custom Sinks
       
     </span>
   </a>
@@ -3296,32 +3410,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#list-sessions" class="md-nav__link">
+  <a href="#read-back-via-auditreader" class="md-nav__link">
     <span class="md-ellipsis">
       
-        List Sessions
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#get-session-history" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Get Session History
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#check-background-run-status" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Check Background Run Status
+        Read-back via AuditReader
       
     </span>
   </a>
@@ -3334,97 +3426,13 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#export" class="md-nav__link">
+  <a href="#see-also" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Export
+        See Also
       
     </span>
   </a>
-  
-    <nav class="md-nav" aria-label="Export">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#export-agent" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Export Agent
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#session-cleanup" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Session Cleanup
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Session Cleanup">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#cleanup-sessions" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Cleanup Sessions
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#introspection" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Introspection
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Introspection">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#list-agent-tools" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        List Agent Tools
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#tool-catalog" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Tool Catalog
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
@@ -3448,295 +3456,647 @@
   
 
 
-<h1 id="agents-api">Agents API<a class="headerlink" href="#agents-api" title="Permanent link">&para;</a></h1>
-<p>Prefix: <code>/api/v1/agents</code></p>
-<h2 id="crud">CRUD<a class="headerlink" href="#crud" title="Permanent link">&para;</a></h2>
+<h1 id="audit-api-reference">Audit API Reference<a class="headerlink" href="#audit-api-reference" title="Permanent link">&para;</a></h1>
+<p>Structured governance events emitted by the gateway. See <a href="../../concepts/governance/">Governance</a> for the conceptual overview.</p>
+<h2 id="auditevent-schema">AuditEvent Schema<a class="headerlink" href="#auditevent-schema" title="Permanent link">&para;</a></h2>
+<p>Audit events are frozen <a href="https://docs.pydantic.dev/">Pydantic v2</a> models serialized to JSON by each sink. The schema is versioned and follows additive-only evolution within a version.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="p">{</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="nt">&quot;schema_version&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;1&quot;</span><span class="p">,</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">  </span><span class="nt">&quot;event_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;bc8b6a823ffb4209bdc12697761ef676&quot;</span><span class="p">,</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">  </span><span class="nt">&quot;timestamp&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;2026-04-17T17:09:23.259153Z&quot;</span><span class="p">,</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">  </span><span class="nt">&quot;action&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;http.request&quot;</span><span class="p">,</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="w">  </span><span class="nt">&quot;outcome&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;success&quot;</span><span class="p">,</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">  </span><span class="nt">&quot;actor_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;alice&quot;</span><span class="p">,</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="w">  </span><span class="nt">&quot;actor_type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;user&quot;</span><span class="p">,</span>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="w">  </span><span class="nt">&quot;actor_groups&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;admins&quot;</span><span class="p">],</span>
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="w">  </span><span class="nt">&quot;resource_type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;http&quot;</span><span class="p">,</span>
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="w">  </span><span class="nt">&quot;resource_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;/api/v1/agents&quot;</span><span class="p">,</span>
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="w">  </span><span class="nt">&quot;request_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;6828fe0619354661ae478d994588eb87&quot;</span><span class="p">,</span>
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="w">  </span><span class="nt">&quot;correlation_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;trace-create-1&quot;</span><span class="p">,</span>
+<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="w">  </span><span class="nt">&quot;source_ip&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;127.0.0.1&quot;</span><span class="p">,</span>
+<a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a><span class="w">  </span><span class="nt">&quot;user_agent&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;curl/8.7.1&quot;</span><span class="p">,</span>
+<a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a><span class="w">  </span><span class="nt">&quot;http_method&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;POST&quot;</span><span class="p">,</span>
+<a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a><span class="w">  </span><span class="nt">&quot;http_path&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;/api/v1/agents&quot;</span><span class="p">,</span>
+<a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a><span class="w">  </span><span class="nt">&quot;http_status&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">201</span><span class="p">,</span>
+<a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a><span class="w">  </span><span class="nt">&quot;duration_ms&quot;</span><span class="p">:</span><span class="w"> </span><span class="mf">17.242</span><span class="p">,</span>
+<a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a><span class="w">  </span><span class="nt">&quot;reason&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span>
+<a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a><span class="w">  </span><span class="nt">&quot;metadata&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{}</span>
+<a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a><span class="p">}</span>
+</code></pre></div>
+<h3 id="fields">Fields<a class="headerlink" href="#fields" title="Permanent link">&para;</a></h3>
 <table>
 <thead>
 <tr>
-<th>Method</th>
-<th>Path</th>
+<th>Field</th>
+<th>Type</th>
 <th>Description</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><code>POST</code></td>
-<td><code>/</code></td>
-<td>Create agent. Returns 201. Returns 409 if name exists.</td>
+<td><code>schema_version</code></td>
+<td>string</td>
+<td>Stable schema version. Breaking changes bump to <code>"2"</code>.</td>
 </tr>
 <tr>
-<td><code>GET</code></td>
-<td><code>/</code></td>
-<td>List all agents.</td>
+<td><code>event_id</code></td>
+<td>string</td>
+<td>Unique per event (hex UUID).</td>
 </tr>
 <tr>
-<td><code>GET</code></td>
-<td><code>/{name}</code></td>
-<td>Get agent spec.</td>
+<td><code>timestamp</code></td>
+<td>string (ISO-8601 UTC)</td>
+<td>When the event was produced.</td>
 </tr>
 <tr>
-<td><code>PUT</code></td>
-<td><code>/{name}</code></td>
-<td>Update agent (partial).</td>
+<td><code>action</code></td>
+<td>string</td>
+<td>Stable action identifier from the taxonomy below.</td>
 </tr>
 <tr>
-<td><code>DELETE</code></td>
-<td><code>/{name}</code></td>
-<td>Delete agent.</td>
+<td><code>outcome</code></td>
+<td>enum</td>
+<td><code>allow</code>, <code>deny</code>, <code>success</code>, <code>failure</code>, <code>error</code>.</td>
+</tr>
+<tr>
+<td><code>actor_id</code></td>
+<td>string or null</td>
+<td>Principal ID (hashed when <code>redact_principal_id: true</code>).</td>
+</tr>
+<tr>
+<td><code>actor_type</code></td>
+<td>string or null</td>
+<td><code>user</code>, <code>service</code>, <code>anonymous</code>.</td>
+</tr>
+<tr>
+<td><code>actor_groups</code></td>
+<td>list[string]</td>
+<td>Principal groups.</td>
+</tr>
+<tr>
+<td><code>resource_type</code></td>
+<td>enum or null</td>
+<td><code>agent</code>, <code>team</code>, <code>policy</code>, <code>policy_engine</code>, <code>credential</code>, <code>session</code>, <code>tool</code>, <code>http</code>, <code>memory</code>, <code>user</code>, <code>llm</code>.</td>
+</tr>
+<tr>
+<td><code>resource_id</code></td>
+<td>string or null</td>
+<td>Resource name / path / ID.</td>
+</tr>
+<tr>
+<td><code>request_id</code></td>
+<td>string or null</td>
+<td>Per-HTTP-request identifier (<code>x-request-id</code>).</td>
+</tr>
+<tr>
+<td><code>correlation_id</code></td>
+<td>string or null</td>
+<td>Cross-request chain identifier (<code>x-correlation-id</code>).</td>
+</tr>
+<tr>
+<td><code>source_ip</code></td>
+<td>string or null</td>
+<td>Client IP (set by <code>AuditMiddleware</code>).</td>
+</tr>
+<tr>
+<td><code>user_agent</code></td>
+<td>string or null</td>
+<td>Client UA (set by <code>AuditMiddleware</code>).</td>
+</tr>
+<tr>
+<td><code>http_method</code></td>
+<td>string or null</td>
+<td>HTTP method when applicable.</td>
+</tr>
+<tr>
+<td><code>http_path</code></td>
+<td>string or null</td>
+<td>HTTP path when applicable.</td>
+</tr>
+<tr>
+<td><code>http_status</code></td>
+<td>int or null</td>
+<td>Final response status code.</td>
+</tr>
+<tr>
+<td><code>duration_ms</code></td>
+<td>float or null</td>
+<td>Measured duration in milliseconds.</td>
+</tr>
+<tr>
+<td><code>reason</code></td>
+<td>string or null</td>
+<td>Human-readable reason, especially for denials / failures.</td>
+</tr>
+<tr>
+<td><code>metadata</code></td>
+<td>object</td>
+<td>Action-specific fields. Redacted before emit.</td>
 </tr>
 </tbody>
 </table>
-<h3 id="create-agent">Create Agent<a class="headerlink" href="#create-agent" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>http://localhost:8000/api/v1/agents<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{</span>
-<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="s1">    &quot;name&quot;: &quot;my-agent&quot;,</span>
-<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="s1">    &quot;model&quot;: &quot;us.anthropic.claude-sonnet-4-20250514-v1:0&quot;,</span>
-<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="s1">    &quot;description&quot;: &quot;A helpful assistant&quot;,</span>
-<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="s1">    &quot;system_prompt&quot;: &quot;You are helpful.&quot;,</span>
-<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="s1">    &quot;primitives&quot;: {</span>
-<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="s1">      &quot;memory&quot;: {&quot;enabled&quot;: true, &quot;namespace&quot;: &quot;agent:{agent_name}&quot;}</span>
-<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="s1">    },</span>
-<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="s1">    &quot;hooks&quot;: {&quot;auto_memory&quot;: true, &quot;auto_trace&quot;: false},</span>
-<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="s1">    &quot;max_turns&quot;: 20</span>
-<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="s1">  }&#39;</span>
-</code></pre></div>
-<h2 id="chat">Chat<a class="headerlink" href="#chat" title="Permanent link">&para;</a></h2>
+<h2 id="action-taxonomy">Action Taxonomy<a class="headerlink" href="#action-taxonomy" title="Permanent link">&para;</a></h2>
+<p>All action constants live in <code>agentic_primitives_gateway.audit.models.AuditAction</code>. The first segment (before <code>.</code>) is the <strong>category</strong> and forms the Prometheus label on <code>gateway_audit_events_total</code>.</p>
+<h3 id="authentication">Authentication<a class="headerlink" href="#authentication" title="Permanent link">&para;</a></h3>
 <table>
 <thead>
 <tr>
-<th>Method</th>
-<th>Path</th>
-<th>Description</th>
+<th>Action</th>
+<th>Outcome</th>
+<th>Emitted by</th>
+<th>Key metadata</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><code>POST</code></td>
-<td><code>/{name}/chat</code></td>
-<td>Non-streaming chat</td>
+<td><code>auth.success</code></td>
+<td><code>success</code></td>
+<td><code>AuthenticationMiddleware</code></td>
+<td><code>backend</code></td>
 </tr>
 <tr>
-<td><code>POST</code></td>
-<td><code>/{name}/chat/stream</code></td>
-<td>SSE streaming chat (background task)</td>
+<td><code>auth.failure</code></td>
+<td><code>failure</code></td>
+<td><code>AuthenticationMiddleware</code></td>
+<td><code>backend</code>, <code>reason</code></td>
+</tr>
+<tr>
+<td><code>auth.logout</code></td>
+<td><code>success</code></td>
+<td>Reserved (UI-initiated logout)</td>
+<td></td>
 </tr>
 </tbody>
 </table>
-<h3 id="non-streaming-chat">Non-Streaming Chat<a class="headerlink" href="#non-streaming-chat" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>http://localhost:8000/api/v1/agents/my-agent/chat<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;message&quot;: &quot;Hello!&quot;, &quot;session_id&quot;: &quot;optional-session-id&quot;}&#39;</span>
-</code></pre></div>
-<p>Response:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="p">{</span>
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">&quot;response&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Hello! How can I help you?&quot;</span><span class="p">,</span>
-<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">  </span><span class="nt">&quot;session_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;abc123&quot;</span><span class="p">,</span>
-<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">  </span><span class="nt">&quot;agent_name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;my-agent&quot;</span><span class="p">,</span>
-<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">  </span><span class="nt">&quot;turns_used&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
-<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="w">  </span><span class="nt">&quot;tools_called&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[],</span>
-<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="w">  </span><span class="nt">&quot;artifacts&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[],</span>
-<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="w">  </span><span class="nt">&quot;metadata&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;trace_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;...&quot;</span><span class="p">}</span>
-<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="p">}</span>
-</code></pre></div>
-<h3 id="streaming-chat">Streaming Chat<a class="headerlink" href="#streaming-chat" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>curl<span class="w"> </span>-N<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>http://localhost:8000/api/v1/agents/my-agent/chat/stream<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;message&quot;: &quot;Hello!&quot;, &quot;session_id&quot;: &quot;my-session&quot;}&#39;</span>
-</code></pre></div>
-<p>Returns <code>text/event-stream</code>. The run executes in a background task: if the client disconnects, the run completes and stores the conversation turn. See <a href="../../concepts/streaming/">Streaming</a> for event types.</p>
-<h2 id="sessions">Sessions<a class="headerlink" href="#sessions" title="Permanent link">&para;</a></h2>
-<p>Each chat uses a <code>session_id</code> to track conversation history. Multiple sessions can exist per agent.</p>
+<h3 id="policy-enforcement">Policy Enforcement<a class="headerlink" href="#policy-enforcement" title="Permanent link">&para;</a></h3>
 <table>
 <thead>
 <tr>
-<th>Method</th>
-<th>Path</th>
-<th>Description</th>
+<th>Action</th>
+<th>Outcome</th>
+<th>Emitted by</th>
+<th>Key metadata</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><code>GET</code></td>
-<td><code>/{name}/sessions</code></td>
-<td>List all sessions for this agent</td>
+<td><code>policy.allow</code></td>
+<td><code>allow</code></td>
+<td><code>PolicyEnforcementMiddleware</code></td>
+<td><code>cedar_principal</code>, <code>cedar_action</code></td>
 </tr>
 <tr>
-<td><code>POST</code></td>
-<td><code>/{name}/sessions/cleanup</code></td>
-<td>Delete old sessions, keeping most recent N</td>
+<td><code>policy.deny</code></td>
+<td><code>deny</code></td>
+<td><code>PolicyEnforcementMiddleware</code></td>
+<td><code>cedar_principal</code>, <code>cedar_action</code>, <code>reason</code></td>
 </tr>
 <tr>
-<td><code>GET</code></td>
-<td><code>/{name}/sessions/{session_id}</code></td>
-<td>Get conversation history</td>
+<td><code>policy.create/update/delete</code></td>
+<td><code>success</code></td>
+<td><code>routes/policy.py</code></td>
+<td><code>engine_id</code></td>
 </tr>
 <tr>
-<td><code>GET</code></td>
-<td><code>/{name}/sessions/{session_id}/status</code></td>
-<td>Check if a background run is active (<code>"running"</code> or <code>"idle"</code>)</td>
+<td><code>policy.engine.create/delete</code></td>
+<td><code>success</code></td>
+<td><code>routes/policy.py</code></td>
+<td><code>name</code></td>
 </tr>
 <tr>
-<td><code>GET</code></td>
-<td><code>/{name}/sessions/{session_id}/stream</code></td>
-<td>SSE reconnect stream</td>
-</tr>
-<tr>
-<td><code>DELETE</code></td>
-<td><code>/{name}/sessions/{session_id}/run</code></td>
-<td>Cancel active run</td>
-</tr>
-<tr>
-<td><code>DELETE</code></td>
-<td><code>/{name}/sessions/{session_id}</code></td>
-<td>Delete session history</td>
+<td><code>policy.load</code></td>
+<td><code>success</code></td>
+<td>Reserved (Cedar refresh)</td>
+<td></td>
 </tr>
 </tbody>
 </table>
-<h3 id="sse-reconnect-stream">SSE Reconnect Stream<a class="headerlink" href="#sse-reconnect-stream" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>curl<span class="w"> </span>-N<span class="w"> </span>http://localhost:8000/api/v1/agents/my-agent/sessions/my-session/stream
-</code></pre></div>
-<p>Reconnects to a running or recently-completed session. Replays all stored events from the event store with token throttling for smooth playback, then polls for new events if the run is still active. Stays open for up to 3 minutes waiting for a resumed run. Returns <code>text/event-stream</code>.</p>
-<h3 id="cancel-active-run">Cancel Active Run<a class="headerlink" href="#cancel-active-run" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>DELETE<span class="w"> </span>http://localhost:8000/api/v1/agents/my-agent/sessions/my-session/run
-</code></pre></div>
-<p>Cancels the background task for this session. The checkpoint is deleted, the event store status is set to <code>"cancelled"</code>, and conversation history up to the cancellation point is preserved.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="p">{</span><span class="nt">&quot;status&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;cancelled&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;session_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;my-session&quot;</span><span class="p">}</span>
-</code></pre></div>
-<p>Returns 404 if no active run exists for the session.</p>
-<h3 id="list-sessions">List Sessions<a class="headerlink" href="#list-sessions" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>curl<span class="w"> </span>http://localhost:8000/api/v1/agents/my-agent/sessions
-</code></pre></div>
-<h3 id="get-session-history">Get Session History<a class="headerlink" href="#get-session-history" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>curl<span class="w"> </span>http://localhost:8000/api/v1/agents/my-agent/sessions/my-session
-</code></pre></div>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="p">{</span>
-<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="w">  </span><span class="nt">&quot;agent_name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;my-agent&quot;</span><span class="p">,</span>
-<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="w">  </span><span class="nt">&quot;session_id&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;my-session&quot;</span><span class="p">,</span>
-<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="w">  </span><span class="nt">&quot;messages&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
-<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="w">    </span><span class="p">{</span><span class="nt">&quot;role&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;user&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;content&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Hello!&quot;</span><span class="p">},</span>
-<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a><span class="w">    </span><span class="p">{</span><span class="nt">&quot;role&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;assistant&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;content&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Hi! How can I help?&quot;</span><span class="p">}</span>
-<a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a><span class="w">  </span><span class="p">]</span>
-<a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a><span class="p">}</span>
-</code></pre></div>
-<h3 id="check-background-run-status">Check Background Run Status<a class="headerlink" href="#check-background-run-status" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>curl<span class="w"> </span>http://localhost:8000/api/v1/agents/my-agent/sessions/my-session/status
-</code></pre></div>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="p">{</span><span class="nt">&quot;status&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;running&quot;</span><span class="p">}</span>
-</code></pre></div>
-<p>Returns <code>"running"</code> if a background task is actively processing this session, <code>"idle"</code> otherwise. The UI uses this to show a "working in the background" indicator and poll for completion.</p>
-<h2 id="export">Export<a class="headerlink" href="#export" title="Permanent link">&para;</a></h2>
+<h3 id="credentials">Credentials<a class="headerlink" href="#credentials" title="Permanent link">&para;</a></h3>
 <table>
 <thead>
 <tr>
-<th>Method</th>
-<th>Path</th>
-<th>Description</th>
+<th>Action</th>
+<th>Outcome</th>
+<th>Emitted by</th>
+<th>Key metadata</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><code>GET</code></td>
-<td><code>/{name}/export</code></td>
-<td>Export agent as a standalone Python script</td>
+<td><code>credential.resolve</code></td>
+<td><code>success</code></td>
+<td><code>CredentialResolutionMiddleware</code></td>
+<td><code>services</code> (names only), <code>source</code></td>
+</tr>
+<tr>
+<td><code>credential.read</code></td>
+<td><code>success</code></td>
+<td><code>routes/credentials.py</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>credential.write</code></td>
+<td><code>success</code>/<code>failure</code>/<code>error</code></td>
+<td><code>routes/credentials.py</code></td>
+<td><code>keys</code> (names only), <code>reason</code></td>
+</tr>
+<tr>
+<td><code>credential.delete</code></td>
+<td><code>success</code>/<code>failure</code>/<code>error</code></td>
+<td><code>routes/credentials.py</code></td>
+<td><code>keys</code>, <code>reason</code></td>
 </tr>
 </tbody>
 </table>
-<h3 id="export-agent">Export Agent<a class="headerlink" href="#export-agent" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>curl<span class="w"> </span>http://localhost:8000/api/v1/agents/my-agent/export<span class="w"> </span>-o<span class="w"> </span>my-agent.py
+<p>Credential events <strong>never</strong> log values — only attribute names.</p>
+<h3 id="agents">Agents<a class="headerlink" href="#agents" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>Outcome</th>
+<th>Emitted by</th>
+<th>Key metadata</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>agent.create</code></td>
+<td><code>success</code></td>
+<td><code>routes/agents.py</code></td>
+<td><code>model</code></td>
+</tr>
+<tr>
+<td><code>agent.update</code></td>
+<td><code>success</code></td>
+<td><code>routes/agents.py</code></td>
+<td><code>fields</code></td>
+</tr>
+<tr>
+<td><code>agent.delete</code></td>
+<td><code>success</code></td>
+<td><code>routes/agents.py</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>agent.run.start</code></td>
+<td><code>success</code></td>
+<td><code>AgentRunner</code></td>
+<td><code>session_id</code>, <code>depth</code></td>
+</tr>
+<tr>
+<td><code>agent.run.complete</code></td>
+<td><code>success</code></td>
+<td><code>AgentRunner</code></td>
+<td><code>session_id</code>, <code>depth</code>, <code>turns_used</code>, <code>tools_called</code></td>
+</tr>
+<tr>
+<td><code>agent.run.failed</code></td>
+<td><code>error</code></td>
+<td><code>AgentRunner</code></td>
+<td><code>session_id</code>, <code>depth</code></td>
+</tr>
+<tr>
+<td><code>agent.run.cancelled</code></td>
+<td><code>deny</code></td>
+<td><code>AgentRunner</code></td>
+<td><code>session_id</code>, <code>depth</code></td>
+</tr>
+<tr>
+<td><code>agent.delegate</code></td>
+<td><code>success</code></td>
+<td>Reserved (sub-agent call)</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<h3 id="teams">Teams<a class="headerlink" href="#teams" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>Outcome</th>
+<th>Emitted by</th>
+<th>Key metadata</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>team.create</code></td>
+<td><code>success</code></td>
+<td><code>routes/teams.py</code></td>
+<td><code>workers</code>, <code>planner</code>, <code>synthesizer</code></td>
+</tr>
+<tr>
+<td><code>team.update</code></td>
+<td><code>success</code></td>
+<td><code>routes/teams.py</code></td>
+<td><code>fields</code></td>
+</tr>
+<tr>
+<td><code>team.delete</code></td>
+<td><code>success</code></td>
+<td><code>routes/teams.py</code></td>
+<td></td>
+</tr>
+<tr>
+<td><code>team.run.start</code></td>
+<td><code>success</code></td>
+<td><code>TeamRunner</code></td>
+<td><code>team_run_id</code></td>
+</tr>
+<tr>
+<td><code>team.run.complete</code></td>
+<td><code>success</code></td>
+<td><code>TeamRunner</code></td>
+<td><code>team_run_id</code></td>
+</tr>
+<tr>
+<td><code>team.run.failed</code></td>
+<td><code>error</code></td>
+<td><code>TeamRunner</code></td>
+<td><code>team_run_id</code></td>
+</tr>
+<tr>
+<td><code>team.run.cancelled</code></td>
+<td><code>deny</code></td>
+<td><code>TeamRunner</code></td>
+<td><code>team_run_id</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="tools-and-llm">Tools and LLM<a class="headerlink" href="#tools-and-llm" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>Outcome</th>
+<th>Emitted by</th>
+<th>Key metadata</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>tool.call</code></td>
+<td><code>success</code>/<code>failure</code></td>
+<td><code>agents/tools/catalog.execute_tool</code></td>
+<td><code>tool_name</code>, <code>primitive</code>, <code>duration_ms</code>, <code>error_type</code></td>
+</tr>
+<tr>
+<td><code>llm.generate</code></td>
+<td><code>success</code>/<code>error</code></td>
+<td><code>LLMProvider</code> ABC (automatic)</td>
+<td><code>model</code>, <code>input_tokens</code>, <code>output_tokens</code>, <code>error_type</code></td>
+</tr>
+</tbody>
+</table>
+<p>Tool events <strong>never</strong> log tool input (the LLM may pass credentials through tool arguments).</p>
+<h3 id="resource-access">Resource Access<a class="headerlink" href="#resource-access" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>Outcome</th>
+<th>Emitted by</th>
+<th>Key metadata</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>resource.access.denied</code></td>
+<td><code>deny</code></td>
+<td><code>auth/access.py</code></td>
+<td><code>resource_owner</code>, <code>resource_type_hint</code>, <code>reason</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="http-provider-call-sessions">HTTP + Provider Call + Sessions<a class="headerlink" href="#http-provider-call-sessions" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>Outcome</th>
+<th>Emitted by</th>
+<th>Key metadata</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>http.request</code></td>
+<td><code>success</code>/<code>failure</code></td>
+<td><code>AuditMiddleware</code></td>
+<td>method, path, status, duration, source_ip, user_agent</td>
+</tr>
+<tr>
+<td><code>provider.call</code></td>
+<td><code>success</code>/<code>failure</code></td>
+<td><code>MetricsProxy</code> (every wrapped primitive method)</td>
+<td><code>primitive</code>, <code>provider</code>, <code>method</code>, <code>duration_ms</code></td>
+</tr>
+<tr>
+<td><code>session.create/terminate</code></td>
+<td><code>success</code></td>
+<td>Reserved</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<h2 id="outcome-values">Outcome Values<a class="headerlink" href="#outcome-values" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="k">class</span><span class="w"> </span><span class="nc">AuditOutcome</span><span class="p">(</span><span class="n">StrEnum</span><span class="p">):</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>    <span class="n">ALLOW</span>   <span class="o">=</span> <span class="s2">&quot;allow&quot;</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>    <span class="n">DENY</span>    <span class="o">=</span> <span class="s2">&quot;deny&quot;</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>    <span class="n">SUCCESS</span> <span class="o">=</span> <span class="s2">&quot;success&quot;</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>    <span class="n">FAILURE</span> <span class="o">=</span> <span class="s2">&quot;failure&quot;</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>    <span class="n">ERROR</span>   <span class="o">=</span> <span class="s2">&quot;error&quot;</span>
 </code></pre></div>
-<p>Generates a self-contained Python script that uses <code>agentic-primitives-gateway-client</code> for primitive calls (memory, browser, code interpreter) and raw <code>boto3</code> Bedrock <code>converse()</code> for the LLM tool-call loop. The exported script:</p>
+<table>
+<thead>
+<tr>
+<th>Value</th>
+<th>Use for</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>allow</code></td>
+<td>Policy permit</td>
+</tr>
+<tr>
+<td><code>deny</code></td>
+<td>Policy deny, access denial, cancelled run</td>
+</tr>
+<tr>
+<td><code>success</code></td>
+<td>Successful mutation or HTTP 2xx</td>
+</tr>
+<tr>
+<td><code>failure</code></td>
+<td>Expected failure (auth rejected, 4xx, validation)</td>
+</tr>
+<tr>
+<td><code>error</code></td>
+<td>Unexpected failure (exception, 5xx)</td>
+</tr>
+</tbody>
+</table>
+<h2 id="resource-types">Resource Types<a class="headerlink" href="#resource-types" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="k">class</span><span class="w"> </span><span class="nc">ResourceType</span><span class="p">(</span><span class="n">StrEnum</span><span class="p">):</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>    <span class="n">AGENT</span>         <span class="o">=</span> <span class="s2">&quot;agent&quot;</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>    <span class="n">TEAM</span>          <span class="o">=</span> <span class="s2">&quot;team&quot;</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>    <span class="n">POLICY</span>        <span class="o">=</span> <span class="s2">&quot;policy&quot;</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>    <span class="n">POLICY_ENGINE</span> <span class="o">=</span> <span class="s2">&quot;policy_engine&quot;</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>    <span class="n">CREDENTIAL</span>    <span class="o">=</span> <span class="s2">&quot;credential&quot;</span>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>    <span class="n">SESSION</span>       <span class="o">=</span> <span class="s2">&quot;session&quot;</span>
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>    <span class="n">TOOL</span>          <span class="o">=</span> <span class="s2">&quot;tool&quot;</span>
+<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>    <span class="n">HTTP</span>          <span class="o">=</span> <span class="s2">&quot;http&quot;</span>
+<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a>    <span class="n">MEMORY</span>        <span class="o">=</span> <span class="s2">&quot;memory&quot;</span>
+<a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a>    <span class="n">USER</span>          <span class="o">=</span> <span class="s2">&quot;user&quot;</span>
+<a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a>    <span class="n">LLM</span>           <span class="o">=</span> <span class="s2">&quot;llm&quot;</span>
+</code></pre></div>
+<h2 id="redaction">Redaction<a class="headerlink" href="#redaction" title="Permanent link">&para;</a></h2>
+<p>Three layers keep secrets out of audit output:</p>
+<ol>
+<li><strong>Per-emit deny-list.</strong> <code>redact_mapping()</code> in <code>audit/redaction.py</code> walks the <code>metadata</code> dict and replaces values for known-sensitive keys (<code>authorization</code>, <code>cookie</code>, <code>password</code>, <code>token</code>, <code>secret</code>, <code>api_key</code>, <code>x-aws-secret-access-key</code>, <code>x-aws-session-token</code>, any key listed in <code>audit.redact_keys</code>) with <code>"***"</code>.</li>
+<li><strong>Principal ID hashing.</strong> Set <code>audit.redact_principal_id: true</code> to replace <code>actor_id</code> with a 16-char SHA-256 prefix before emit. Useful for multi-tenant k8s deployments.</li>
+<li><strong>Log sanitization.</strong> Separate from audit events, <code>LogSanitizationFilter</code> scrubs Bearer tokens, AWS access keys, JWT three-part tokens, and <code>apg.*</code> key=value pairs from rendered log messages.</li>
+</ol>
+<h2 id="schema-evolution">Schema Evolution<a class="headerlink" href="#schema-evolution" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Includes all tool definitions matching the agent's enabled primitives</li>
-<li>Generates sub-agent delegation code if the agent uses agent-as-tool</li>
-<li>Generates shared memory pool tools if <code>shared_namespaces</code> is configured</li>
-<li>Handles JWT token refresh automatically</li>
-<li>Manages browser/code_interpreter sessions with lazy initialization and cleanup</li>
+<li><strong>Additive changes</strong> within <code>schema_version: "1"</code> are allowed: new optional fields, new actions, new metadata keys.</li>
+<li><strong>Breaking changes</strong> (rename / remove / type change) bump to <code>schema_version: "2"</code>.</li>
+<li>Consumers must tolerate unknown fields — don't reject events because of a new key.</li>
+<li>Emitting code is on one version at a time; consumers decide their compatibility window.</li>
 </ul>
-<p>The response has <code>Content-Type: text/x-python</code> and <code>Content-Disposition: attachment</code>.</p>
-<h2 id="session-cleanup">Session Cleanup<a class="headerlink" href="#session-cleanup" title="Permanent link">&para;</a></h2>
+<h2 id="sink-configuration">Sink Configuration<a class="headerlink" href="#sink-configuration" title="Permanent link">&para;</a></h2>
+<p>Sinks are configured in the <code>audit:</code> block of the server YAML. Each entry has a stable <code>name</code> (used as the <code>sink</code> metric label) and a <code>backend</code> (short alias or dotted class path).</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nt">audit</span><span class="p">:</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span><span class="nt">enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span><span class="nt">stdout_json</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span><span class="w">           </span><span class="c1"># always-on unless explicitly disabled</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">  </span><span class="nt">sinks</span><span class="p">:</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">local_file</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w">      </span><span class="nt">backend</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">file</span>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="w">      </span><span class="nt">config</span><span class="p">:</span>
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="w">        </span><span class="nt">path</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/var/log/apg/audit.log</span>
+<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="w">        </span><span class="nt">max_bytes</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">10485760</span>
+<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="w">        </span><span class="nt">backup_count</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">5</span>
+<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">durable</span>
+<a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a><span class="w">      </span><span class="nt">backend</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">redis_stream</span>
+<a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a><span class="w">      </span><span class="nt">config</span><span class="p">:</span>
+<a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a><span class="w">        </span><span class="nt">redis_url</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;${REDIS_URL:=redis://localhost:6379/0}&quot;</span>
+<a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a><span class="w">        </span><span class="nt">stream</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;gateway:audit&quot;</span>
+<a id="__codelineno-3-16" name="__codelineno-3-16" href="#__codelineno-3-16"></a><span class="w">        </span><span class="nt">maxlen</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">100000</span>
+<a id="__codelineno-3-17" name="__codelineno-3-17" href="#__codelineno-3-17"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">traces</span>
+<a id="__codelineno-3-18" name="__codelineno-3-18" href="#__codelineno-3-18"></a><span class="w">      </span><span class="nt">backend</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">observability</span>
+<a id="__codelineno-3-19" name="__codelineno-3-19" href="#__codelineno-3-19"></a><span class="w">  </span><span class="nt">redact_keys</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[]</span><span class="w">            </span><span class="c1"># extra keys to scrub in metadata</span>
+<a id="__codelineno-3-20" name="__codelineno-3-20" href="#__codelineno-3-20"></a><span class="w">  </span><span class="nt">redact_principal_id</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">false</span><span class="w"> </span><span class="c1"># hash actor_id before emit</span>
+<a id="__codelineno-3-21" name="__codelineno-3-21" href="#__codelineno-3-21"></a><span class="w">  </span><span class="nt">queue_size</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">2048</span><span class="w">           </span><span class="c1"># per-sink queue bound</span>
+<a id="__codelineno-3-22" name="__codelineno-3-22" href="#__codelineno-3-22"></a><span class="w">  </span><span class="nt">sink_timeout_seconds</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">2.0</span><span class="w">  </span><span class="c1"># per-emit timeout per sink</span>
+<a id="__codelineno-3-23" name="__codelineno-3-23" href="#__codelineno-3-23"></a>
+<a id="__codelineno-3-24" name="__codelineno-3-24" href="#__codelineno-3-24"></a><span class="nt">logging</span><span class="p">:</span>
+<a id="__codelineno-3-25" name="__codelineno-3-25" href="#__codelineno-3-25"></a><span class="w">  </span><span class="nt">format</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">json</span><span class="w">              </span><span class="c1"># text | json</span>
+<a id="__codelineno-3-26" name="__codelineno-3-26" href="#__codelineno-3-26"></a><span class="w">  </span><span class="nt">sanitize</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span><span class="w">            </span><span class="c1"># install LogSanitizationFilter</span>
+</code></pre></div>
+<h3 id="built-in-sink-aliases">Built-in Sink Aliases<a class="headerlink" href="#built-in-sink-aliases" title="Permanent link">&para;</a></h3>
 <table>
 <thead>
 <tr>
-<th>Method</th>
-<th>Path</th>
-<th>Description</th>
+<th>Alias</th>
+<th>Class</th>
+<th>Use for</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><code>POST</code></td>
-<td><code>/{name}/sessions/cleanup</code></td>
-<td>Delete old sessions, keeping the most recent N</td>
+<td><code>noop</code></td>
+<td><code>NoopAuditSink</code></td>
+<td>Tests; disabled audit</td>
+</tr>
+<tr>
+<td><code>stdout_json</code></td>
+<td><code>StdoutJsonSink</code></td>
+<td>Default; k8s log shipping</td>
+</tr>
+<tr>
+<td><code>file</code></td>
+<td><code>RotatingFileAuditSink</code></td>
+<td>Local or sidecar tail</td>
+</tr>
+<tr>
+<td><code>redis_stream</code></td>
+<td><code>RedisStreamAuditSink</code></td>
+<td>Durable cross-replica bus</td>
+</tr>
+<tr>
+<td><code>observability</code></td>
+<td><code>ObservabilityProviderSink</code></td>
+<td>Route into Langfuse / AgentCore via <code>registry.observability.ingest_log</code></td>
 </tr>
 </tbody>
 </table>
-<h3 id="cleanup-sessions">Cleanup Sessions<a class="headerlink" href="#cleanup-sessions" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span><span class="s2">&quot;http://localhost:8000/api/v1/agents/my-agent/sessions/cleanup?keep=5&quot;</span>
+<h3 id="custom-sinks">Custom Sinks<a class="headerlink" href="#custom-sinks" title="Permanent link">&para;</a></h3>
+<p>Implement <code>AuditSink</code> and reference by dotted path:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">agentic_primitives_gateway.audit.base</span><span class="w"> </span><span class="kn">import</span> <span class="n">AuditSink</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">agentic_primitives_gateway.audit.models</span><span class="w"> </span><span class="kn">import</span> <span class="n">AuditEvent</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="k">class</span><span class="w"> </span><span class="nc">MySink</span><span class="p">(</span><span class="n">AuditSink</span><span class="p">):</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;mine&quot;</span><span class="p">,</span> <span class="o">**</span><span class="n">config</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>        <span class="bp">self</span><span class="o">.</span><span class="n">name</span> <span class="o">=</span> <span class="n">name</span>
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>
+<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">emit</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">event</span><span class="p">:</span> <span class="n">AuditEvent</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a>        <span class="o">...</span>
+<a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a>
+<a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a>    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">close</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a>        <span class="o">...</span>
 </code></pre></div>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="p">{</span><span class="nt">&quot;deleted&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">12</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;kept&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">5</span><span class="p">}</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nt">audit</span><span class="p">:</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span><span class="nt">sinks</span><span class="p">:</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">mine</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">      </span><span class="nt">backend</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">myapp.audit.MySink</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">      </span><span class="nt">config</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nv">...</span><span class="p p-Indicator">}</span>
 </code></pre></div>
-<p>Deletes old sessions sorted by last activity, preserving the <code>keep</code> most recent ones (default: 5).</p>
-<h2 id="introspection">Introspection<a class="headerlink" href="#introspection" title="Permanent link">&para;</a></h2>
-<table>
-<thead>
-<tr>
-<th>Method</th>
-<th>Path</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>GET</code></td>
-<td><code>/{name}/tools</code></td>
-<td>List tools available to this agent with provider info</td>
-</tr>
-<tr>
-<td><code>GET</code></td>
-<td><code>/{name}/memory</code></td>
-<td>Introspect memory stores (namespaces + contents)</td>
-</tr>
-<tr>
-<td><code>GET</code></td>
-<td><code>/tool-catalog</code></td>
-<td>List all primitives and their available tools with input schemas</td>
-</tr>
-</tbody>
-</table>
-<h3 id="list-agent-tools">List Agent Tools<a class="headerlink" href="#list-agent-tools" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>curl<span class="w"> </span>http://localhost:8000/api/v1/agents/my-agent/tools
+<h3 id="read-back-via-auditreader">Read-back via <code>AuditReader</code><a class="headerlink" href="#read-back-via-auditreader" title="Permanent link">&para;</a></h3>
+<p>The UI audit viewer (<code>/ui/audit</code>) and the <code>GET /api/v1/audit/{status,events,events/stream}</code>
+endpoints are backend-agnostic — they iterate <code>router.sinks</code> and dispatch
+against the first sink that implements the <code>AuditReader</code> protocol:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">collections.abc</span><span class="w"> </span><span class="kn">import</span> <span class="n">AsyncIterator</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="kn">from</span><span class="w"> </span><span class="nn">agentic_primitives_gateway.audit.base</span><span class="w"> </span><span class="kn">import</span> <span class="n">AuditReader</span><span class="p">,</span> <span class="n">AuditSink</span>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="kn">from</span><span class="w"> </span><span class="nn">agentic_primitives_gateway.audit.models</span><span class="w"> </span><span class="kn">import</span> <span class="n">AuditEvent</span>
+<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>
+<a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="k">class</span><span class="w"> </span><span class="nc">MyDurableSink</span><span class="p">(</span><span class="n">AuditSink</span><span class="p">):</span>
+<a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Write-only.  UI viewer will ignore this sink.&quot;&quot;&quot;</span>
+<a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a>    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">emit</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">event</span><span class="p">:</span> <span class="n">AuditEvent</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span> <span class="o">...</span>
+<a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a>
+<a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a><span class="k">class</span><span class="w"> </span><span class="nc">MyQueryableSink</span><span class="p">(</span><span class="n">AuditSink</span><span class="p">):</span>
+<a id="__codelineno-6-12" name="__codelineno-6-12" href="#__codelineno-6-12"></a><span class="w">    </span><span class="sd">&quot;&quot;&quot;Implements AuditReader too — UI viewer can query it.&quot;&quot;&quot;</span>
+<a id="__codelineno-6-13" name="__codelineno-6-13" href="#__codelineno-6-13"></a>    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">emit</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">event</span><span class="p">:</span> <span class="n">AuditEvent</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span> <span class="o">...</span>
+<a id="__codelineno-6-14" name="__codelineno-6-14" href="#__codelineno-6-14"></a>
+<a id="__codelineno-6-15" name="__codelineno-6-15" href="#__codelineno-6-15"></a>    <span class="c1"># AuditReader protocol — surfaces in /api/v1/audit/*.</span>
+<a id="__codelineno-6-16" name="__codelineno-6-16" href="#__codelineno-6-16"></a>    <span class="k">def</span><span class="w"> </span><span class="nf">describe</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]:</span>
+<a id="__codelineno-6-17" name="__codelineno-6-17" href="#__codelineno-6-17"></a>        <span class="k">return</span> <span class="p">{</span><span class="s2">&quot;backend&quot;</span><span class="p">:</span> <span class="s2">&quot;my_queryable&quot;</span><span class="p">,</span> <span class="s2">&quot;retention_days&quot;</span><span class="p">:</span> <span class="mi">90</span><span class="p">}</span>
+<a id="__codelineno-6-18" name="__codelineno-6-18" href="#__codelineno-6-18"></a>
+<a id="__codelineno-6-19" name="__codelineno-6-19" href="#__codelineno-6-19"></a>    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">count</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span> <span class="o">...</span>
+<a id="__codelineno-6-20" name="__codelineno-6-20" href="#__codelineno-6-20"></a>
+<a id="__codelineno-6-21" name="__codelineno-6-21" href="#__codelineno-6-21"></a>    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">list_events</span><span class="p">(</span>
+<a id="__codelineno-6-22" name="__codelineno-6-22" href="#__codelineno-6-22"></a>        <span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">start</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">end</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">count</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+<a id="__codelineno-6-23" name="__codelineno-6-23" href="#__codelineno-6-23"></a>    <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">list</span><span class="p">[</span><span class="n">AuditEvent</span><span class="p">],</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">]:</span> <span class="o">...</span>
+<a id="__codelineno-6-24" name="__codelineno-6-24" href="#__codelineno-6-24"></a>
+<a id="__codelineno-6-25" name="__codelineno-6-25" href="#__codelineno-6-25"></a>    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">tail</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">AsyncIterator</span><span class="p">[</span><span class="n">AuditEvent</span> <span class="o">|</span> <span class="kc">None</span><span class="p">]:</span>
+<a id="__codelineno-6-26" name="__codelineno-6-26" href="#__codelineno-6-26"></a><span class="w">        </span><span class="sd">&quot;&quot;&quot;Yield new events or ``None`` as a keepalive tick.&quot;&quot;&quot;</span>
+<a id="__codelineno-6-27" name="__codelineno-6-27" href="#__codelineno-6-27"></a>        <span class="o">...</span>
 </code></pre></div>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="p">{</span>
-<a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a><span class="w">  </span><span class="nt">&quot;agent_name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;my-agent&quot;</span><span class="p">,</span>
-<a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a><span class="w">  </span><span class="nt">&quot;tools&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
-<a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a><span class="w">    </span><span class="p">{</span><span class="nt">&quot;name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;remember&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;description&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Store information...&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;primitive&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;memory&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;provider&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;in_memory&quot;</span><span class="p">},</span>
-<a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a><span class="w">    </span><span class="p">{</span><span class="nt">&quot;name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;recall&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;description&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Retrieve a memory...&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;primitive&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;memory&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;provider&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;in_memory&quot;</span><span class="p">}</span>
-<a id="__codelineno-16-6" name="__codelineno-16-6" href="#__codelineno-16-6"></a><span class="w">  </span><span class="p">]</span>
-<a id="__codelineno-16-7" name="__codelineno-16-7" href="#__codelineno-16-7"></a><span class="p">}</span>
-</code></pre></div>
-<h3 id="tool-catalog">Tool Catalog<a class="headerlink" href="#tool-catalog" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a>curl<span class="w"> </span>http://localhost:8000/api/v1/agents/tool-catalog
-</code></pre></div>
-<p>Returns all available primitives and their tools, including JSON Schema <code>input_schema</code> for each tool. Clients can use this to dynamically build framework-specific tool wrappers.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a><span class="p">{</span>
-<a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a><span class="w">  </span><span class="nt">&quot;primitives&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a><span class="w">    </span><span class="nt">&quot;memory&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
-<a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a><span class="w">      </span><span class="p">{</span><span class="nt">&quot;name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;remember&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;description&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Store information in long-term memory.&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;input_schema&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;object&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;properties&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;key&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;string&quot;</span><span class="p">},</span><span class="w"> </span><span class="nt">&quot;content&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;string&quot;</span><span class="p">}},</span><span class="w"> </span><span class="nt">&quot;required&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;key&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;content&quot;</span><span class="p">]}},</span>
-<a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a><span class="w">      </span><span class="p">{</span><span class="nt">&quot;name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;recall&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;description&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Retrieve a memory by its exact key.&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;input_schema&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;object&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;properties&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;key&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;string&quot;</span><span class="p">}},</span><span class="w"> </span><span class="nt">&quot;required&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;key&quot;</span><span class="p">]}}</span>
-<a id="__codelineno-18-6" name="__codelineno-18-6" href="#__codelineno-18-6"></a><span class="w">    </span><span class="p">],</span>
-<a id="__codelineno-18-7" name="__codelineno-18-7" href="#__codelineno-18-7"></a><span class="w">    </span><span class="nt">&quot;code_interpreter&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="err">...</span><span class="p">],</span>
-<a id="__codelineno-18-8" name="__codelineno-18-8" href="#__codelineno-18-8"></a><span class="w">    </span><span class="nt">&quot;browser&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="err">...</span><span class="p">],</span>
-<a id="__codelineno-18-9" name="__codelineno-18-9" href="#__codelineno-18-9"></a><span class="w">    </span><span class="nt">&quot;tools&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="err">...</span><span class="p">],</span>
-<a id="__codelineno-18-10" name="__codelineno-18-10" href="#__codelineno-18-10"></a><span class="w">    </span><span class="nt">&quot;identity&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="err">...</span><span class="p">],</span>
-<a id="__codelineno-18-11" name="__codelineno-18-11" href="#__codelineno-18-11"></a><span class="w">    </span><span class="nt">&quot;shared_memory&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="err">...</span><span class="p">],</span>
-<a id="__codelineno-18-12" name="__codelineno-18-12" href="#__codelineno-18-12"></a><span class="w">    </span><span class="nt">&quot;task_board&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="err">...</span><span class="p">],</span>
-<a id="__codelineno-18-13" name="__codelineno-18-13" href="#__codelineno-18-13"></a><span class="w">    </span><span class="nt">&quot;agent_management&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="err">...</span><span class="p">],</span>
-<a id="__codelineno-18-14" name="__codelineno-18-14" href="#__codelineno-18-14"></a><span class="w">    </span><span class="nt">&quot;agents&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[]</span>
-<a id="__codelineno-18-15" name="__codelineno-18-15" href="#__codelineno-18-15"></a><span class="w">  </span><span class="p">}</span>
-<a id="__codelineno-18-16" name="__codelineno-18-16" href="#__codelineno-18-16"></a><span class="p">}</span>
-</code></pre></div>
+<p>Today only <code>RedisStreamAuditSink</code> implements <code>AuditReader</code>.  A custom
+Postgres, SQLite, or S3-index sink can plug in without changing the
+route layer or UI.  Write-only sinks (<code>stdout_json</code>, <code>file</code>,
+<code>observability</code>, <code>noop</code>) stay silent — their audit data is consumed
+externally (SIEM, Langfuse trace explorer, etc.).</p>
+<h2 id="see-also">See Also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="../../concepts/governance/">Governance</a> — conceptual overview</li>
+<li><a href="../../guides/observability/">Observability Guide</a> — SIEM / log-shipping recipes</li>
+<li><a href="../../guides/compliance/">Compliance Guide</a> — SOC2 / GDPR alignment</li>
+</ul>
 
 
 
