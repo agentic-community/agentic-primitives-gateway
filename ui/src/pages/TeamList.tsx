@@ -135,32 +135,35 @@ function TeamForm({ initial, mode: modeProp, onDone, onCancel }: TeamFormProps) 
           };
           await api.updateTeam(name, updates);
         } else if (isFork && initial) {
-          // Fork first, then layer edits on top as a new version if the
-          // user changed anything beyond the name.
+          // Fork first, then layer edits on top as a new version only if
+          // the user changed something.  We send ONLY the fields that
+          // actually differ from the pre-fork spec so we don't clobber
+          // the server's fork-time auto-qualification of planner /
+          // synthesizer / workers — those now carry the source owner's
+          // namespace (e.g. ``alice:analyst``) and the form state still
+          // holds the bare pre-fork name.
           const sourceQualified = `${initial.owner_id}:${initial.name}`;
           const forked = await api.forkTeam(sourceQualified, { target_name: name });
-          const edited =
-            description !== initial.description ||
-            planner !== initial.planner ||
-            synthesizer !== initial.synthesizer ||
-            JSON.stringify(workers) !== JSON.stringify(initial.workers) ||
-            globalMaxTurns !== initial.global_max_turns ||
-            globalTimeout !== initial.global_timeout_seconds ||
-            sharedMemory !== !!initial.shared_memory_namespace ||
-            JSON.stringify(sharedWith) !== JSON.stringify(initial.shared_with) ||
-            checkpointingEnabled !== initial.checkpointing_enabled;
-          if (edited) {
+          const changes: Record<string, unknown> = {};
+          if (description !== initial.description) changes.description = description;
+          if (planner !== initial.planner) changes.planner = planner;
+          if (synthesizer !== initial.synthesizer) changes.synthesizer = synthesizer;
+          if (JSON.stringify(workers) !== JSON.stringify(initial.workers))
+            changes.workers = workers;
+          if (globalMaxTurns !== initial.global_max_turns)
+            changes.global_max_turns = globalMaxTurns;
+          if (globalTimeout !== initial.global_timeout_seconds)
+            changes.global_timeout_seconds = globalTimeout;
+          if (sharedMemory !== !!initial.shared_memory_namespace)
+            changes.shared_memory_namespace = sharedMemory ? "team:{team_name}" : null;
+          if (JSON.stringify(sharedWith) !== JSON.stringify(initial.shared_with))
+            changes.shared_with = sharedWith;
+          if (checkpointingEnabled !== initial.checkpointing_enabled)
+            changes.checkpointing_enabled = checkpointingEnabled;
+          if (Object.keys(changes).length > 0) {
             const targetQualified = `${forked.owner_id}:${forked.team_name}`;
             await api.createTeamVersion(targetQualified, {
-              description,
-              planner,
-              synthesizer,
-              workers,
-              global_max_turns: globalMaxTurns,
-              global_timeout_seconds: globalTimeout,
-              shared_memory_namespace: sharedMemory ? "team:{team_name}" : null,
-              shared_with: sharedWith,
-              checkpointing_enabled: checkpointingEnabled,
+              ...changes,
               commit_message: "post-fork edits",
             });
           }

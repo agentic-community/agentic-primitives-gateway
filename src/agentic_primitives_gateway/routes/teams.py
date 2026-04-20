@@ -5,6 +5,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from starlette.responses import Response, StreamingResponse
 
+from agentic_primitives_gateway import metrics
 from agentic_primitives_gateway.agents.team_runner import TeamRunner
 from agentic_primitives_gateway.agents.team_store import TeamStore
 from agentic_primitives_gateway.audit.emit import emit_audit_event
@@ -63,6 +64,11 @@ def _get_store() -> TeamStore:
     return _store
 
 
+def _ns_kind(owner_id: str) -> str:
+    """Collapse ``owner_id`` → bounded metric label (``system`` or ``user``)."""
+    return "system" if owner_id == "system" else "user"
+
+
 @router.post("", response_model=TeamSpec, status_code=201)
 async def create_team(request: CreateTeamRequest) -> TeamSpec:
     """Create a new team identity in the caller's namespace.
@@ -98,6 +104,10 @@ async def create_team(request: CreateTeamRequest) -> TeamSpec:
             "version_id": version.version_id,
         },
     )
+    metrics.TEAM_VERSIONS_CREATED.labels(
+        ns_kind=_ns_kind(principal.id),
+        auto_deployed=str(version.status.value == "deployed").lower(),
+    ).inc()
     return version.spec
 
 
@@ -547,6 +557,10 @@ async def create_team_version(name: str, request: CreateTeamVersionRequest, owne
             "auto_deployed": version.status.value == "deployed",
         },
     )
+    metrics.TEAM_VERSIONS_CREATED.labels(
+        ns_kind=_ns_kind(existing.owner_id),
+        auto_deployed=str(version.status.value == "deployed").lower(),
+    ).inc()
     return version
 
 
@@ -594,6 +608,7 @@ async def approve_team_version(name: str, version_id: str, owner: str | None = N
             "approver_id": principal.id,
         },
     )
+    metrics.TEAM_VERSION_APPROVALS.labels(outcome="approved").inc()
     return version
 
 
@@ -628,6 +643,7 @@ async def reject_team_version(
             "reason_truncated": request.reason[:200],
         },
     )
+    metrics.TEAM_VERSION_APPROVALS.labels(outcome="rejected").inc()
     return version
 
 
@@ -655,6 +671,7 @@ async def deploy_team_version(name: str, version_id: str, owner: str | None = No
             "previous_version_id": previous.version_id if previous else None,
         },
     )
+    metrics.TEAM_VERSION_APPROVALS.labels(outcome="deployed").inc()
     return version
 
 
@@ -694,6 +711,7 @@ async def fork_team(name: str, request: ForkRequest, owner: str | None = None) -
             "target_version_id": version.version_id,
         },
     )
+    metrics.TEAM_FORKS.labels(source_ns_kind=_ns_kind(source.owner_id)).inc()
     return version
 
 

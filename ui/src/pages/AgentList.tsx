@@ -61,36 +61,36 @@ function AgentForm({ initial, mode: modeProp, onDone, onCancel }: AgentFormProps
           };
           await api.updateAgent(name, updates);
         } else if (isFork && initial) {
-          // Fork the source identity into the caller's namespace under the
-          // (possibly renamed) ``name``.  Then, if any other field was
-          // edited in the form, layer a new version on top of the freshly
-          // forked v1 so the user sees their edits immediately.
+          // Fork the source identity into the caller's namespace under
+          // the (possibly renamed) ``name``.  Only send the fields that
+          // actually differ, so we don't clobber the server's fork-time
+          // rewrite of ``primitives.agents.tools`` sub-refs (the form
+          // state still holds the pre-fork bare names).
           const sourceQualified = `${initial.owner_id}:${initial.name}`;
           const forked = await api.forkAgent(sourceQualified, {
             target_name: name,
           });
-          const edited =
-            model !== initial.model ||
-            description !== initial.description ||
-            systemPrompt !== initial.system_prompt ||
-            maxTurns !== initial.max_turns ||
-            temperature !== initial.temperature ||
-            JSON.stringify(primitives) !== JSON.stringify(initial.primitives) ||
-            JSON.stringify(providerOverrides) !== JSON.stringify(initial.provider_overrides) ||
-            JSON.stringify(sharedWith) !== JSON.stringify(initial.shared_with) ||
-            checkpointingEnabled !== initial.checkpointing_enabled;
-          if (edited) {
+          const changes: Record<string, unknown> = {};
+          if (model !== initial.model) changes.model = model;
+          if (description !== initial.description) changes.description = description;
+          if (systemPrompt !== initial.system_prompt) changes.system_prompt = systemPrompt;
+          if (maxTurns !== initial.max_turns) changes.max_turns = maxTurns;
+          if (temperature !== initial.temperature) changes.temperature = temperature;
+          if (JSON.stringify(primitives) !== JSON.stringify(initial.primitives))
+            changes.primitives = primitives;
+          if (
+            JSON.stringify(providerOverrides) !==
+            JSON.stringify(initial.provider_overrides)
+          )
+            changes.provider_overrides = providerOverrides;
+          if (JSON.stringify(sharedWith) !== JSON.stringify(initial.shared_with))
+            changes.shared_with = sharedWith;
+          if (checkpointingEnabled !== initial.checkpointing_enabled)
+            changes.checkpointing_enabled = checkpointingEnabled;
+          if (Object.keys(changes).length > 0) {
             const targetQualified = `${forked.owner_id}:${forked.agent_name}`;
             await api.createAgentVersion(targetQualified, {
-              model,
-              description,
-              system_prompt: systemPrompt,
-              max_turns: maxTurns,
-              temperature,
-              primitives,
-              provider_overrides: providerOverrides,
-              shared_with: sharedWith,
-              checkpointing_enabled: checkpointingEnabled,
+              ...changes,
               commit_message: "post-fork edits",
             });
           }

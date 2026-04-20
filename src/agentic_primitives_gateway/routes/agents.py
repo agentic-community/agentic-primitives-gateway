@@ -5,6 +5,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from starlette.responses import Response, StreamingResponse
 
+from agentic_primitives_gateway import metrics
 from agentic_primitives_gateway.agents.namespace import (
     resolve_actor_id,
     resolve_knowledge_namespace_for_identity,
@@ -75,6 +76,16 @@ def _get_store() -> AgentStore:
     return _store
 
 
+def _ns_kind(owner_id: str) -> str:
+    """Collapse an owner_id down to the bounded label we emit on metrics.
+
+    Metrics can't carry per-user labels or they'd explode in cardinality;
+    the ``ns_kind`` label distinguishes ``system`` (YAML-seeded identities)
+    from ``user`` (anything a caller created or forked).
+    """
+    return "system" if owner_id == "system" else "user"
+
+
 @router.post("", response_model=AgentSpec, status_code=201)
 async def create_agent(request: CreateAgentRequest) -> AgentSpec:
     """Create a new agent identity in the caller's namespace.
@@ -109,6 +120,10 @@ async def create_agent(request: CreateAgentRequest) -> AgentSpec:
         resource_id=f"{principal.id}:{spec.name}",
         metadata={"model": spec.model, "version_id": version.version_id},
     )
+    metrics.AGENT_VERSIONS_CREATED.labels(
+        ns_kind=_ns_kind(principal.id),
+        auto_deployed=str(version.status.value == "deployed").lower(),
+    ).inc()
     return version.spec
 
 
@@ -658,6 +673,10 @@ async def create_version(name: str, request: CreateVersionRequest, owner: str | 
             "auto_deployed": version.status.value == "deployed",
         },
     )
+    metrics.AGENT_VERSIONS_CREATED.labels(
+        ns_kind=_ns_kind(existing.owner_id),
+        auto_deployed=str(version.status.value == "deployed").lower(),
+    ).inc()
     return version
 
 
@@ -707,6 +726,7 @@ async def approve_version(name: str, version_id: str, owner: str | None = None) 
             "approver_id": principal.id,
         },
     )
+    metrics.AGENT_VERSION_APPROVALS.labels(outcome="approved").inc()
     return version
 
 
@@ -742,6 +762,7 @@ async def reject_version(
             "reason_truncated": request.reason[:200],
         },
     )
+    metrics.AGENT_VERSION_APPROVALS.labels(outcome="rejected").inc()
     return version
 
 
@@ -770,6 +791,7 @@ async def deploy_version(name: str, version_id: str, owner: str | None = None) -
             "previous_version_id": previous.version_id if previous else None,
         },
     )
+    metrics.AGENT_VERSION_APPROVALS.labels(outcome="deployed").inc()
     return version
 
 
@@ -808,6 +830,7 @@ async def fork_agent(name: str, request: ForkRequest, owner: str | None = None) 
             "target_version_id": version.version_id,
         },
     )
+    metrics.AGENT_FORKS.labels(source_ns_kind=_ns_kind(source.owner_id)).inc()
     return version
 
 

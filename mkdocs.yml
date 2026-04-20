@@ -61,6 +61,8 @@ nav:
     - Primitives: concepts/primitives.md
     - Agents: concepts/agents.md
     - Agent Teams: concepts/teams.md
+    - Agent Versioning: concepts/agent-versioning.md
+    - Team Versioning: concepts/team-versioning.md
     - Streaming: concepts/streaming.md
     - Policy Enforcement: concepts/policy.md
     - Governance: concepts/governance.md
@@ -69,6 +71,8 @@ nav:
     - Adding a Provider: guides/adding-a-provider.md
     - Agent-as-Tool Delegation: guides/agent-delegation.md
     - Memory Namespaces: guides/memory-namespaces.md
+    - Lineage Visualization: guides/lineage.md
+    - Admin Approval Workflow: guides/admin-approval.md
     - Observability: guides/observability.md
     - Compliance: guides/compliance.md
     - Using the Web UI: guides/web-ui.md

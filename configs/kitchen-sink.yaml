@@ -236,11 +236,28 @@ logging:
   format: json
   sanitize: true
 
+# ── Governance gate for agent + team version deploys ────────────
+#
+# Off: every ``POST /versions`` and ``PUT`` auto-deploys — fastest
+#      edit/iterate loop, fine for dev.
+# On:  new versions land as ``draft`` and require the
+#      propose → admin-approve → deploy workflow.  YAML-seeded
+#      specs always bypass on first load so bootstrap can't
+#      deadlock.  PUT returns 409 under the gate; UI callers must
+#      go through ``/ui/agents/{name}/versions`` or
+#      ``/ui/admin/proposals``.
+governance:
+  require_admin_approval_for_deploy: false
+
 agents:
   store:
     backend: redis
     config:
       redis_url: "${REDIS_URL:=redis://localhost:6379/0}"
+  # Archive oldest non-deployed / non-draft versions once an identity's
+  # history passes this cap.  Lineage stays navigable without unbounded
+  # storage growth.
+  max_versions_per_identity: 50
   specs:
     research-assistant:
       model: "us.anthropic.claude-sonnet-4-20250514-v1:0"
@@ -400,6 +417,7 @@ teams:
     backend: redis
     config:
       redis_url: "${REDIS_URL:=redis://localhost:6379/0}"
+  max_versions_per_identity: 50
   specs:
     research-team:
       description: "A team that researches topics and writes code collaboratively"
