@@ -433,10 +433,37 @@ app.add_middleware(CredentialResolutionMiddleware)
 app.add_middleware(AuthenticationMiddleware)
 app.add_middleware(AuditMiddleware)
 app.add_middleware(RequestContextMiddleware)
+
+
+def _resolve_cors_config(origins: list[str]) -> tuple[list[str], bool]:
+    """Return the effective ``(allow_origins, allow_credentials)`` for CORS.
+
+    Rejects ``["*", <specific>]`` as invalid (the wildcard is not allowed
+    alongside explicit origins) and defuses ``["*"]`` + credentials,
+    which browsers reject per the Fetch spec.  Pure function so it can
+    be unit-tested without reloading the app.
+    """
+    wildcard = "*" in origins
+    if wildcard and len(origins) > 1:
+        raise RuntimeError(
+            f"Invalid cors_origins {origins!r} — '*' cannot be combined with explicit origins. Pick one."
+        )
+    if wildcard:
+        logger.warning(
+            "cors_origins is ['*']; disabling allow_credentials because "
+            "browsers reject that combination per the Fetch spec. "
+            "Set cors_origins to an explicit list of origins to enable "
+            "credentialed cross-origin requests."
+        )
+        return ["*"], False
+    return list(origins), True
+
+
+_cors_origins, _cors_credentials = _resolve_cors_config(settings.cors_origins)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins,
-    allow_credentials=True,
+    allow_origins=_cors_origins,
+    allow_credentials=_cors_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
 )

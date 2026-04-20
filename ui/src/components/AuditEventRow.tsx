@@ -2,14 +2,21 @@ import { useState } from "react";
 import type { AuditEvent, AuditOutcome } from "../api/types";
 import { cn } from "../lib/cn";
 
+// Color separates the three different "bad" outcomes so the eye can tell
+// policy decisions (amber/deny) from runtime failures (red) from uncaught
+// errors (orange).  If everything bad were red, ``network.access.denied``
+// and ``tool.call failure`` would look identical — hiding the signal
+// that an operator actually cares about.
 const OUTCOME_COLORS: Record<AuditOutcome, string> = {
   allow: "bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300",
   success: "bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300",
-  deny: "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300",
+  // Policy / authorization deny — blocked on purpose, not a bug.
+  deny: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
+  // Expected runtime failure (4xx, bad input, provider rejection).
   failure: "bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300",
+  // Unhandled exception / 5xx.
   error: "bg-orange-100 text-orange-800 dark:bg-orange-900/40 dark:text-orange-300",
-  // New enum value from the server: providers explicitly declining an
-  // optional operation.  Neutral color — it's not a failure.
+  // Provider declined an optional operation.
   not_implemented: "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300",
 };
 

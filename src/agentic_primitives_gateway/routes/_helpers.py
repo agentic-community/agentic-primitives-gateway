@@ -106,11 +106,20 @@ class SessionOwnershipStore:
         return result
 
     async def require_owner(self, session_id: str, principal: AuthenticatedPrincipal) -> None:
-        """Raise 403 if the principal does not own the session."""
+        """Raise 403 unless the principal owns the session.
+
+        Default-deny: if no owner is recorded (session created by a
+        code path that forgot ``set_owner``, TTL expired, replica
+        crashed before writing the owner record), a non-admin principal
+        is denied.  The previous default-allow behavior was a
+        cross-tenant hazard — a session ID leak (screenshot URL,
+        observability trace, log) let any authenticated user drive
+        another user's live browser / kernel session.
+        """
         if principal.is_admin:
             return
         owner = await self.get_owner(session_id)
-        if owner is not None and owner != principal.id:
+        if owner is None or owner != principal.id:
             raise HTTPException(status_code=403, detail="Forbidden")
 
 

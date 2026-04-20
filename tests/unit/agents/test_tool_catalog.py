@@ -80,7 +80,13 @@ class TestExecuteTool:
                 name="my_tool",
                 description="test",
                 primitive="test",
-                input_schema={"type": "object"},
+                # ``execute_tool`` filters ``tool_input`` against the
+                # schema's properties to prevent LLM-driven kwarg
+                # overrides of bound context (see security fix).
+                input_schema={
+                    "type": "object",
+                    "properties": {"arg": {"type": "string"}},
+                },
                 handler=handler,
             )
         ]

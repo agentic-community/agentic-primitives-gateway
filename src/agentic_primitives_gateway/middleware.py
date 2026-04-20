@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from uuid import uuid4
 
 from fastapi import Request
@@ -17,6 +18,50 @@ from agentic_primitives_gateway.context import (
     set_service_credentials,
 )
 from agentic_primitives_gateway.registry import PRIMITIVES
+
+logger = logging.getLogger(__name__)
+
+# Keys forbidden in ``X-Cred-{service}-{key}`` headers.  Host / URL /
+# endpoint / port are configuration, not per-request credentials —
+# letting a caller override them would rewrite which host a provider
+# talks to, giving any authenticated user a one-header SSRF into any
+# service the provider reaches (cloud metadata, internal admin APIs,
+# etc.).  Actual opaque secrets (``public_key``, ``secret_key``,
+# ``api_key``, ``admin_client_secret``) continue to pass through.
+_FORBIDDEN_CRED_KEY_SUBSTRINGS: frozenset[str] = frozenset({"url", "uri", "host", "endpoint", "origin", "port"})
+
+
+def _is_forbidden_cred_key(key: str) -> bool:
+    lowered = key.lower()
+    return any(substr in lowered for substr in _FORBIDDEN_CRED_KEY_SUBSTRINGS)
+
+
+def _emit_cred_key_denied(*, service: str, key: str, http_path: str) -> None:
+    """Audit the rejection of a forbidden X-Cred-* header key.
+
+    Emits a ``network.access.denied`` event so SIEM can alert on
+    attempted SSRF via credential-header injection.  Deferred import
+    matches the rest of the audit integration pattern — no module-load
+    cost for code paths that don't exercise audit.
+    """
+    try:
+        from agentic_primitives_gateway.audit.emit import emit_audit_event
+        from agentic_primitives_gateway.audit.models import (
+            AuditAction,
+            AuditOutcome,
+            ResourceType,
+        )
+    except ImportError:  # pragma: no cover
+        return
+    emit_audit_event(
+        action=AuditAction.NETWORK_ACCESS_DENIED,
+        outcome=AuditOutcome.DENY,
+        resource_type=ResourceType.CREDENTIAL,
+        resource_id=f"{service}:{key}",
+        reason="blocked_cred_key",
+        http_path=http_path,
+        metadata={"service": service, "key": key},
+    )
 
 
 class RequestContextMiddleware(BaseHTTPMiddleware):
@@ -70,15 +115,30 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
         else:
             set_aws_credentials(None)
 
-        # Service credentials (X-Cred-{Service}-{Key} headers)
+        # Service credentials (X-Cred-{Service}-{Key} headers).
+        # URL/host/endpoint keys are filtered out — treat those as
+        # server-side configuration, not caller-supplied credentials.
+        # Otherwise any authenticated request could redirect a provider
+        # to an attacker-chosen host (SSRF).
         service_creds: dict[str, dict[str, str]] = {}
         for header_name, header_value in request.headers.items():
-            if header_name.startswith("x-cred-"):
-                parts = header_name.removeprefix("x-cred-").split("-", 1)
-                if len(parts) == 2:
-                    service = parts[0]
-                    key = parts[1].replace("-", "_")
-                    service_creds.setdefault(service, {})[key] = header_value
+            if not header_name.startswith("x-cred-"):
+                continue
+            parts = header_name.removeprefix("x-cred-").split("-", 1)
+            if len(parts) != 2:
+                continue
+            service = parts[0]
+            key = parts[1].replace("-", "_")
+            if _is_forbidden_cred_key(key):
+                logger.warning(
+                    "Ignoring forbidden X-Cred-* key %r on service %r — "
+                    "URL/host/endpoint fields are server-config only",
+                    key,
+                    service,
+                )
+                _emit_cred_key_denied(service=service, key=key, http_path=request.url.path)
+                continue
+            service_creds.setdefault(service, {})[key] = header_value
         set_service_credentials(service_creds)
 
         # Provider routing

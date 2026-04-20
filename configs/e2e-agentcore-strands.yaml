@@ -77,7 +77,7 @@ auth:
   backend: jwt
   jwt:
     issuer: "${JWT_ISSUER:=-}"
-    audience: "${JWT_AUDIENCE:-}"
+    audience: "${JWT_AUDIENCE}"
     client_id: "${JWT_CLIENT_ID:=agentic-gateway}"
     algorithms: ["RS256"]
     claims_mapping:

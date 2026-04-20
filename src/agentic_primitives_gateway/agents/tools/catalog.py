@@ -735,6 +735,27 @@ def to_llm_tools(tools: list[ToolDefinition]) -> list[dict[str, Any]]:
     return [{"name": t.name, "description": t.description, "input_schema": t.input_schema} for t in tools]
 
 
+def _filter_to_schema(tool_input: dict[str, Any], input_schema: dict[str, Any]) -> dict[str, Any]:
+    """Drop any tool_input keys not declared in the tool's input schema.
+
+    Tools are registered with ``functools.partial(handler, namespace=...,
+    session_id=...)`` binding trusted context.  If an LLM emits a
+    ``tool_input`` containing one of those bound kwargs, Python's
+    partial semantics let the caller override the bound value — which
+    would let an LLM read/write another user's memories or drive
+    another user's browser session.  Filter the input down to the
+    declared schema so only LLM-visible parameters reach the handler.
+    """
+    properties = input_schema.get("properties", {}) if isinstance(input_schema, dict) else {}
+    if not isinstance(properties, dict) or not properties:
+        # Fail closed: a tool without a declared property list accepts
+        # no LLM input at all.  In practice every tool in the catalog
+        # declares at least one property.
+        return {}
+    allowed = set(properties.keys())
+    return {k: v for k, v in tool_input.items() if k in allowed}
+
+
 async def execute_tool(
     tool_name: str,
     tool_input: dict[str, Any],
@@ -747,18 +768,24 @@ async def execute_tool(
     records only the tool name, duration, and (on failure) the error
     class — never the tool input, which can legitimately carry
     credentials or secrets passed by the LLM.
+
+    ``tool_input`` is filtered to the tool's declared ``input_schema``
+    before dispatch so an LLM-supplied kwarg cannot override trusted
+    context (``namespace``, ``session_id``, ...) bound via
+    ``functools.partial`` in ``_bind_handler``.
     """
     for tool in tools:
         if tool.name == tool_name:
+            safe_input = _filter_to_schema(tool_input, tool.input_schema)
             start = time.perf_counter()
             status = "failure"
             error_type: str | None = None
             try:
                 try:
-                    result = await tool.handler(**tool_input)
+                    result = await tool.handler(**safe_input)
                 except TypeError:
                     logger.warning("Tool %s handler type error, retrying with raw input", tool_name)
-                    result = str(await tool.handler(**tool_input))
+                    result = str(await tool.handler(**safe_input))
                 status = "success"
                 return result
             except Exception as exc:

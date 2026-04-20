@@ -35,11 +35,21 @@ async def audit_router():
         set_audit_router(None)
 
 
-def _make_tool(name: str, handler) -> ToolDefinition:  # type: ignore[no-untyped-def]
+def _make_tool(
+    name: str,
+    handler,  # type: ignore[no-untyped-def]
+    properties: dict | None = None,
+) -> ToolDefinition:
     return ToolDefinition(
         name=name,
         description="test",
-        input_schema={"type": "object"},
+        input_schema={
+            "type": "object",
+            # ``execute_tool`` filters ``tool_input`` to declared
+            # properties (anti-override guard); tests that want to pass
+            # kwargs must declare them here.
+            "properties": properties or {},
+        },
         primitive="memory",
         handler=handler,
     )
@@ -50,7 +60,7 @@ async def test_successful_tool_call_emits_success_event(audit_router):
     async def handler(x: int = 0) -> str:
         return f"ok:{x}"
 
-    tool = _make_tool("do_thing", handler)
+    tool = _make_tool("do_thing", handler, properties={"x": {"type": "integer"}})
     result = await execute_tool("do_thing", {"x": 42}, [tool])
     assert result == "ok:42"
 

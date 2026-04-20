@@ -117,6 +117,12 @@ class AuditAction:
     # Resource access control
     RESOURCE_ACCESS_DENIED = "resource.access.denied"
 
+    # Network-layer access control — egress blocks applied by gateway
+    # guards (today: the X-Cred-* URL-shaped key rejection).  Distinct
+    # from ``resource.access.denied`` (ownership/share) so compliance
+    # dashboards can alert on attempted SSRF specifically.
+    NETWORK_ACCESS_DENIED = "network.access.denied"
+
     # Sessions
     SESSION_CREATE = "session.create"
     SESSION_TERMINATE = "session.terminate"

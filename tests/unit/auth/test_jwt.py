@@ -148,16 +148,24 @@ class TestJwtAuthentication:
         principal = await backend.authenticate(request)
         assert principal is None
 
-    @pytest.mark.asyncio
-    async def test_no_audience_validation(self):
-        """When audience is None, audience claim is not checked."""
-        backend = _make_backend(audience=None)
-        token = _make_token(audience="any-app")
-        request = _make_request(token)
+    def test_no_audience_rejected_at_init(self):
+        """Audience is mandatory — the real ``__init__`` rejects None/empty.
 
-        principal = await backend.authenticate(request)
-        assert principal is not None
-        assert principal.id == "user-123"
+        Previously the backend accepted ``audience=None`` and skipped
+        ``verify_aud``, which meant any token signed by the issuer was
+        accepted regardless of which client it was minted for.  Security
+        fix: refuse to construct the backend without an audience.
+
+        The test-helper ``_make_backend`` bypasses ``__init__`` with
+        ``__new__``, so exercise the real constructor here.
+        """
+        from unittest.mock import patch as _patch
+
+        with (
+            _patch("agentic_primitives_gateway.auth.jwt.PyJWKClient"),
+            pytest.raises(ValueError, match=r"audience.*required"),
+        ):
+            JwtAuthBackend(issuer="https://issuer.example.com")
 
     @pytest.mark.asyncio
     async def test_non_bearer_auth_ignored(self):

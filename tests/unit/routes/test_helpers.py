@@ -128,9 +128,23 @@ class TestSessionOwnershipStore:
         await store.require_owner("sess-1", _admin())  # should not raise
 
     @pytest.mark.asyncio
-    async def test_require_owner_unknown_session_passes(self, store: SessionOwnershipStore):
-        """Unknown sessions are allowed (e.g., agent-created sessions not tracked here)."""
-        await store.require_owner("unknown-sess", _user("bob"))  # should not raise
+    async def test_require_owner_unknown_session_denies_non_admin(self, store: SessionOwnershipStore):
+        """Unknown sessions are denied for non-admins (default-deny).
+
+        Previously this was default-allow, which let any authenticated
+        user drive a session whose ownership happened to be unrecorded
+        (agent-created sessions that forgot ``set_owner``, sessions
+        whose Redis owner record TTL'd out, etc.) as long as they had
+        the session ID.  Security fix: require a positive ownership
+        match; admins still bypass.
+        """
+        with pytest.raises(HTTPException) as exc_info:
+            await store.require_owner("unknown-sess", _user("bob"))
+        assert exc_info.value.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_require_owner_unknown_session_allows_admin(self, store: SessionOwnershipStore):
+        await store.require_owner("unknown-sess", _admin())  # must not raise
 
     @pytest.mark.asyncio
     async def test_overwrite_owner(self, store: SessionOwnershipStore):

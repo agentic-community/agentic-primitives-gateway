@@ -51,6 +51,20 @@ class JwtAuthBackend(AuthBackend):
         claims_mapping: dict[str, str] | None = None,
         jwks_cache_seconds: int = _DEFAULT_JWKS_CACHE_SECONDS,
     ) -> None:
+        if not issuer or not issuer.strip():
+            raise ValueError("JwtAuthBackend: 'issuer' is required.")
+        # Audience is mandatory in multi-tenant IdPs (Keycloak realms,
+        # Cognito user pools with multiple clients, Auth0 tenants) —
+        # without it, any token signed by the issuer is accepted
+        # regardless of which client it was minted for.  Fail fast
+        # instead of silently accepting tokens from other apps.
+        if not audience or not str(audience).strip():
+            raise ValueError(
+                "JwtAuthBackend: 'audience' is required. Set auth.jwt.audience "
+                "to your client_id (or an expected 'aud' claim). Without it, "
+                "any token signed by the configured issuer would be accepted, "
+                "even ones minted for other applications on the same IdP."
+            )
         self._issuer = issuer.rstrip("/")
         self._client_id = client_id
         self._audience = audience
@@ -106,7 +120,17 @@ class JwtAuthBackend(AuthBackend):
             logger.warning("JWT validation failed: %s", e)
             return None
 
-        return self._claims_to_principal(claims)
+        principal = self._claims_to_principal(claims)
+        if principal is None:
+            # Empty or missing ``sub`` — reject so middleware returns 401.
+            # An empty principal.id would flow into ownership checks
+            # (``principal.id == resource_owner``) and Keycloak Admin
+            # API URL construction, where it could match resources
+            # erroneously persisted with owner_id="" or hit list
+            # endpoints instead of per-user endpoints.
+            logger.warning("JWT missing 'sub' claim")
+            return None
+        return principal
 
     @staticmethod
     def _extract_token(request: Request) -> str | None:
@@ -120,28 +144,29 @@ class JwtAuthBackend(AuthBackend):
         return parts[1].strip()
 
     def _decode_token(self, token: str) -> dict[str, Any]:
-        """Decode and validate a JWT token."""
+        """Decode and validate a JWT token.
+
+        Audience is always validated — see ``__init__`` for why.
+        """
         signing_key = self._jwk_client.get_signing_key_from_jwt(token)
-
-        decode_kwargs: dict[str, Any] = {
-            "algorithms": self._algorithms,
-            "issuer": self._issuer,
-        }
-        if self._audience:
-            decode_kwargs["audience"] = self._audience
-        else:
-            decode_kwargs["options"] = {"verify_aud": False}
-
         result: dict[str, Any] = pyjwt.decode(
             token,
             signing_key.key,
-            **decode_kwargs,
+            algorithms=self._algorithms,
+            issuer=self._issuer,
+            audience=self._audience,
         )
         return result
 
-    def _claims_to_principal(self, claims: dict[str, Any]) -> AuthenticatedPrincipal:
-        """Map JWT claims to an AuthenticatedPrincipal."""
-        sub = claims.get("sub", "")
+    def _claims_to_principal(self, claims: dict[str, Any]) -> AuthenticatedPrincipal | None:
+        """Map JWT claims to an AuthenticatedPrincipal.
+
+        Returns ``None`` when the token has no usable ``sub`` — the
+        caller treats that as authentication failure.
+        """
+        sub = str(claims.get("sub", "")).strip()
+        if not sub:
+            return None
 
         # Extract groups from configured claim
         groups_claim = self._claims_mapping.get("groups", "groups")

@@ -38,6 +38,25 @@ from agentic_primitives_gateway.registry import registry
 logger = logging.getLogger(__name__)
 
 
+def _session_ownership_store(primitive: str) -> Any | None:
+    """Resolve the per-primitive ``SessionOwnershipStore`` for ownership tagging.
+
+    Lazy import keeps the runner independent of route helpers at module
+    load.  Returns ``None`` for primitives that don't have a store (the
+    ownership model is a no-op for them).
+    """
+    from agentic_primitives_gateway.routes._helpers import (
+        browser_session_owners,
+        code_interpreter_session_owners,
+    )
+
+    if primitive == "browser":
+        return browser_session_owners
+    if primitive == "code_interpreter":
+        return code_interpreter_session_owners
+    return None
+
+
 def _emit_run_event(
     action: str,
     outcome: AuditOutcome,
@@ -1048,8 +1067,17 @@ class AgentRunner:
                 result = await registry.browser.start_session()
                 session_ctx["browser"] = result.get("session_id", uuid.uuid4().hex[:16])
             logger.info("Started %s session: %s", primitive, session_ctx[primitive])
+            principal = get_authenticated_principal()
+            # Record session ownership so the HTTP routes' ``require_owner``
+            # check can reject cross-user access via a leaked session ID.
+            # ``session_ownership_for`` resolves to the per-primitive store
+            # (browser_session_owners / code_interpreter_session_owners).
+            if principal is not None:
+                owner_store = _session_ownership_store(primitive)
+                if owner_store is not None:
+                    with contextlib.suppress(Exception):
+                        await owner_store.set_owner(session_ctx[primitive], principal.id)
             if self._session_registry:
-                principal = get_authenticated_principal()
                 if principal is None:
                     raise RuntimeError("Cannot register session without an authenticated principal")
                 await self._session_registry.register(
