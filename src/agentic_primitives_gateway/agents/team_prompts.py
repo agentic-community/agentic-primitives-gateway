@@ -13,10 +13,16 @@ logger = logging.getLogger(__name__)
 
 
 async def build_worker_descriptions(team_spec: TeamSpec, agent_store: AgentStore) -> str:
-    """Format worker names, descriptions, and capabilities for prompts."""
+    """Format worker names, descriptions, and capabilities for prompts.
+
+    Resolves worker refs in the team owner's namespace first, then falls
+    back to ``system`` — same rule used by the team runner.
+    """
+    from agentic_primitives_gateway.agents.team_runner import _resolve_team_agent
+
     descriptions = []
     for w in set(team_spec.workers):
-        spec = await agent_store.get(w)
+        spec = await _resolve_team_agent(agent_store, team_spec.owner_id, w)
         desc = f"  - {w}"
         if spec and spec.description:
             desc += f": {spec.description}"

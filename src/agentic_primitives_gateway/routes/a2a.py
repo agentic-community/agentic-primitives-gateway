@@ -99,11 +99,10 @@ async def _get_public_agents() -> list[AgentSpec]:
 
 async def _require_agent(name: str) -> AgentSpec:
     """Load an agent spec and check access. Raises 404/403."""
+    from agentic_primitives_gateway.routes._helpers import resolve_agent_spec
+
     store = _get_store()
-    spec = await store.get(name)
-    if spec is None:
-        raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
-    require_access(require_principal(), spec.owner_id, spec.shared_with)
+    spec: AgentSpec = await resolve_agent_spec(store, name, require_principal())
     if spec.provider_overrides:
         set_provider_overrides(spec.provider_overrides)
     return spec
@@ -219,7 +218,13 @@ async def get_gateway_agent_card(request: Request) -> A2AAgentCard:
 
 @router.get("/a2a/agents/{name}/.well-known/agent.json", response_model=A2AAgentCard)
 async def get_per_agent_card(name: str, request: Request) -> A2AAgentCard:
-    """Per-agent A2A card. Auth-exempt for public agents, requires auth otherwise."""
+    """Per-agent A2A card. Auth-exempt for public agents, requires auth otherwise.
+
+    Uses the back-compat ``store.get(name)`` lookup because this endpoint
+    is discovered by external clients that don't know the owner namespace.
+    Treats the first-matching deployed spec as the agent card — intended
+    only for publicly shared (``"*"``) agents.
+    """
     store = _get_store()
     spec = await store.get(name)
     if spec is None:

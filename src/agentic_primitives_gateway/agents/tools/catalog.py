@@ -662,6 +662,7 @@ def build_tool_list(
     agent_name: str | None = None,
     shared_namespace: str | None = None,
     resolved_pools: dict[str, str] | None = None,
+    parent_owner_id: str = "system",
 ) -> list[ToolDefinition]:
     """Build the final tool list for an agent run from its primitive config.
 
@@ -693,7 +694,15 @@ def build_tool_list(
             if agent_depth >= MAX_AGENT_DEPTH:
                 logger.info("Agent depth %d >= max %d — skipping sub-agent tools", agent_depth, MAX_AGENT_DEPTH)
                 continue
-            tools.extend(_build_agent_tools(config, agent_store, agent_runner, agent_depth))
+            tools.extend(
+                _build_agent_tools(
+                    config,
+                    agent_store,
+                    agent_runner,
+                    agent_depth,
+                    parent_owner_id=parent_owner_id,
+                )
+            )
             continue
 
         for tool in _TOOL_CATALOG.get(primitive_name, []):

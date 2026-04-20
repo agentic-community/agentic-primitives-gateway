@@ -52,6 +52,7 @@ from agentic_primitives_gateway.middleware import RequestContextMiddleware
 from agentic_primitives_gateway.registry import _load_class, registry
 from agentic_primitives_gateway.routes import (
     a2a,
+    admin_proposals,
     agents,
     browser,
     code_interpreter,
@@ -539,6 +540,7 @@ app.include_router(teams.router)
 app.include_router(a2a.router)
 app.include_router(credentials.router)
 app.include_router(audit_routes.router)
+app.include_router(admin_proposals.router)
 
 
 # ── Provider discovery ──────────────────────────────────────────────

@@ -14,27 +14,37 @@ from agentic_primitives_gateway.agents.store import AgentStore
 from agentic_primitives_gateway.agents.tools import _TOOL_CATALOG, build_tool_list
 from agentic_primitives_gateway.audit.emit import emit_audit_event
 from agentic_primitives_gateway.audit.models import AuditAction, AuditOutcome, ResourceType
-from agentic_primitives_gateway.auth.access import require_access, require_owner_or_admin
+from agentic_primitives_gateway.auth.access import require_owner_or_admin
 from agentic_primitives_gateway.context import (
     get_provider_override,
     set_provider_overrides,
 )
 from agentic_primitives_gateway.models.agents import (
+    AgentLineage,
     AgentListResponse,
     AgentMemoryResponse,
     AgentSpec,
     AgentToolInfo,
     AgentToolsResponse,
+    AgentVersion,
+    AgentVersionListResponse,
     ChatRequest,
     ChatResponse,
     CreateAgentRequest,
+    CreateVersionRequest,
+    ForkRequest,
     MemoryStoreInfo,
+    RejectionRequest,
     SessionHistoryResponse,
     UpdateAgentRequest,
 )
 from agentic_primitives_gateway.registry import registry
 from agentic_primitives_gateway.routes._background import BackgroundRunManager, reconnect_event_generator, sse_response
-from agentic_primitives_gateway.routes._helpers import require_principal
+from agentic_primitives_gateway.routes._helpers import (
+    require_admin,
+    require_principal,
+    resolve_agent_spec,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/agents", tags=["agents"])
@@ -67,26 +77,39 @@ def _get_store() -> AgentStore:
 
 @router.post("", response_model=AgentSpec, status_code=201)
 async def create_agent(request: CreateAgentRequest) -> AgentSpec:
+    """Create a new agent identity in the caller's namespace.
+
+    The agent is created as version 1.  When the admin-approval gate is
+    OFF, version 1 is auto-deployed and this endpoint returns the
+    deployed ``AgentSpec``.  When the gate is ON, version 1 is saved as
+    ``draft`` and the caller must take it through the
+    propose→approve→deploy flow.
+    """
     store = _get_store()
     principal = require_principal()
     data = request.model_dump()
     data["owner_id"] = principal.id
     spec = AgentSpec(**data)
-    existing = await store.get(spec.name)
+
+    existing = await store.get_deployed(spec.name, principal.id)
     if existing is not None:
         raise HTTPException(status_code=409, detail=f"Agent '{spec.name}' already exists")
-    try:
-        created = await store.create(spec)
-    except KeyError:
-        raise HTTPException(status_code=409, detail=f"Agent '{spec.name}' already exists") from None
+    version = await store.create_version(
+        name=spec.name,
+        owner_id=principal.id,
+        spec=spec,
+        created_by=principal.id,
+        commit_message="initial version",
+        auto_deploy=True,
+    )
     emit_audit_event(
         action=AuditAction.AGENT_CREATE,
         outcome=AuditOutcome.SUCCESS,
         resource_type=ResourceType.AGENT,
-        resource_id=spec.name,
-        metadata={"model": spec.model},
+        resource_id=f"{principal.id}:{spec.name}",
+        metadata={"model": spec.model, "version_id": version.version_id},
     )
-    return created
+    return version.spec
 
 
 @router.get("", response_model=AgentListResponse)
@@ -115,7 +138,7 @@ async def get_tool_catalog() -> dict:
 
 
 @router.get("/{name}/export")
-async def export_agent(name: str) -> Response:
+async def export_agent(name: str, owner: str | None = None) -> Response:
     """Export an agent spec as a standalone Python script.
 
     The generated script uses ``agentic-primitives-gateway-client`` for
@@ -124,19 +147,25 @@ async def export_agent(name: str) -> Response:
     from agentic_primitives_gateway.agents.export import export_agent as _export
 
     store = _get_store()
-    spec = await store.get(name)
-    if spec is None:
-        raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
-    require_access(require_principal(), spec.owner_id, spec.shared_with)
+    principal = require_principal()
+    spec: AgentSpec = await resolve_agent_spec(store, name, principal, owner_query=owner)
 
-    # Load sub-agent specs for delegation export
+    # Load sub-agent specs for delegation export.  Sub-refs resolve in the
+    # agent's owner namespace first (matching the run-time resolver in
+    # ``agents/tools/delegation.py``).
     all_specs: dict[str, Any] = {}
     agents_cfg = spec.primitives.get("agents")
     if agents_cfg and agents_cfg.enabled and agents_cfg.tools:
-        for sa_name in agents_cfg.tools:
-            sa_spec = await store.get(sa_name)
+        for ref in agents_cfg.tools:
+            if ":" in ref:
+                owner_id, _, bare = ref.partition(":")
+                sa_spec = await store.resolve_qualified(owner_id, bare)
+            else:
+                sa_spec = await store.resolve_qualified(spec.owner_id, ref)
+                if sa_spec is None:
+                    sa_spec = await store.resolve_qualified("system", ref)
             if sa_spec:
-                all_specs[sa_name] = sa_spec
+                all_specs[ref] = sa_spec
 
     code = _export(spec, all_specs=all_specs if all_specs else None)
     return Response(
@@ -147,59 +176,84 @@ async def export_agent(name: str) -> Response:
 
 
 @router.get("/{name}", response_model=AgentSpec)
-async def get_agent(name: str) -> AgentSpec:
+async def get_agent(name: str, owner: str | None = None) -> AgentSpec:
     store = _get_store()
-    spec = await store.get(name)
-    if spec is None:
-        raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
-    require_access(require_principal(), spec.owner_id, spec.shared_with)
+    spec: AgentSpec = await resolve_agent_spec(store, name, require_principal(), owner_query=owner)
     return spec
 
 
 @router.put("/{name}", response_model=AgentSpec)
-async def update_agent(name: str, request: UpdateAgentRequest) -> AgentSpec:
+async def update_agent(name: str, request: UpdateAgentRequest, owner: str | None = None) -> AgentSpec:
+    """Create + auto-deploy a new version of an agent.
+
+    When ``governance.require_admin_approval_for_deploy`` is active, this
+    endpoint returns **409 Conflict** — the approval gate cannot be
+    bypassed via an implicit update, and callers must go through
+    ``POST /versions`` → ``/propose`` → ``/approve`` → ``/deploy``.
+    """
+    from agentic_primitives_gateway.config import settings
+
     store = _get_store()
-    existing = await store.get(name)
-    if existing is None:
-        raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
-    require_owner_or_admin(require_principal(), existing.owner_id)
+    principal = require_principal()
+    existing: AgentSpec = await resolve_agent_spec(store, name, principal, owner_query=owner)
+    require_owner_or_admin(principal, existing.owner_id)
+
+    if settings.governance.require_admin_approval_for_deploy:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "Direct PUT is disabled while the admin-approval gate is on. Create a version via POST /versions and follow the propose/approve/deploy flow.",
+                "versions_url": f"/api/v1/agents/{existing.owner_id}:{existing.name}/versions",
+            },
+        )
+
     updates = {k: v for k, v in request.model_dump().items() if v is not None}
-    result = await store.update(name, updates)
+    merged = existing.model_dump() | updates
+    merged["owner_id"] = existing.owner_id
+    merged["name"] = existing.name
+    new_spec = AgentSpec(**merged)
+    current_deployed = await store.get_deployed(existing.name, existing.owner_id)
+    version = await store.create_version(
+        name=existing.name,
+        owner_id=existing.owner_id,
+        spec=new_spec,
+        created_by=principal.id,
+        parent_version_id=current_deployed.version_id if current_deployed else None,
+        commit_message="updated via PUT /agents/{name}",
+        auto_deploy=True,
+    )
     emit_audit_event(
         action=AuditAction.AGENT_UPDATE,
         outcome=AuditOutcome.SUCCESS,
         resource_type=ResourceType.AGENT,
-        resource_id=name,
-        metadata={"fields": sorted(updates.keys())},
+        resource_id=f"{existing.owner_id}:{existing.name}",
+        metadata={"fields": sorted(updates.keys()), "version_id": version.version_id},
     )
-    return result
+    return version.spec
 
 
 @router.delete("/{name}")
-async def delete_agent(name: str) -> dict[str, str]:
+async def delete_agent(name: str, owner: str | None = None) -> dict[str, Any]:
     store = _get_store()
-    spec = await store.get(name)
-    if spec is None:
-        raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
-    require_owner_or_admin(require_principal(), spec.owner_id)
-    await store.delete(name)
+    principal = require_principal()
+    spec: AgentSpec = await resolve_agent_spec(store, name, principal, owner_query=owner)
+    require_owner_or_admin(principal, spec.owner_id)
+    archived = await store.archive_identity(spec.name, spec.owner_id)
     emit_audit_event(
         action=AuditAction.AGENT_DELETE,
         outcome=AuditOutcome.SUCCESS,
         resource_type=ResourceType.AGENT,
-        resource_id=name,
+        resource_id=f"{spec.owner_id}:{spec.name}",
+        metadata={"versions_archived": archived},
     )
-    return {"status": "deleted"}
+    return {"status": "deleted", "versions_archived": archived}
 
 
 @router.get("/{name}/tools", response_model=AgentToolsResponse)
-async def get_agent_tools(name: str) -> AgentToolsResponse:
+async def get_agent_tools(name: str, owner: str | None = None) -> AgentToolsResponse:
     """List the tools available to an agent and which providers back them."""
     store = _get_store()
-    spec = await store.get(name)
-    if spec is None:
-        raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
-    require_access(require_principal(), spec.owner_id, spec.shared_with)
+    spec: AgentSpec = await resolve_agent_spec(store, name, require_principal(), owner_query=owner)
 
     # Apply agent-level provider overrides so we resolve the correct providers
     if spec.provider_overrides:
@@ -240,13 +294,10 @@ async def get_agent_tools(name: str) -> AgentToolsResponse:
 
 
 @router.get("/{name}/memory", response_model=AgentMemoryResponse)
-async def get_agent_memory(name: str, session_id: str | None = None) -> AgentMemoryResponse:
+async def get_agent_memory(name: str, session_id: str | None = None, owner: str | None = None) -> AgentMemoryResponse:
     """Introspect memory stores available to an agent."""
     store = _get_store()
-    spec = await store.get(name)
-    if spec is None:
-        raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
-    require_access(require_principal(), spec.owner_id, spec.shared_with)
+    spec: AgentSpec = await resolve_agent_spec(store, name, require_principal(), owner_query=owner)
 
     # Apply agent-level provider overrides so we read from the same provider the agent writes to
     if spec.provider_overrides:
@@ -332,10 +383,7 @@ async def get_agent_memory(name: str, session_id: str | None = None) -> AgentMem
 @router.post("/{name}/chat", response_model=ChatResponse)
 async def chat_with_agent(name: str, request: ChatRequest) -> ChatResponse:
     store = _get_store()
-    spec = await store.get(name)
-    if spec is None:
-        raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
-    require_access(require_principal(), spec.owner_id, spec.shared_with)
+    spec = await resolve_agent_spec(store, name, require_principal())
 
     # Apply agent-level provider overrides to the current request context
     if spec.provider_overrides:
@@ -357,10 +405,7 @@ async def chat_with_agent_stream(name: str, request: ChatRequest) -> StreamingRe
     mid-stream.
     """
     store = _get_store()
-    spec = await store.get(name)
-    if spec is None:
-        raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
-    require_access(require_principal(), spec.owner_id, spec.shared_with)
+    spec = await resolve_agent_spec(store, name, require_principal())
 
     if spec.provider_overrides:
         set_provider_overrides(spec.provider_overrides)
@@ -378,10 +423,7 @@ async def chat_with_agent_stream(name: str, request: ChatRequest) -> StreamingRe
 async def list_sessions(name: str) -> dict:
     """List all conversation sessions for an agent."""
     store = _get_store()
-    spec = await store.get(name)
-    if spec is None:
-        raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
-    require_access(require_principal(), spec.owner_id, spec.shared_with)
+    spec = await resolve_agent_spec(store, name, require_principal())
 
     if spec.provider_overrides:
         set_provider_overrides(spec.provider_overrides)
@@ -404,10 +446,7 @@ async def cleanup_sessions(name: str, keep: int = 5) -> dict:
     The ``keep`` most recent sessions are preserved.
     """
     store = _get_store()
-    spec = await store.get(name)
-    if spec is None:
-        raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
-    require_access(require_principal(), spec.owner_id, spec.shared_with)
+    spec = await resolve_agent_spec(store, name, require_principal())
 
     if spec.provider_overrides:
         set_provider_overrides(spec.provider_overrides)
@@ -434,10 +473,7 @@ async def cleanup_sessions(name: str, keep: int = 5) -> dict:
 async def delete_session(name: str, session_id: str) -> dict:
     """Delete a session's conversation history."""
     store = _get_store()
-    spec = await store.get(name)
-    if spec is None:
-        raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
-    require_access(require_principal(), spec.owner_id, spec.shared_with)
+    spec = await resolve_agent_spec(store, name, require_principal())
 
     if spec.provider_overrides:
         set_provider_overrides(spec.provider_overrides)
@@ -459,10 +495,7 @@ async def stream_session_events(name: str, session_id: str) -> StreamingResponse
     Used by the UI to reconnect after a stream drop.
     """
     store = _get_store()
-    spec = await store.get(name)
-    if spec is None:
-        raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
-    require_access(require_principal(), spec.owner_id, spec.shared_with)
+    await resolve_agent_spec(store, name, require_principal())
 
     # Verify run ownership
     owner = await _bg.get_owner_async(session_id)
@@ -480,10 +513,7 @@ async def stream_session_events(name: str, session_id: str) -> StreamingResponse
 async def get_session_status(name: str, session_id: str) -> dict:
     """Check if a run is currently active for this session."""
     store = _get_store()
-    spec = await store.get(name)
-    if spec is None:
-        raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
-    require_access(require_principal(), spec.owner_id, spec.shared_with)
+    await resolve_agent_spec(store, name, require_principal())
 
     # Verify run ownership
     owner = await _bg.get_owner_async(session_id)
@@ -498,10 +528,7 @@ async def get_session_status(name: str, session_id: str) -> dict:
 async def cancel_session_run(name: str, session_id: str) -> dict:
     """Cancel an active agent run for this session."""
     store = _get_store()
-    spec = await store.get(name)
-    if spec is None:
-        raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
-    require_access(require_principal(), spec.owner_id, spec.shared_with)
+    await resolve_agent_spec(store, name, require_principal())
 
     # Verify run ownership via event store
     owner = await _bg.get_owner_async(session_id)
@@ -538,10 +565,7 @@ async def cancel_session_run(name: str, session_id: str) -> dict:
 async def get_session_history(name: str, session_id: str) -> SessionHistoryResponse:
     """Retrieve conversation history for a specific agent session."""
     store = _get_store()
-    spec = await store.get(name)
-    if spec is None:
-        raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
-    require_access(require_principal(), spec.owner_id, spec.shared_with)
+    spec = await resolve_agent_spec(store, name, require_principal())
 
     if spec.provider_overrides:
         set_provider_overrides(spec.provider_overrides)
@@ -561,3 +585,236 @@ async def get_session_history(name: str, session_id: str) -> SessionHistoryRespo
         session_id=session_id,
         messages=messages,
     )
+
+
+# ── Versioning / fork / lineage / proposals ────────────────────────────
+
+
+@router.get("/{name}/versions", response_model=AgentVersionListResponse)
+async def list_versions(name: str, owner: str | None = None) -> AgentVersionListResponse:
+    """List all versions for an agent identity (all statuses)."""
+    store = _get_store()
+    principal = require_principal()
+    spec: AgentSpec = await resolve_agent_spec(store, name, principal, owner_query=owner)
+    versions = await store.list_versions(spec.name, spec.owner_id)
+    return AgentVersionListResponse(versions=versions)
+
+
+@router.get("/{name}/versions/{version_id}", response_model=AgentVersion)
+async def get_version(name: str, version_id: str, owner: str | None = None) -> AgentVersion:
+    """Fetch a single historical version."""
+    store = _get_store()
+    principal = require_principal()
+    spec: AgentSpec = await resolve_agent_spec(store, name, principal, owner_query=owner)
+    v = await store.get_version(spec.name, spec.owner_id, version_id)
+    if v is None:
+        raise HTTPException(status_code=404, detail=f"Version '{version_id}' not found")
+    return v
+
+
+@router.post("/{name}/versions", response_model=AgentVersion, status_code=201)
+async def create_version(name: str, request: CreateVersionRequest, owner: str | None = None) -> AgentVersion:
+    """Create a new version of an agent.
+
+    Auto-deploys when the admin-approval gate is off; otherwise lands as
+    ``draft`` — callers must then ``propose`` → admin ``approve`` →
+    ``deploy`` to serve traffic.
+    """
+    store = _get_store()
+    principal = require_principal()
+    existing: AgentSpec = await resolve_agent_spec(store, name, principal, owner_query=owner)
+    require_owner_or_admin(principal, existing.owner_id)
+
+    updates = {
+        k: v for k, v in request.model_dump(exclude={"commit_message", "parent_version_id"}).items() if v is not None
+    }
+    merged = existing.model_dump() | updates
+    merged["owner_id"] = existing.owner_id
+    merged["name"] = existing.name
+    new_spec = AgentSpec(**merged)
+    parent_id = request.parent_version_id
+    if parent_id is None:
+        current_deployed = await store.get_deployed(existing.name, existing.owner_id)
+        parent_id = current_deployed.version_id if current_deployed else None
+    version = await store.create_version(
+        name=existing.name,
+        owner_id=existing.owner_id,
+        spec=new_spec,
+        created_by=principal.id,
+        parent_version_id=parent_id,
+        commit_message=request.commit_message,
+        auto_deploy=True,
+    )
+    emit_audit_event(
+        action=AuditAction.AGENT_VERSION_CREATE,
+        outcome=AuditOutcome.SUCCESS,
+        resource_type=ResourceType.AGENT,
+        resource_id=f"{existing.owner_id}:{existing.name}",
+        metadata={
+            "version_id": version.version_id,
+            "version_number": version.version_number,
+            "parent_version_id": parent_id,
+            "commit_message": request.commit_message,
+            "auto_deployed": version.status.value == "deployed",
+        },
+    )
+    return version
+
+
+@router.post("/{name}/versions/{version_id}/propose", response_model=AgentVersion)
+async def propose_version(name: str, version_id: str, owner: str | None = None) -> AgentVersion:
+    """Transition a draft version → proposed (admin-approval mode only)."""
+    store = _get_store()
+    principal = require_principal()
+    spec: AgentSpec = await resolve_agent_spec(store, name, principal, owner_query=owner)
+    require_owner_or_admin(principal, spec.owner_id)
+    try:
+        version = await store.propose_version(spec.name, spec.owner_id, version_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Version '{version_id}' not found") from None
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    emit_audit_event(
+        action=AuditAction.AGENT_VERSION_PROPOSE,
+        outcome=AuditOutcome.SUCCESS,
+        resource_type=ResourceType.AGENT,
+        resource_id=f"{spec.owner_id}:{spec.name}",
+        metadata={"version_id": version.version_id, "version_number": version.version_number},
+    )
+    return version
+
+
+@router.post("/{name}/versions/{version_id}/approve", response_model=AgentVersion)
+async def approve_version(name: str, version_id: str, owner: str | None = None) -> AgentVersion:
+    """Admin-only approval of a proposed version."""
+    principal = require_admin()
+    store = _get_store()
+    spec: AgentSpec = await resolve_agent_spec(store, name, principal, owner_query=owner)
+    try:
+        version = await store.approve_version(spec.name, spec.owner_id, version_id, approver_id=principal.id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Version '{version_id}' not found") from None
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    emit_audit_event(
+        action=AuditAction.AGENT_VERSION_APPROVE,
+        outcome=AuditOutcome.SUCCESS,
+        resource_type=ResourceType.AGENT,
+        resource_id=f"{spec.owner_id}:{spec.name}",
+        metadata={
+            "version_id": version.version_id,
+            "version_number": version.version_number,
+            "approver_id": principal.id,
+        },
+    )
+    return version
+
+
+@router.post("/{name}/versions/{version_id}/reject", response_model=AgentVersion)
+async def reject_version(
+    name: str, version_id: str, request: RejectionRequest, owner: str | None = None
+) -> AgentVersion:
+    """Admin-only rejection of a proposed version."""
+    principal = require_admin()
+    store = _get_store()
+    spec: AgentSpec = await resolve_agent_spec(store, name, principal, owner_query=owner)
+    try:
+        version = await store.reject_version(
+            spec.name,
+            spec.owner_id,
+            version_id,
+            approver_id=principal.id,
+            reason=request.reason,
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Version '{version_id}' not found") from None
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    emit_audit_event(
+        action=AuditAction.AGENT_VERSION_REJECT,
+        outcome=AuditOutcome.SUCCESS,
+        resource_type=ResourceType.AGENT,
+        resource_id=f"{spec.owner_id}:{spec.name}",
+        metadata={
+            "version_id": version.version_id,
+            "version_number": version.version_number,
+            "approver_id": principal.id,
+            "reason_truncated": request.reason[:200],
+        },
+    )
+    return version
+
+
+@router.post("/{name}/versions/{version_id}/deploy", response_model=AgentVersion)
+async def deploy_version(name: str, version_id: str, owner: str | None = None) -> AgentVersion:
+    """Flip the deployed pointer to ``version_id``."""
+    store = _get_store()
+    principal = require_principal()
+    spec: AgentSpec = await resolve_agent_spec(store, name, principal, owner_query=owner)
+    require_owner_or_admin(principal, spec.owner_id)
+    previous = await store.get_deployed(spec.name, spec.owner_id)
+    try:
+        version = await store.deploy_version(spec.name, spec.owner_id, version_id, deployed_by=principal.id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Version '{version_id}' not found") from None
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    emit_audit_event(
+        action=AuditAction.AGENT_VERSION_DEPLOY,
+        outcome=AuditOutcome.SUCCESS,
+        resource_type=ResourceType.AGENT,
+        resource_id=f"{spec.owner_id}:{spec.name}",
+        metadata={
+            "version_id": version.version_id,
+            "version_number": version.version_number,
+            "previous_version_id": previous.version_id if previous else None,
+        },
+    )
+    return version
+
+
+@router.post("/{name}/fork", response_model=AgentVersion, status_code=201)
+async def fork_agent(name: str, request: ForkRequest, owner: str | None = None) -> AgentVersion:
+    """Fork an accessible agent into the caller's namespace.
+
+    Sub-agent references in the forked spec are auto-qualified to the
+    source owner's namespace so the forked graph keeps working.
+    """
+    store = _get_store()
+    principal = require_principal()
+    source: AgentSpec = await resolve_agent_spec(store, name, principal, owner_query=owner)
+    try:
+        version = await store.fork(
+            source_name=source.name,
+            source_owner_id=source.owner_id,
+            target_owner_id=principal.id,
+            target_name=request.target_name,
+            created_by=principal.id,
+            commit_message=request.commit_message,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    emit_audit_event(
+        action=AuditAction.AGENT_FORK,
+        outcome=AuditOutcome.SUCCESS,
+        resource_type=ResourceType.AGENT,
+        resource_id=f"{principal.id}:{version.agent_name}",
+        metadata={
+            "source_owner_id": source.owner_id,
+            "source_name": source.name,
+            "source_version_id": version.forked_from.version_id if version.forked_from else None,
+            "target_owner_id": principal.id,
+            "target_name": version.agent_name,
+            "target_version_id": version.version_id,
+        },
+    )
+    return version
+
+
+@router.get("/{name}/lineage", response_model=AgentLineage)
+async def get_lineage(name: str, owner: str | None = None) -> AgentLineage:
+    """Return the full lineage DAG rooted at this agent identity."""
+    store = _get_store()
+    principal = require_principal()
+    spec: AgentSpec = await resolve_agent_spec(store, name, principal, owner_query=owner)
+    return await store.get_lineage_model(spec.name, spec.owner_id)

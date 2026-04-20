@@ -126,7 +126,16 @@ class TestAgentOwnership:
 
     @pytest.mark.asyncio
     async def test_get_checks_access(self, agent_store):
-        """get_agent returns 403 if the user doesn't have access."""
+        """Bob cannot see Alice's private agent via bare lookup.
+
+        Under caller-scoped resolution, bare ``/agents/{name}`` only
+        checks the caller's and the system namespace.  Shared agents in
+        other owners' namespaces require qualified addressing; a private
+        agent therefore 404s rather than 403s when addressed bare.
+
+        When addressed qualified (``alice:private-agent``) the share
+        check runs and returns 403 for the non-shared private agent.
+        """
         await agent_store.create(AgentSpec(name="private-agent", model="m", owner_id="alice", shared_with=[]))
 
         from agentic_primitives_gateway.routes import agents as agent_routes
@@ -135,12 +144,17 @@ class TestAgentOwnership:
         agent_routes._store = agent_store
 
         try:
-            # Bob tries to access Alice's private agent
             set_authenticated_principal(AuthenticatedPrincipal(id="bob", type="user"))
             from fastapi import HTTPException
 
+            # Bare lookup: 404.
             with pytest.raises(HTTPException) as exc_info:
                 await agent_routes.get_agent("private-agent")
+            assert exc_info.value.status_code == 404
+
+            # Qualified lookup: 403 (share rules deny).
+            with pytest.raises(HTTPException) as exc_info:
+                await agent_routes.get_agent("alice:private-agent")
             assert exc_info.value.status_code == 403
         finally:
             agent_routes._store = original_store
@@ -173,7 +187,7 @@ class TestAgentOwnership:
 
             with pytest.raises(HTTPException) as exc_info:
                 await agent_routes.update_agent(
-                    "alice-agent",
+                    "alice:alice-agent",
                     UpdateAgentRequest(description="hacked"),
                 )
             assert exc_info.value.status_code == 403
@@ -195,7 +209,7 @@ class TestAgentOwnership:
             from fastapi import HTTPException
 
             with pytest.raises(HTTPException) as exc_info:
-                await agent_routes.delete_agent("alice-agent")
+                await agent_routes.delete_agent("alice:alice-agent")
             assert exc_info.value.status_code == 403
         finally:
             agent_routes._store = original_store
@@ -217,7 +231,7 @@ class TestAgentOwnership:
             from agentic_primitives_gateway.models.agents import UpdateAgentRequest
 
             result = await agent_routes.update_agent(
-                "alice-agent",
+                "alice:alice-agent",
                 UpdateAgentRequest(description="admin edit"),
             )
             assert result.description == "admin edit"
@@ -238,8 +252,8 @@ class TestAgentOwnership:
             set_authenticated_principal(
                 AuthenticatedPrincipal(id="admin-user", type="user", scopes=frozenset({"admin"}))
             )
-            result = await agent_routes.delete_agent("alice-agent")
-            assert result == {"status": "deleted"}
+            result = await agent_routes.delete_agent("alice:alice-agent")
+            assert result["status"] == "deleted"
         finally:
             agent_routes._store = original_store
 

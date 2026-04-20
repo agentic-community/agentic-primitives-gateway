@@ -1750,6 +1750,82 @@ class AgenticPlatformClient:
         self._raise_for_status(resp)
         return self._json_dict(resp)
 
+    # ── Agent versioning / fork / lineage ─────────────────────────────
+
+    async def list_agent_versions(self, name: str) -> dict[str, Any]:
+        """List all versions (history) for an agent identity.
+
+        ``name`` may be bare (``"researcher"``) or qualified
+        (``"alice:researcher"``).
+        """
+        resp = await self._get(f"/api/v1/agents/{name}/versions")
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def get_agent_version(self, name: str, version_id: str) -> dict[str, Any]:
+        resp = await self._get(f"/api/v1/agents/{name}/versions/{version_id}")
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def create_agent_version(self, name: str, updates: dict[str, Any]) -> dict[str, Any]:
+        """Create a new version of an agent.
+
+        Auto-deploys when the admin-approval gate is off; otherwise the
+        new version lands as ``draft``.  ``updates`` takes the same shape
+        as :meth:`update_agent` plus the optional ``commit_message`` and
+        ``parent_version_id`` fields.
+        """
+        resp = await self._post(f"/api/v1/agents/{name}/versions", json=updates)
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def propose_agent_version(self, name: str, version_id: str) -> dict[str, Any]:
+        resp = await self._post(f"/api/v1/agents/{name}/versions/{version_id}/propose", json=None)
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def approve_agent_version(self, name: str, version_id: str) -> dict[str, Any]:
+        resp = await self._post(f"/api/v1/agents/{name}/versions/{version_id}/approve", json=None)
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def reject_agent_version(self, name: str, version_id: str, reason: str) -> dict[str, Any]:
+        resp = await self._post(f"/api/v1/agents/{name}/versions/{version_id}/reject", json={"reason": reason})
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def deploy_agent_version(self, name: str, version_id: str) -> dict[str, Any]:
+        resp = await self._post(f"/api/v1/agents/{name}/versions/{version_id}/deploy", json=None)
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def fork_agent(
+        self,
+        name: str,
+        *,
+        target_name: str | None = None,
+        commit_message: str | None = None,
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {}
+        if target_name is not None:
+            body["target_name"] = target_name
+        if commit_message is not None:
+            body["commit_message"] = commit_message
+        resp = await self._post(f"/api/v1/agents/{name}/fork", json=body)
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def get_agent_lineage(self, name: str) -> dict[str, Any]:
+        resp = await self._get(f"/api/v1/agents/{name}/lineage")
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def list_pending_agent_proposals(self) -> dict[str, Any]:
+        """Admin-only list of pending agent version proposals."""
+        resp = await self._get("/api/v1/admin/agents/proposals")
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
     async def chat_with_agent(
         self,
         name: str,
@@ -1885,6 +1961,70 @@ class AgenticPlatformClient:
     async def delete_team(self, name: str) -> dict[str, Any]:
         """Delete a team."""
         resp = await self._delete(f"/api/v1/teams/{name}")
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    # ── Team versioning / fork / lineage ──────────────────────────────
+
+    async def list_team_versions(self, name: str) -> dict[str, Any]:
+        resp = await self._get(f"/api/v1/teams/{name}/versions")
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def get_team_version(self, name: str, version_id: str) -> dict[str, Any]:
+        resp = await self._get(f"/api/v1/teams/{name}/versions/{version_id}")
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def create_team_version(self, name: str, updates: dict[str, Any]) -> dict[str, Any]:
+        resp = await self._post(f"/api/v1/teams/{name}/versions", json=updates)
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def propose_team_version(self, name: str, version_id: str) -> dict[str, Any]:
+        resp = await self._post(f"/api/v1/teams/{name}/versions/{version_id}/propose", json=None)
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def approve_team_version(self, name: str, version_id: str) -> dict[str, Any]:
+        resp = await self._post(f"/api/v1/teams/{name}/versions/{version_id}/approve", json=None)
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def reject_team_version(self, name: str, version_id: str, reason: str) -> dict[str, Any]:
+        resp = await self._post(f"/api/v1/teams/{name}/versions/{version_id}/reject", json={"reason": reason})
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def deploy_team_version(self, name: str, version_id: str) -> dict[str, Any]:
+        resp = await self._post(f"/api/v1/teams/{name}/versions/{version_id}/deploy", json=None)
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def fork_team(
+        self,
+        name: str,
+        *,
+        target_name: str | None = None,
+        commit_message: str | None = None,
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {}
+        if target_name is not None:
+            body["target_name"] = target_name
+        if commit_message is not None:
+            body["commit_message"] = commit_message
+        resp = await self._post(f"/api/v1/teams/{name}/fork", json=body)
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def get_team_lineage(self, name: str) -> dict[str, Any]:
+        resp = await self._get(f"/api/v1/teams/{name}/lineage")
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def list_pending_team_proposals(self) -> dict[str, Any]:
+        """Admin-only list of pending team version proposals."""
+        resp = await self._get("/api/v1/admin/teams/proposals")
         self._raise_for_status(resp)
         return self._json_dict(resp)
 

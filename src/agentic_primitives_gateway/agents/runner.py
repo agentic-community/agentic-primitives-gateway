@@ -342,6 +342,7 @@ class AgentRunner:
             agent_runner=self,
             agent_depth=depth,
             resolved_pools=pools,
+            parent_owner_id=spec.owner_id,
         )
 
         ctx = _RunContext(
@@ -671,6 +672,11 @@ class AgentRunner:
             raise RuntimeError("Cannot checkpoint without an authenticated principal")
         data: dict[str, Any] = {
             "spec_name": ctx.spec.name,
+            # New in Phase 2: checkpoint the agent identity's owner so
+            # resume can ``resolve_qualified(owner, name)``.  Old
+            # checkpoints without this field default to ``"system"``
+            # below (matches the behavior before owner-scoped identities).
+            "spec_owner": ctx.spec.owner_id,
             "session_id": ctx.session_id,
             "actor_id": ctx.actor_id,
             "knowledge_ns": ctx.knowledge_ns,
@@ -739,9 +745,10 @@ class AgentRunner:
 
         # Load spec (current version from store)
         spec_name = data["spec_name"]
-        spec = await self._store.get(spec_name)  # type: ignore[union-attr]
+        spec_owner = data.get("spec_owner", "system")
+        spec = await self._store.resolve_qualified(spec_owner, spec_name)  # type: ignore[union-attr]
         if spec is None:
-            logger.warning("Agent '%s' not found during resume — skipping", spec_name)
+            logger.warning("Agent '%s:%s' not found during resume — skipping", spec_owner, spec_name)
             return
 
         # Rebuild tools (handlers can't be serialized)

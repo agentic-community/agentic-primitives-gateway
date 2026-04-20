@@ -177,7 +177,10 @@ class TestResume:
         runner.set_checkpoint_store(store)
 
         agent_store = AsyncMock()
-        agent_store.get = AsyncMock(return_value=_make_spec())
+        # Runner's resume path uses ``resolve_qualified`` against the stored
+        # ``spec_owner`` (defaults to ``"system"`` when a legacy checkpoint
+        # lacks the field).
+        agent_store.resolve_qualified = AsyncMock(return_value=_make_spec())
         runner.set_store(agent_store)
 
         # Save a checkpoint

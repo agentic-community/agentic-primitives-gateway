@@ -437,6 +437,72 @@ class TestClientAgents:
             assert exc_info.value.status_code == 404
 
 
+class TestClientAgentVersions:
+    @pytest.mark.asyncio
+    async def test_initial_create_has_v1(self, make_client) -> None:
+        async with make_client() as client:
+            await client.create_agent({"name": "r", "model": "m"})
+            versions = await client.list_agent_versions("r")
+            assert len(versions["versions"]) == 1
+            assert versions["versions"][0]["version_number"] == 1
+
+    @pytest.mark.asyncio
+    async def test_create_version_bumps_number(self, make_client) -> None:
+        async with make_client() as client:
+            await client.create_agent({"name": "r", "model": "m"})
+            v2 = await client.create_agent_version("r", {"description": "v2", "commit_message": "tweak"})
+            assert v2["version_number"] == 2
+            versions = await client.list_agent_versions("r")
+            assert [v["version_number"] for v in versions["versions"]] == [1, 2]
+
+    @pytest.mark.asyncio
+    async def test_deploy_version(self, make_client) -> None:
+        async with make_client() as client:
+            await client.create_agent({"name": "r", "model": "m"})
+            v2 = await client.create_agent_version("r", {"description": "v2"})
+            # Propose + approve + deploy round-trip exercises the full flow.
+            await client.propose_agent_version("r", v2["version_id"])
+            await client.approve_agent_version("r", v2["version_id"])
+            result = await client.deploy_agent_version("r", v2["version_id"])
+            assert result["status"] == "deployed"
+
+    @pytest.mark.asyncio
+    async def test_reject_version(self, make_client) -> None:
+        async with make_client() as client:
+            await client.create_agent({"name": "r", "model": "m"})
+            v2 = await client.create_agent_version("r", {"description": "v2"})
+            await client.propose_agent_version("r", v2["version_id"])
+            result = await client.reject_agent_version("r", v2["version_id"], reason="nope")
+            assert result["status"] == "rejected"
+
+    @pytest.mark.asyncio
+    async def test_fork_agent(self, make_client) -> None:
+        async with make_client() as client:
+            await client.create_agent({"name": "source", "model": "m"})
+            fork = await client.fork_agent("source", target_name="my-fork")
+            assert fork["agent_name"] == "my-fork"
+            assert fork["forked_from"] is not None
+            assert fork["forked_from"]["name"] == "source"
+
+    @pytest.mark.asyncio
+    async def test_get_lineage(self, make_client) -> None:
+        async with make_client() as client:
+            await client.create_agent({"name": "r", "model": "m"})
+            lineage = await client.get_agent_lineage("r")
+            assert lineage["root_identity"]["name"] == "r"
+            assert len(lineage["nodes"]) >= 1
+
+    @pytest.mark.asyncio
+    async def test_pending_proposals(self, make_client) -> None:
+        async with make_client() as client:
+            await client.create_agent({"name": "r", "model": "m"})
+            v2 = await client.create_agent_version("r", {"description": "v2"})
+            await client.propose_agent_version("r", v2["version_id"])
+            pending = await client.list_pending_agent_proposals()
+            version_ids = {v["version_id"] for v in pending["versions"]}
+            assert v2["version_id"] in version_ids
+
+
 class TestClientAgentSessions:
     @pytest.mark.asyncio
     async def test_list_sessions(self, make_client) -> None:
