@@ -360,3 +360,124 @@ export interface AuditFilters {
   resource_id?: string;
   correlation_id?: string;
 }
+
+// ── Versioning / Fork / Lineage ─────────────────────────────────────────
+
+export type VersionStatus = "draft" | "proposed" | "deployed" | "archived" | "rejected";
+
+export interface ForkRef {
+  name: string;
+  owner_id: string;
+  version_id: string;
+}
+
+export interface Identity {
+  owner_id: string;
+  name: string;
+}
+
+export interface AgentVersion {
+  version_id: string;
+  agent_name: string;
+  owner_id: string;
+  version_number: number;
+  spec: AgentSpec;
+  created_at: string;
+  created_by: string;
+  parent_version_id: string | null;
+  forked_from: ForkRef | null;
+  status: VersionStatus;
+  approved_by: string | null;
+  approved_at: string | null;
+  deployed_at: string | null;
+  commit_message: string | null;
+}
+
+export interface TeamVersion {
+  version_id: string;
+  team_name: string;
+  owner_id: string;
+  version_number: number;
+  spec: TeamSpec;
+  created_at: string;
+  created_by: string;
+  parent_version_id: string | null;
+  forked_from: ForkRef | null;
+  status: VersionStatus;
+  approved_by: string | null;
+  approved_at: string | null;
+  deployed_at: string | null;
+  commit_message: string | null;
+}
+
+export interface AgentVersionListResponse {
+  versions: AgentVersion[];
+}
+
+export interface TeamVersionListResponse {
+  versions: TeamVersion[];
+}
+
+export interface AgentLineageNode {
+  version: AgentVersion;
+  children_ids: string[];
+  forks_out: ForkRef[];
+}
+
+export interface AgentLineage {
+  root_identity: Identity;
+  nodes: AgentLineageNode[];
+  deployed: Record<string, string>;
+}
+
+export interface TeamLineageNode {
+  version: TeamVersion;
+  children_ids: string[];
+  forks_out: ForkRef[];
+}
+
+export interface TeamLineage {
+  root_identity: Identity;
+  nodes: TeamLineageNode[];
+  deployed: Record<string, string>;
+}
+
+export interface CreateVersionRequest {
+  description?: string;
+  model?: string;
+  system_prompt?: string;
+  primitives?: Record<string, PrimitiveConfig>;
+  hooks?: HooksConfig;
+  provider_overrides?: Record<string, string>;
+  max_turns?: number;
+  temperature?: number;
+  max_tokens?: number | null;
+  shared_with?: string[];
+  checkpointing_enabled?: boolean;
+  commit_message?: string;
+  parent_version_id?: string;
+}
+
+export interface CreateTeamVersionRequest {
+  description?: string;
+  planner?: string;
+  synthesizer?: string;
+  workers?: string[];
+  max_concurrent?: number | null;
+  global_max_turns?: number;
+  global_timeout_seconds?: number;
+  shared_memory_namespace?: string | null;
+  shared_with?: string[];
+  checkpointing_enabled?: boolean;
+  commit_message?: string;
+  parent_version_id?: string;
+}
+
+export interface ForkRequest {
+  target_name?: string;
+  commit_message?: string;
+}
+
+export interface RejectionRequest {
+  reason: string;
+}

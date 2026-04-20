@@ -374,6 +374,35 @@ export default function TeamList() {
                     </div>
                     <div className="flex items-center gap-1.5 shrink-0">
                       <Link
+                        to={`/teams/${team.owner_id}:${team.name}/versions`}
+                        className="rounded border border-gray-300 dark:border-gray-700 px-2 py-1 text-xs text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"
+                        title="Version history"
+                      >
+                        Versions
+                      </Link>
+                      <Link
+                        to={`/teams/${team.owner_id}:${team.name}/lineage`}
+                        className="rounded border border-gray-300 dark:border-gray-700 px-2 py-1 text-xs text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"
+                        title="Lineage graph"
+                      >
+                        Lineage
+                      </Link>
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          try {
+                            const v = await api.forkTeam(`${team.owner_id}:${team.name}`, { target_name: team.name });
+                            window.location.assign(`/ui/teams/${v.owner_id}:${v.team_name}/versions`);
+                          } catch (e) {
+                            alert(e instanceof Error ? e.message : "Fork failed");
+                          }
+                        }}
+                        className="rounded border border-gray-300 dark:border-gray-700 px-2 py-1 text-xs text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"
+                        title="Fork into my namespace"
+                      >
+                        Fork
+                      </button>
+                      <Link
                         to={`/teams/${team.name}/run`}
                         className="rounded bg-indigo-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-indigo-700"
                       >
