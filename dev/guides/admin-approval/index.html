@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../tools/">
+        <link rel="prev" href="../lineage/">
       
       
-        <link rel="next" href="../evaluations/">
+        <link rel="next" href="../observability/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>Policy - Agentic Primitives Gateway</title>
+        <title>Admin Approval Workflow - Agentic Primitives Gateway</title>
       
     
     
@@ -76,7 +76,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#policy-api" class="md-skip">
+        <a href="#running-with-admin-approval-for-deploys" class="md-skip">
           Skip to content
         </a>
       
@@ -113,7 +113,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Policy
+              Admin Approval Workflow
             
           </span>
         </div>
@@ -283,11 +283,13 @@
   
   
   
+    
+  
   
     
     
-      <li class="md-tabs__item">
-        <a href="../../guides/building-tools/" class="md-tabs__link">
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../building-tools/" class="md-tabs__link">
           
   
   
@@ -333,13 +335,11 @@
   
   
   
-    
-  
   
     
     
-      <li class="md-tabs__item md-tabs__item--active">
-        <a href="../overview/" class="md-tabs__link">
+      <li class="md-tabs__item">
+        <a href="../../api/overview/" class="md-tabs__link">
           
   
   
@@ -876,28 +876,31 @@
       
   
   
+    
   
   
+  
     
     
     
     
+      
+        
+        
       
       
         
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
         
           
-        
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
-        
-          
-          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
             
   
   
@@ -915,7 +918,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_4">
             <span class="md-nav__icon md-icon"></span>
             
@@ -933,7 +936,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../guides/building-tools/" class="md-nav__link">
+      <a href="../building-tools/" class="md-nav__link">
         
   
   
@@ -961,7 +964,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../guides/adding-a-provider/" class="md-nav__link">
+      <a href="../adding-a-provider/" class="md-nav__link">
         
   
   
@@ -989,7 +992,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../guides/agent-delegation/" class="md-nav__link">
+      <a href="../agent-delegation/" class="md-nav__link">
         
   
   
@@ -1017,7 +1020,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../guides/memory-namespaces/" class="md-nav__link">
+      <a href="../memory-namespaces/" class="md-nav__link">
         
   
   
@@ -1045,7 +1048,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../guides/lineage/" class="md-nav__link">
+      <a href="../lineage/" class="md-nav__link">
         
   
   
@@ -1070,10 +1073,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../../guides/admin-approval/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Admin Approval Workflow
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1089,6 +1119,103 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#flip-the-switch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Flip the switch
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-propose-approve-deploy-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The propose → approve → deploy flow
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#admin-review-queue" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Admin review queue
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#audit-trail" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Audit trail
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#prometheus" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Prometheus
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#when-to-turn-it-on" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        When to turn it on
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#limitations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Limitations
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -1101,7 +1228,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../guides/observability/" class="md-nav__link">
+      <a href="../observability/" class="md-nav__link">
         
   
   
@@ -1129,7 +1256,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../guides/compliance/" class="md-nav__link">
+      <a href="../compliance/" class="md-nav__link">
         
   
   
@@ -1157,7 +1284,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../guides/web-ui/" class="md-nav__link">
+      <a href="../web-ui/" class="md-nav__link">
         
   
   
@@ -2486,31 +2613,28 @@
       
   
   
-    
   
   
-  
     
     
     
     
-      
-        
-        
       
       
         
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
-        
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" checked>
         
           
-          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
             
   
   
@@ -2528,7 +2652,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_6">
             <span class="md-nav__icon md-icon"></span>
             
@@ -2546,7 +2670,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../overview/" class="md-nav__link">
+      <a href="../../api/overview/" class="md-nav__link">
         
   
   
@@ -2574,7 +2698,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../memory/" class="md-nav__link">
+      <a href="../../api/memory/" class="md-nav__link">
         
   
   
@@ -2602,7 +2726,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../identity/" class="md-nav__link">
+      <a href="../../api/identity/" class="md-nav__link">
         
   
   
@@ -2630,7 +2754,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../code-interpreter/" class="md-nav__link">
+      <a href="../../api/code-interpreter/" class="md-nav__link">
         
   
   
@@ -2658,7 +2782,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../browser/" class="md-nav__link">
+      <a href="../../api/browser/" class="md-nav__link">
         
   
   
@@ -2686,7 +2810,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../observability/" class="md-nav__link">
+      <a href="../../api/observability/" class="md-nav__link">
         
   
   
@@ -2714,7 +2838,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../llm/" class="md-nav__link">
+      <a href="../../api/llm/" class="md-nav__link">
         
   
   
@@ -2742,7 +2866,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tools/" class="md-nav__link">
+      <a href="../../api/tools/" class="md-nav__link">
         
   
   
@@ -2767,37 +2891,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Policy
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../../api/policy/" class="md-nav__link">
         
   
   
@@ -2813,70 +2910,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#enforcement-info" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Enforcement Info
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#policy-engines" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Policy Engines
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#policies-cedar" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Policies (Cedar)
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#policy-generation-optional" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Policy Generation (Optional)
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -2889,7 +2922,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../evaluations/" class="md-nav__link">
+      <a href="../../api/evaluations/" class="md-nav__link">
         
   
   
@@ -2917,7 +2950,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../agents/" class="md-nav__link">
+      <a href="../../api/agents/" class="md-nav__link">
         
   
   
@@ -2945,7 +2978,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../teams/" class="md-nav__link">
+      <a href="../../api/teams/" class="md-nav__link">
         
   
   
@@ -2973,7 +3006,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../audit/" class="md-nav__link">
+      <a href="../../api/audit/" class="md-nav__link">
         
   
   
@@ -3117,10 +3150,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#enforcement-info" class="md-nav__link">
+  <a href="#flip-the-switch" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Enforcement Info
+        Flip the switch
       
     </span>
   </a>
@@ -3128,10 +3161,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#policy-engines" class="md-nav__link">
+  <a href="#the-propose-approve-deploy-flow" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Policy Engines
+        The propose → approve → deploy flow
       
     </span>
   </a>
@@ -3139,10 +3172,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#policies-cedar" class="md-nav__link">
+  <a href="#admin-review-queue" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Policies (Cedar)
+        Admin review queue
       
     </span>
   </a>
@@ -3150,10 +3183,43 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#policy-generation-optional" class="md-nav__link">
+  <a href="#audit-trail" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Policy Generation (Optional)
+        Audit trail
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#prometheus" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Prometheus
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#when-to-turn-it-on" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        When to turn it on
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#limitations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Limitations
       
     </span>
   </a>
@@ -3180,145 +3246,90 @@
   
 
 
-<h1 id="policy-api">Policy API<a class="headerlink" href="#policy-api" title="Permanent link">&para;</a></h1>
-<p><code>/api/v1/policy</code></p>
-<p>Cedar-based policy engine and policy management. All endpoints require authentication. Mutation endpoints (create, update, delete) require admin.</p>
-<p>This API manages policy <strong>definitions</strong> (the write path). For policy <strong>enforcement</strong> at request time, see the <a href="../../concepts/policy/">Policy Enforcement</a> concept guide.</p>
-<p><strong>Backends:</strong> <code>NoopPolicyProvider</code>, <a href="../../primitives/policy/agentcore/"><code>AgentCorePolicyProvider</code></a></p>
-<h2 id="enforcement-info">Enforcement Info<a class="headerlink" href="#enforcement-info" title="Permanent link">&para;</a></h2>
-<table>
-<thead>
-<tr>
-<th>Method</th>
-<th>Path</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>GET</code></td>
-<td><code>/enforcement</code></td>
-<td>Returns the active enforcement engine ID and whether enforcement is enabled.</td>
-</tr>
-</tbody>
-</table>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>curl<span class="w"> </span>http://localhost:8000/api/v1/policy/enforcement
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="c1"># {&quot;active&quot;: true, &quot;engine_id&quot;: &quot;my-engine&quot;}</span>
+<h1 id="running-with-admin-approval-for-deploys">Running with admin-approval for deploys<a class="headerlink" href="#running-with-admin-approval-for-deploys" title="Permanent link">&para;</a></h1>
+<p>For production deployments where an agent/team change could affect
+downstream users, turn on the admin-approval gate so version deploys
+require explicit review.</p>
+<h2 id="flip-the-switch">Flip the switch<a class="headerlink" href="#flip-the-switch" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">governance</span><span class="p">:</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="nt">require_admin_approval_for_deploy</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
 </code></pre></div>
-<h2 id="policy-engines">Policy Engines<a class="headerlink" href="#policy-engines" title="Permanent link">&para;</a></h2>
-<table>
-<thead>
-<tr>
-<th>Method</th>
-<th>Path</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>POST</code></td>
-<td><code>/engines</code></td>
-<td>Create a policy engine. Returns 201. <strong>Admin only.</strong></td>
-</tr>
-<tr>
-<td><code>GET</code></td>
-<td><code>/engines</code></td>
-<td>List policy engines. Query params: <code>max_results</code>, <code>next_token</code>.</td>
-</tr>
-<tr>
-<td><code>GET</code></td>
-<td><code>/engines/{engine_id}</code></td>
-<td>Get a policy engine.</td>
-</tr>
-<tr>
-<td><code>DELETE</code></td>
-<td><code>/engines/{engine_id}</code></td>
-<td>Delete a policy engine. Returns 204. <strong>Admin only.</strong></td>
-</tr>
-</tbody>
-</table>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>http://localhost:8000/api/v1/policy/engines<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;name&quot;: &quot;production&quot;, &quot;description&quot;: &quot;Production policy engine&quot;}&#39;</span>
+<p>With the gate <strong>on</strong>:</p>
+<ul>
+<li><code>POST /api/v1/agents</code> — creates the identity + v1 as <code>draft</code>.
+  Returns 202 with the draft version (no live traffic).</li>
+<li><code>POST /api/v1/agents/{name}/versions</code> — same: new versions land as
+  <code>draft</code>.</li>
+<li><code>PUT /api/v1/agents/{name}</code> — returns <strong>409</strong> with a pointer at
+  <code>/versions</code>.  The PUT path cannot bypass approval.</li>
+<li><code>POST /fork</code> — the fork itself still creates a deployed v1 in the
+  caller's namespace (forks are creations, not updates of shared state).
+  Subsequent edits to the fork go through the draft → proposed flow.</li>
+<li>YAML-seeded specs <strong>always</strong> bypass the gate on first load.
+  Bootstrap must never deadlock.</li>
+</ul>
+<h2 id="the-propose-approve-deploy-flow">The propose → approve → deploy flow<a class="headerlink" href="#the-propose-approve-deploy-flow" title="Permanent link">&para;</a></h2>
+<p>A draft version has to move through three explicit steps:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>POST  /api/v1/agents/{name}/versions            # create draft
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>POST  /api/v1/agents/{name}/versions/{vid}/propose
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a># then as admin:
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>POST  /api/v1/agents/{name}/versions/{vid}/approve
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>POST  /api/v1/agents/{name}/versions/{vid}/deploy
 </code></pre></div>
-<h2 id="policies-cedar">Policies (Cedar)<a class="headerlink" href="#policies-cedar" title="Permanent link">&para;</a></h2>
-<table>
-<thead>
-<tr>
-<th>Method</th>
-<th>Path</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>POST</code></td>
-<td><code>/engines/{engine_id}/policies</code></td>
-<td>Create a policy. Returns 201. <strong>Admin only.</strong></td>
-</tr>
-<tr>
-<td><code>GET</code></td>
-<td><code>/engines/{engine_id}/policies</code></td>
-<td>List policies. Query params: <code>max_results</code>, <code>next_token</code>.</td>
-</tr>
-<tr>
-<td><code>GET</code></td>
-<td><code>/engines/{engine_id}/policies/{policy_id}</code></td>
-<td>Get a policy.</td>
-</tr>
-<tr>
-<td><code>PUT</code></td>
-<td><code>/engines/{engine_id}/policies/{policy_id}</code></td>
-<td>Update a policy. <strong>Admin only.</strong></td>
-</tr>
-<tr>
-<td><code>DELETE</code></td>
-<td><code>/engines/{engine_id}/policies/{policy_id}</code></td>
-<td>Delete a policy. Returns 204. <strong>Admin only.</strong></td>
-</tr>
-</tbody>
-</table>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="c1"># Create a policy</span>
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>http://localhost:8000/api/v1/policy/engines/my-engine/policies<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{</span>
-<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="s1">    &quot;policy_body&quot;: &quot;permit(principal == Agent::\&quot;research-assistant\&quot;, action, resource);&quot;,</span>
-<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="s1">    &quot;description&quot;: &quot;Allow research-assistant full access&quot;</span>
-<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="s1">  }&#39;</span>
+<p>Rejection short-circuits:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>POST  /api/v1/agents/{name}/versions/{vid}/reject  {reason: &quot;...&quot;}
 </code></pre></div>
-<h2 id="policy-generation-optional">Policy Generation (Optional)<a class="headerlink" href="#policy-generation-optional" title="Permanent link">&para;</a></h2>
-<p>Auto-generate policies from agent behavior. Returns 501 if not supported by the configured provider. Only <code>AgentCorePolicyProvider</code> supports generation.</p>
-<table>
-<thead>
-<tr>
-<th>Method</th>
-<th>Path</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>POST</code></td>
-<td><code>/engines/{engine_id}/generations</code></td>
-<td>Start policy generation. Returns 201 or 501.</td>
-</tr>
-<tr>
-<td><code>GET</code></td>
-<td><code>/engines/{engine_id}/generations</code></td>
-<td>List generations. Returns 501 if not supported.</td>
-</tr>
-<tr>
-<td><code>GET</code></td>
-<td><code>/engines/{engine_id}/generations/{generation_id}</code></td>
-<td>Get generation status.</td>
-</tr>
-<tr>
-<td><code>GET</code></td>
-<td><code>/engines/{engine_id}/generations/{generation_id}/assets</code></td>
-<td>List generated policy assets.</td>
-</tr>
-</tbody>
-</table>
+<p>Rejected versions are terminal.  The owner can create a new draft
+from the same parent and try again.</p>
+<h2 id="admin-review-queue">Admin review queue<a class="headerlink" href="#admin-review-queue" title="Permanent link">&para;</a></h2>
+<p><code>GET /api/v1/admin/agents/proposals</code> returns every pending agent
+proposal across every namespace.  Same for <code>/api/v1/admin/teams/proposals</code>.
+The UI renders both in a tabbed <code>Pending proposals</code> page
+(<code>/ui/admin/proposals</code>) with one-click <strong>Approve + deploy</strong> or
+<strong>Reject with reason</strong>.</p>
+<h2 id="audit-trail">Audit trail<a class="headerlink" href="#audit-trail" title="Permanent link">&para;</a></h2>
+<p>Every transition emits a structured audit event (see the
+<a href="../../concepts/governance/">governance concept guide</a>):</p>
+<ul>
+<li><code>agent.version.create</code> / <code>team.version.create</code></li>
+<li><code>agent.version.propose</code></li>
+<li><code>agent.version.approve</code> — includes the approver's principal id</li>
+<li><code>agent.version.reject</code> — includes truncated reason</li>
+<li><code>agent.version.deploy</code> — includes <code>previous_version_id</code> so you can
+  trace rollouts</li>
+<li><code>agent.fork</code></li>
+</ul>
+<p><code>resource_id</code> on every version/fork event is the qualified identity
+(<code>{owner_id}:{name}</code>), so dashboards can filter by fork.</p>
+<h2 id="prometheus">Prometheus<a class="headerlink" href="#prometheus" title="Permanent link">&para;</a></h2>
+<ul>
+<li><code>gateway_agent_version_approvals_total{outcome}</code> —
+  <code>approved | rejected | deployed</code>.  Compute approval rate,
+  rejection reasons, and time-to-deploy from this counter plus the
+  audit trail timestamps.</li>
+<li><code>gateway_agent_versions_created_total{ns_kind, auto_deployed}</code> —
+  break down what is and isn't going through the gate.  With the gate
+  on, <code>auto_deployed=true</code> should drop to roughly the pre-seeded rate.</li>
+</ul>
+<h2 id="when-to-turn-it-on">When to turn it on<a class="headerlink" href="#when-to-turn-it-on" title="Permanent link">&para;</a></h2>
+<p>Recommended configurations:</p>
+<ul>
+<li><strong>Dev / quickstart</strong>: gate off.  Keeps the edit-deploy cycle fast.</li>
+<li><strong>Pre-production</strong>: gate on with the same user acting as owner and
+  admin, so the workflow is exercised without real review friction.</li>
+<li><strong>Production</strong>: gate on, admins are distinct from owners.  Pair with
+  the audit trail for compliance evidence.</li>
+</ul>
+<h2 id="limitations">Limitations<a class="headerlink" href="#limitations" title="Permanent link">&para;</a></h2>
+<ul>
+<li>The gate is process-wide — all agents + teams see the same setting.
+  Per-identity overrides aren't wired.</li>
+<li>Owners can't approve their own proposals.  That's intentional; if
+  you need it, grant the owner the admin scope.</li>
+<li>Rejected versions stay in the history forever.  You can prune them
+  by bumping <code>agents.max_versions_per_identity</code> / the retention policy
+  if the archive gets noisy.</li>
+</ul>
 
 
 

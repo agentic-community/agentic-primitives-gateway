@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../tools/">
+        <link rel="prev" href="../teams/">
       
       
-        <link rel="next" href="../evaluations/">
+        <link rel="next" href="../team-versioning/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>Policy - Agentic Primitives Gateway</title>
+        <title>Agent Versioning - Agentic Primitives Gateway</title>
       
     
     
@@ -76,7 +76,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#policy-api" class="md-skip">
+        <a href="#agent-versioning" class="md-skip">
           Skip to content
         </a>
       
@@ -113,7 +113,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Policy
+              Agent Versioning
             
           </span>
         </div>
@@ -263,11 +263,13 @@
   
   
   
+    
+  
   
     
     
-      <li class="md-tabs__item">
-        <a href="../../concepts/architecture/" class="md-tabs__link">
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../architecture/" class="md-tabs__link">
           
   
   
@@ -333,13 +335,11 @@
   
   
   
-    
-  
   
     
     
-      <li class="md-tabs__item md-tabs__item--active">
-        <a href="../overview/" class="md-tabs__link">
+      <li class="md-tabs__item">
+        <a href="../../api/overview/" class="md-tabs__link">
           
   
   
@@ -563,28 +563,31 @@
       
   
   
+    
   
   
+  
     
     
     
     
+      
+        
+        
       
       
         
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
         
           
-        
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
-        
-          
-          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
             
   
   
@@ -602,7 +605,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_3">
             <span class="md-nav__icon md-icon"></span>
             
@@ -620,7 +623,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../concepts/architecture/" class="md-nav__link">
+      <a href="../architecture/" class="md-nav__link">
         
   
   
@@ -648,7 +651,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../concepts/primitives/" class="md-nav__link">
+      <a href="../primitives/" class="md-nav__link">
         
   
   
@@ -676,7 +679,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../concepts/agents/" class="md-nav__link">
+      <a href="../agents/" class="md-nav__link">
         
   
   
@@ -704,7 +707,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../concepts/teams/" class="md-nav__link">
+      <a href="../teams/" class="md-nav__link">
         
   
   
@@ -729,10 +732,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../../concepts/agent-versioning/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Agent Versioning
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -748,6 +778,164 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#identity-owner_id-name" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Identity = (owner_id, name)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#addressing-bare-qualified-admin-override" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Addressing: bare, qualified, admin-override
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#version-lifecycle" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Version lifecycle
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#run-time-resolution-is-always-the-deployed-version" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Run-time resolution is always the deployed version
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sub-agent-delegation-resolves-in-the-parent-agents-namespace" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sub-agent delegation resolves in the parent agent's namespace
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fork-clone-identity-with-lineage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fork = clone identity with lineage
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Fork = clone identity with lineage">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#fork-auto-qualification-of-sub-refs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fork auto-qualification of sub-refs
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#admin-approval-gate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Admin-approval gate
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#memory-conversation-history-are-identity-scoped" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Memory + conversation history are identity-scoped
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuration
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#prometheus-metrics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Prometheus metrics
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#see-also" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        See also
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -760,7 +948,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../concepts/team-versioning/" class="md-nav__link">
+      <a href="../team-versioning/" class="md-nav__link">
         
   
   
@@ -788,7 +976,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../concepts/streaming/" class="md-nav__link">
+      <a href="../streaming/" class="md-nav__link">
         
   
   
@@ -816,7 +1004,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../concepts/policy/" class="md-nav__link">
+      <a href="../policy/" class="md-nav__link">
         
   
   
@@ -844,7 +1032,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../concepts/governance/" class="md-nav__link">
+      <a href="../governance/" class="md-nav__link">
         
   
   
@@ -2486,31 +2674,28 @@
       
   
   
-    
   
   
-  
     
     
     
     
-      
-        
-        
       
       
         
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
-        
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" checked>
         
           
-          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="">
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
             
   
   
@@ -2528,7 +2713,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_6">
             <span class="md-nav__icon md-icon"></span>
             
@@ -2546,7 +2731,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../overview/" class="md-nav__link">
+      <a href="../../api/overview/" class="md-nav__link">
         
   
   
@@ -2574,7 +2759,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../memory/" class="md-nav__link">
+      <a href="../../api/memory/" class="md-nav__link">
         
   
   
@@ -2602,7 +2787,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../identity/" class="md-nav__link">
+      <a href="../../api/identity/" class="md-nav__link">
         
   
   
@@ -2630,7 +2815,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../code-interpreter/" class="md-nav__link">
+      <a href="../../api/code-interpreter/" class="md-nav__link">
         
   
   
@@ -2658,7 +2843,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../browser/" class="md-nav__link">
+      <a href="../../api/browser/" class="md-nav__link">
         
   
   
@@ -2686,7 +2871,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../observability/" class="md-nav__link">
+      <a href="../../api/observability/" class="md-nav__link">
         
   
   
@@ -2714,7 +2899,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../llm/" class="md-nav__link">
+      <a href="../../api/llm/" class="md-nav__link">
         
   
   
@@ -2742,7 +2927,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tools/" class="md-nav__link">
+      <a href="../../api/tools/" class="md-nav__link">
         
   
   
@@ -2767,37 +2952,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Policy
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../../api/policy/" class="md-nav__link">
         
   
   
@@ -2813,70 +2971,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#enforcement-info" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Enforcement Info
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#policy-engines" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Policy Engines
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#policies-cedar" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Policies (Cedar)
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#policy-generation-optional" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Policy Generation (Optional)
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -2889,7 +2983,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../evaluations/" class="md-nav__link">
+      <a href="../../api/evaluations/" class="md-nav__link">
         
   
   
@@ -2917,7 +3011,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../agents/" class="md-nav__link">
+      <a href="../../api/agents/" class="md-nav__link">
         
   
   
@@ -2945,7 +3039,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../teams/" class="md-nav__link">
+      <a href="../../api/teams/" class="md-nav__link">
         
   
   
@@ -2973,7 +3067,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../audit/" class="md-nav__link">
+      <a href="../../api/audit/" class="md-nav__link">
         
   
   
@@ -3117,10 +3211,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#enforcement-info" class="md-nav__link">
+  <a href="#identity-owner_id-name" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Enforcement Info
+        Identity = (owner_id, name)
       
     </span>
   </a>
@@ -3128,10 +3222,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#policy-engines" class="md-nav__link">
+  <a href="#addressing-bare-qualified-admin-override" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Policy Engines
+        Addressing: bare, qualified, admin-override
       
     </span>
   </a>
@@ -3139,10 +3233,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#policies-cedar" class="md-nav__link">
+  <a href="#version-lifecycle" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Policies (Cedar)
+        Version lifecycle
       
     </span>
   </a>
@@ -3150,10 +3244,104 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#policy-generation-optional" class="md-nav__link">
+  <a href="#run-time-resolution-is-always-the-deployed-version" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Policy Generation (Optional)
+        Run-time resolution is always the deployed version
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sub-agent-delegation-resolves-in-the-parent-agents-namespace" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sub-agent delegation resolves in the parent agent's namespace
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fork-clone-identity-with-lineage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fork = clone identity with lineage
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Fork = clone identity with lineage">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#fork-auto-qualification-of-sub-refs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fork auto-qualification of sub-refs
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#admin-approval-gate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Admin-approval gate
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#memory-conversation-history-are-identity-scoped" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Memory + conversation history are identity-scoped
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuration
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#prometheus-metrics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Prometheus metrics
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#see-also" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        See also
       
     </span>
   </a>
@@ -3180,145 +3368,146 @@
   
 
 
-<h1 id="policy-api">Policy API<a class="headerlink" href="#policy-api" title="Permanent link">&para;</a></h1>
-<p><code>/api/v1/policy</code></p>
-<p>Cedar-based policy engine and policy management. All endpoints require authentication. Mutation endpoints (create, update, delete) require admin.</p>
-<p>This API manages policy <strong>definitions</strong> (the write path). For policy <strong>enforcement</strong> at request time, see the <a href="../../concepts/policy/">Policy Enforcement</a> concept guide.</p>
-<p><strong>Backends:</strong> <code>NoopPolicyProvider</code>, <a href="../../primitives/policy/agentcore/"><code>AgentCorePolicyProvider</code></a></p>
-<h2 id="enforcement-info">Enforcement Info<a class="headerlink" href="#enforcement-info" title="Permanent link">&para;</a></h2>
+<h1 id="agent-versioning">Agent versioning<a class="headerlink" href="#agent-versioning" title="Permanent link">&para;</a></h1>
+<p>Every agent is now backed by an immutable history of <code>AgentVersion</code>
+records.  Editing an agent doesn't overwrite a row — it adds a new
+version and flips a deployment pointer.  This page explains the data
+model, the resolution rules, and why things are laid out this way.</p>
+<h2 id="identity-owner_id-name">Identity = <code>(owner_id, name)</code><a class="headerlink" href="#identity-owner_id-name" title="Permanent link">&para;</a></h2>
+<p>An agent's primary key is the <strong>identity</strong> pair <code>(owner_id, name)</code>,
+not the name alone.  Two different owners can have an agent called
+<code>researcher</code>; they're distinct identities with independent version
+histories.</p>
+<p>Pre-seeded YAML specs live in the <code>system</code> namespace (<code>owner_id="system"</code>).
+Anything a user creates or forks lives in that user's namespace
+(<code>owner_id=principal.id</code>).</p>
+<h2 id="addressing-bare-qualified-admin-override">Addressing: bare, qualified, admin-override<a class="headerlink" href="#addressing-bare-qualified-admin-override" title="Permanent link">&para;</a></h2>
+<p>Routes accept three forms of <code>{name}</code>:</p>
 <table>
 <thead>
 <tr>
-<th>Method</th>
-<th>Path</th>
-<th>Description</th>
+<th>Form</th>
+<th>Example</th>
+<th>Resolution</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><code>GET</code></td>
-<td><code>/enforcement</code></td>
-<td>Returns the active enforcement engine ID and whether enforcement is enabled.</td>
+<td><strong>Bare</strong></td>
+<td><code>/api/v1/agents/researcher</code></td>
+<td><code>(principal.id, researcher)</code> → fall back to <code>("system", researcher)</code>.  Never falls through to another owner's shared agent.</td>
+</tr>
+<tr>
+<td><strong>Qualified</strong></td>
+<td><code>/api/v1/agents/alice:researcher</code></td>
+<td>Direct <code>(alice, researcher)</code> lookup.  Required to read someone else's shared agent.</td>
+</tr>
+<tr>
+<td><strong>Admin <code>?owner=</code></strong></td>
+<td><code>/api/v1/agents/researcher?owner=alice</code></td>
+<td>Admin-only alternative to qualified form.</td>
 </tr>
 </tbody>
 </table>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>curl<span class="w"> </span>http://localhost:8000/api/v1/policy/enforcement
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="c1"># {&quot;active&quot;: true, &quot;engine_id&quot;: &quot;my-engine&quot;}</span>
+<p>The "no-fall-through-to-shared" rule exists so bare lookups are
+<strong>deterministic</strong> — if two owners share agents named <code>researcher</code> with
+you, which one would win?  Forcing qualified addressing for shared
+access keeps resolution predictable.</p>
+<h2 id="version-lifecycle">Version lifecycle<a class="headerlink" href="#version-lifecycle" title="Permanent link">&para;</a></h2>
+<p>Every <code>AgentVersion</code> has one of five statuses:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>draft  →  proposed  →  deployed
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>             │            │
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>             ├──► rejected (terminal)
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>             │
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>             └─► previous deployed flips to archived
 </code></pre></div>
-<h2 id="policy-engines">Policy Engines<a class="headerlink" href="#policy-engines" title="Permanent link">&para;</a></h2>
-<table>
-<thead>
-<tr>
-<th>Method</th>
-<th>Path</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>POST</code></td>
-<td><code>/engines</code></td>
-<td>Create a policy engine. Returns 201. <strong>Admin only.</strong></td>
-</tr>
-<tr>
-<td><code>GET</code></td>
-<td><code>/engines</code></td>
-<td>List policy engines. Query params: <code>max_results</code>, <code>next_token</code>.</td>
-</tr>
-<tr>
-<td><code>GET</code></td>
-<td><code>/engines/{engine_id}</code></td>
-<td>Get a policy engine.</td>
-</tr>
-<tr>
-<td><code>DELETE</code></td>
-<td><code>/engines/{engine_id}</code></td>
-<td>Delete a policy engine. Returns 204. <strong>Admin only.</strong></td>
-</tr>
-</tbody>
-</table>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>http://localhost:8000/api/v1/policy/engines<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;name&quot;: &quot;production&quot;, &quot;description&quot;: &quot;Production policy engine&quot;}&#39;</span>
+<ul>
+<li><strong>draft</strong> — the new-version default when the admin-approval gate is on.
+  Inert — runners never serve drafts.</li>
+<li><strong>proposed</strong> — owner has submitted the draft for admin review.</li>
+<li><strong>deployed</strong> — the single active version per identity.  <code>GET /agents/{name}</code>
+  always returns the spec embedded in the currently-deployed version.</li>
+<li><strong>archived</strong> — previously deployed, superseded by a newer deploy.</li>
+<li><strong>rejected</strong> — admin declined to approve the proposal.</li>
+</ul>
+<h2 id="run-time-resolution-is-always-the-deployed-version">Run-time resolution is always the deployed version<a class="headerlink" href="#run-time-resolution-is-always-the-deployed-version" title="Permanent link">&para;</a></h2>
+<p>The LLM loop in <code>AgentRunner</code> reads <code>spec.model</code>, <code>spec.system_prompt</code>,
+etc. directly from the deployed <code>AgentSpec</code> on every request.  There is
+no in-memory cache of old versions.  Drafts are inert until deployed.</p>
+<h2 id="sub-agent-delegation-resolves-in-the-parent-agents-namespace">Sub-agent delegation resolves in the parent agent's namespace<a class="headerlink" href="#sub-agent-delegation-resolves-in-the-parent-agents-namespace" title="Permanent link">&para;</a></h2>
+<p>When Alice's <code>researcher</code> delegates to <code>analyst</code>, the sub-agent
+resolves as <code>(alice, analyst)</code> first and falls back to
+<code>("system", analyst)</code>.  It does <em>not</em> use the caller's namespace —
+sharing an agent means sharing its whole delegation graph.  This is
+what makes "Bob runs Alice's shared <code>researcher</code>" work without Bob
+having to also own every sub-agent.</p>
+<h2 id="fork-clone-identity-with-lineage">Fork = clone identity with lineage<a class="headerlink" href="#fork-clone-identity-with-lineage" title="Permanent link">&para;</a></h2>
+<p><code>POST /api/v1/agents/{name}/fork</code> copies the <em>deployed</em> version of
+the source identity into the caller's namespace and records a
+<code>forked_from</code> pointer on the new v1:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">version</span><span class="o">.</span><span class="n">forked_from</span> <span class="o">=</span> <span class="n">ForkRef</span><span class="p">(</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>    <span class="n">name</span><span class="o">=</span><span class="s2">&quot;researcher&quot;</span><span class="p">,</span> <span class="n">owner_id</span><span class="o">=</span><span class="s2">&quot;alice&quot;</span><span class="p">,</span> <span class="n">version_id</span><span class="o">=</span><span class="s2">&quot;&lt;uuid&gt;&quot;</span><span class="p">,</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="p">)</span>
 </code></pre></div>
-<h2 id="policies-cedar">Policies (Cedar)<a class="headerlink" href="#policies-cedar" title="Permanent link">&para;</a></h2>
-<table>
-<thead>
-<tr>
-<th>Method</th>
-<th>Path</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>POST</code></td>
-<td><code>/engines/{engine_id}/policies</code></td>
-<td>Create a policy. Returns 201. <strong>Admin only.</strong></td>
-</tr>
-<tr>
-<td><code>GET</code></td>
-<td><code>/engines/{engine_id}/policies</code></td>
-<td>List policies. Query params: <code>max_results</code>, <code>next_token</code>.</td>
-</tr>
-<tr>
-<td><code>GET</code></td>
-<td><code>/engines/{engine_id}/policies/{policy_id}</code></td>
-<td>Get a policy.</td>
-</tr>
-<tr>
-<td><code>PUT</code></td>
-<td><code>/engines/{engine_id}/policies/{policy_id}</code></td>
-<td>Update a policy. <strong>Admin only.</strong></td>
-</tr>
-<tr>
-<td><code>DELETE</code></td>
-<td><code>/engines/{engine_id}/policies/{policy_id}</code></td>
-<td>Delete a policy. Returns 204. <strong>Admin only.</strong></td>
-</tr>
-</tbody>
-</table>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="c1"># Create a policy</span>
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>http://localhost:8000/api/v1/policy/engines/my-engine/policies<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{</span>
-<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="s1">    &quot;policy_body&quot;: &quot;permit(principal == Agent::\&quot;research-assistant\&quot;, action, resource);&quot;,</span>
-<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="s1">    &quot;description&quot;: &quot;Allow research-assistant full access&quot;</span>
-<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="s1">  }&#39;</span>
+<h3 id="fork-auto-qualification-of-sub-refs">Fork auto-qualification of sub-refs<a class="headerlink" href="#fork-auto-qualification-of-sub-refs" title="Permanent link">&para;</a></h3>
+<p>If Alice's <code>researcher</code> delegates to bare <code>analyst</code>, and Alice also
+owns <code>(alice, analyst)</code>, then Bob's fork auto-rewrites the ref to
+<code>"alice:analyst"</code> so the fork keeps resolving to Alice's analyst.
+Without this rewrite, the fork would fall back to system's <code>analyst</code>
+(if any) or fail.</p>
+<p>This means a fresh fork is immediately runnable against the source
+owner's graph.  Bob can later fork <code>analyst</code> separately and update the
+ref to <code>"bob:analyst"</code> or bare <code>analyst</code> as he prefers.</p>
+<h2 id="admin-approval-gate">Admin-approval gate<a class="headerlink" href="#admin-approval-gate" title="Permanent link">&para;</a></h2>
+<p><code>governance.require_admin_approval_for_deploy</code> (default <code>false</code>) flips
+the create-and-deploy flow into a PR-style workflow:</p>
+<ul>
+<li>Off: <code>POST /versions</code> auto-deploys.  <code>PUT /agents/{name}</code> is the same
+  thing spelled differently.</li>
+<li>On: <code>POST /versions</code> creates <code>draft</code>; must transition through
+  <code>propose</code> → admin <code>approve</code> → <code>deploy</code>.  <code>PUT</code> returns 409 with a
+  pointer to <code>/versions</code>.</li>
+</ul>
+<p>Pre-seeded YAML specs always bypass the gate on first load — bootstrap
+must never deadlock.</p>
+<h2 id="memory-conversation-history-are-identity-scoped">Memory + conversation history are identity-scoped<a class="headerlink" href="#memory-conversation-history-are-identity-scoped" title="Permanent link">&para;</a></h2>
+<p>Memory keys become <code>agent:{owner_id}:{name}:u:{user_id}</code> and actor IDs
+become <code>{owner_id}:{name}:u:{user_id}</code>.  Alice's forked <code>researcher</code>
+has fully isolated memory from Alice's original — and from Bob's fork
+— even though they all share a bare name.  This is critical for fork
+correctness: without owner-scoping, every fork would inherit (and mutate)
+upstream memory.</p>
+<h2 id="configuration">Configuration<a class="headerlink" href="#configuration" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nt">governance</span><span class="p">:</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="c1"># Gate that forces POST /versions → /propose → admin /approve → /deploy.</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">  </span><span class="c1"># Pre-seeded YAML specs always bypass.</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">  </span><span class="nt">require_admin_approval_for_deploy</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">false</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="nt">agents</span><span class="p">:</span>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="w">  </span><span class="c1"># Past this count, the oldest non-deployed / non-draft versions per</span>
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="w">  </span><span class="c1"># identity are automatically archived.</span>
+<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="w">  </span><span class="nt">max_versions_per_identity</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">50</span>
 </code></pre></div>
-<h2 id="policy-generation-optional">Policy Generation (Optional)<a class="headerlink" href="#policy-generation-optional" title="Permanent link">&para;</a></h2>
-<p>Auto-generate policies from agent behavior. Returns 501 if not supported by the configured provider. Only <code>AgentCorePolicyProvider</code> supports generation.</p>
-<table>
-<thead>
-<tr>
-<th>Method</th>
-<th>Path</th>
-<th>Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>POST</code></td>
-<td><code>/engines/{engine_id}/generations</code></td>
-<td>Start policy generation. Returns 201 or 501.</td>
-</tr>
-<tr>
-<td><code>GET</code></td>
-<td><code>/engines/{engine_id}/generations</code></td>
-<td>List generations. Returns 501 if not supported.</td>
-</tr>
-<tr>
-<td><code>GET</code></td>
-<td><code>/engines/{engine_id}/generations/{generation_id}</code></td>
-<td>Get generation status.</td>
-</tr>
-<tr>
-<td><code>GET</code></td>
-<td><code>/engines/{engine_id}/generations/{generation_id}/assets</code></td>
-<td>List generated policy assets.</td>
-</tr>
-</tbody>
-</table>
+<h2 id="prometheus-metrics">Prometheus metrics<a class="headerlink" href="#prometheus-metrics" title="Permanent link">&para;</a></h2>
+<p>New in the governance dashboard:</p>
+<ul>
+<li><code>gateway_agent_versions_created_total{ns_kind, auto_deployed}</code> —
+  new version persistence.  <code>ns_kind</code> is <code>system</code> or <code>user</code>;
+  <code>auto_deployed</code> is a boolean.</li>
+<li><code>gateway_agent_forks_total{source_ns_kind}</code></li>
+<li><code>gateway_agent_version_approvals_total{outcome}</code> —
+  <code>approved</code>, <code>rejected</code>, or <code>deployed</code>.</li>
+</ul>
+<p>Label cardinality is intentionally bounded: we never emit raw
+<code>owner_id</code> because it would explode per-user.</p>
+<h2 id="see-also">See also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="../team-versioning/">Team versioning</a> — identical model for teams.</li>
+<li><a href="../../guides/admin-approval/">Admin-approval workflow</a> — how to run
+  with the gate on in production.</li>
+<li><a href="../../guides/lineage/">Lineage visualization</a> — the <code>/ui/agents/{name}/lineage</code>
+  DAG view.</li>
+</ul>
 
 
 
