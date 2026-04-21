@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from starlette.testclient import TestClient
 
-from agentic_primitives_gateway.agents.store import FileAgentStore
+from agentic_primitives_gateway.agents.file_store import FileAgentStore
 from agentic_primitives_gateway.main import app
 from agentic_primitives_gateway.routes import agents as agents_module
 from agentic_primitives_gateway.routes._background import BackgroundRunManager

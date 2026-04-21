@@ -8,9 +8,8 @@ from unittest.mock import patch
 import pytest
 from fastapi.testclient import TestClient
 
-from agentic_primitives_gateway.agents.store import FileAgentStore
+from agentic_primitives_gateway.agents.file_store import FileAgentStore, FileTeamStore
 from agentic_primitives_gateway.agents.team_runner import TeamRunner
-from agentic_primitives_gateway.agents.team_store import FileTeamStore
 from agentic_primitives_gateway.main import app
 from agentic_primitives_gateway.models.agents import AgentSpec
 from agentic_primitives_gateway.models.teams import TeamSpec

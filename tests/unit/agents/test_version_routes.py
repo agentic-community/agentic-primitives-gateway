@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from agentic_primitives_gateway.agents.store import FileAgentStore
+from agentic_primitives_gateway.agents.file_store import FileAgentStore
 from agentic_primitives_gateway.config import settings
 from agentic_primitives_gateway.main import app
 from agentic_primitives_gateway.routes.agents import set_agent_store

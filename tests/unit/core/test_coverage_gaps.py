@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from agentic_primitives_gateway.agents.store import FileAgentStore
+from agentic_primitives_gateway.agents.file_store import FileAgentStore
 from agentic_primitives_gateway.primitives.browser.noop import NoopBrowserProvider
 from agentic_primitives_gateway.routes._helpers import handle_provider_errors
 

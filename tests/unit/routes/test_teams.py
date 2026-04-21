@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from agentic_primitives_gateway.agents.team_store import FileTeamStore
+from agentic_primitives_gateway.agents.file_store import FileTeamStore
 from agentic_primitives_gateway.main import app
 from agentic_primitives_gateway.models.teams import TeamRunPhase, TeamRunResponse
 from agentic_primitives_gateway.routes import teams as teams_module

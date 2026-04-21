@@ -7,7 +7,7 @@ import asyncio
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from agentic_primitives_gateway.agents.store import FileAgentStore
+from agentic_primitives_gateway.agents.file_store import FileAgentStore
 from agentic_primitives_gateway.audit.base import AuditSink
 from agentic_primitives_gateway.audit.emit import set_audit_router
 from agentic_primitives_gateway.audit.models import AuditAction, AuditEvent

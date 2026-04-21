@@ -7,8 +7,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from agentic_primitives_gateway.agents.file_store import FileAgentStore
 from agentic_primitives_gateway.agents.runner import AgentRunner
-from agentic_primitives_gateway.agents.store import FileAgentStore
 from agentic_primitives_gateway.agents.tools import (
     MAX_AGENT_DEPTH,
     _build_agent_tools,

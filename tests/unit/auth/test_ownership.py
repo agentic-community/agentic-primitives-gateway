@@ -40,14 +40,14 @@ def _make_backend() -> ApiKeyAuthBackend:
 
 @pytest.fixture()
 def agent_store(tmp_path):
-    from agentic_primitives_gateway.agents.store import FileAgentStore
+    from agentic_primitives_gateway.agents.file_store import FileAgentStore
 
     return FileAgentStore(path=str(tmp_path / "agents.json"))
 
 
 @pytest.fixture()
 def team_store(tmp_path):
-    from agentic_primitives_gateway.agents.team_store import FileTeamStore
+    from agentic_primitives_gateway.agents.file_store import FileTeamStore
 
     return FileTeamStore(path=str(tmp_path / "teams.json"))
 

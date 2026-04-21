@@ -13,10 +13,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from agentic_primitives_gateway.agents.file_store import FileAgentStore, FileTeamStore
 from agentic_primitives_gateway.agents.runner import AgentRunner
-from agentic_primitives_gateway.agents.store import FileAgentStore
 from agentic_primitives_gateway.agents.team_runner import TeamRunner
-from agentic_primitives_gateway.agents.team_store import FileTeamStore
 from agentic_primitives_gateway.models.agents import AgentSpec, HooksConfig, PrimitiveConfig
 from agentic_primitives_gateway.models.tasks import TaskStatus
 from agentic_primitives_gateway.models.teams import TeamRunPhase, TeamSpec

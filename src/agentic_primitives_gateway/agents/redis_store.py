@@ -100,3 +100,34 @@ class RedisSpecStore:
         from agentic_primitives_gateway.agents.checkpoint import RedisCheckpointStore
 
         return RedisCheckpointStore(redis_url=self._redis_url)
+
+
+# ── Concrete Redis-backed stores ──────────────────────────────────────────
+#
+# Compose the ``RedisSpecStore`` mixin with the spec-specific logic in
+# ``store.py`` / ``team_store.py``.  These live here (next to the
+# persistence mixin) rather than in the spec modules so the Redis
+# backend stays self-contained.
+
+
+from agentic_primitives_gateway.agents.store import AgentStore  # noqa: E402
+from agentic_primitives_gateway.agents.team_store import TeamStore  # noqa: E402
+
+
+class RedisAgentStore(RedisSpecStore, AgentStore):
+    """Redis-backed versioned agent store."""
+
+    _namespace_prefix = "gateway:agents"
+
+    def __init__(self, redis_url: str = "redis://localhost:6379/0") -> None:
+        RedisSpecStore.__init__(self, redis_url=redis_url)
+
+
+class RedisTeamStore(RedisSpecStore, TeamStore):
+    """Redis-backed versioned team store."""
+
+    _namespace_prefix = "gateway:teams"
+
+    def __init__(self, redis_url: str = "redis://localhost:6379/0") -> None:
+        TeamStore.__init__(self)
+        RedisSpecStore.__init__(self, redis_url=redis_url)

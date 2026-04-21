@@ -1,15 +1,11 @@
-"""Versioned agent store — File + Redis implementations.
+"""Agent-spec versioning logic (persistence-agnostic).
 
-Composes the generic persistence mixins in ``file_store.py`` /
-``redis_store.py`` with the agent-spec-specific logic (fork
-auto-qualification of ``primitives.agents.tools`` sub-refs,
-AgentLineage wrapping).
-
-Adding a new persistence backend (Postgres, SQLite, ...) is two steps:
-
-1. Implement a mixin with ``_load_state`` / ``_save_state``.
-2. Subclass ``AgentStore`` + the new mixin, set
-   ``_namespace_prefix`` + any backend-specific attrs.
+Holds :class:`AgentStore` — the spec-specific rules (fork
+auto-qualification of ``primitives.agents.tools`` sub-refs, AgentLineage
+wrapping) — that every backend shares.  Concrete backend-bound classes
+(``FileAgentStore``, ``RedisAgentStore``) live in their own backend
+modules (``file_store.py``, ``redis_store.py``) so each backend is
+self-contained.
 
 See ``base_store.py`` for the storage shape (identity index, deployed
 pointer, proposal list).
@@ -21,8 +17,6 @@ import logging
 from typing import Any
 
 from agentic_primitives_gateway.agents.base_store import SpecStore
-from agentic_primitives_gateway.agents.file_store import FileSpecStore
-from agentic_primitives_gateway.agents.redis_store import RedisSpecStore
 from agentic_primitives_gateway.models.agents import (
     AgentLineage,
     AgentSpec,
@@ -100,19 +94,3 @@ class AgentStore(SpecStore[AgentSpec, AgentVersion]):
             nodes=nodes,
             deployed=raw["deployed"],
         )
-
-
-class FileAgentStore(FileSpecStore, AgentStore):
-    """File-backed versioned agent store."""
-
-    def __init__(self, path: str = "agents.json") -> None:
-        FileSpecStore.__init__(self, path=path)
-
-
-class RedisAgentStore(RedisSpecStore, AgentStore):
-    """Redis-backed versioned agent store."""
-
-    _namespace_prefix = "gateway:agents"
-
-    def __init__(self, redis_url: str = "redis://localhost:6379/0") -> None:
-        RedisSpecStore.__init__(self, redis_url=redis_url)

@@ -1,9 +1,11 @@
-"""Versioned team store — File + Redis implementations.
+"""Team-spec versioning logic (persistence-agnostic).
 
-Same pattern as :mod:`versioned_agent_store`: composes the generic
-persistence mixins with team-spec logic (fork-time rewriting of
-``workers`` / ``planner`` / ``synthesizer`` refs against the source
-namespace, TeamLineage wrapping).
+Holds :class:`TeamStore` — the team-spec-specific rules (fork-time
+rewriting of ``workers`` / ``planner`` / ``synthesizer`` refs against
+the source namespace, TeamLineage wrapping) — that every backend
+shares.  Concrete backend-bound classes (``FileTeamStore``,
+``RedisTeamStore``) live in their own backend modules so each backend
+is self-contained.
 
 Fork-time ref rewriting consults the agent store — inject it via
 :meth:`TeamStore.bind_agent_store` during lifespan.
@@ -15,8 +17,6 @@ import logging
 from typing import Any
 
 from agentic_primitives_gateway.agents.base_store import SpecStore
-from agentic_primitives_gateway.agents.file_store import FileSpecStore
-from agentic_primitives_gateway.agents.redis_store import RedisSpecStore
 from agentic_primitives_gateway.agents.store import AgentStore
 from agentic_primitives_gateway.models.agents import ForkRef, Identity
 from agentic_primitives_gateway.models.teams import (
@@ -101,21 +101,3 @@ class TeamStore(SpecStore[TeamSpec, TeamVersion]):
             nodes=nodes,
             deployed=raw["deployed"],
         )
-
-
-class FileTeamStore(FileSpecStore, TeamStore):
-    """File-backed versioned team store."""
-
-    def __init__(self, path: str = "teams.json") -> None:
-        TeamStore.__init__(self)
-        FileSpecStore.__init__(self, path=path)
-
-
-class RedisTeamStore(RedisSpecStore, TeamStore):
-    """Redis-backed versioned team store."""
-
-    _namespace_prefix = "gateway:teams"
-
-    def __init__(self, redis_url: str = "redis://localhost:6379/0") -> None:
-        TeamStore.__init__(self)
-        RedisSpecStore.__init__(self, redis_url=redis_url)

@@ -12,7 +12,7 @@ from unittest.mock import patch
 import pytest
 from fastapi.testclient import TestClient
 
-from agentic_primitives_gateway.agents.store import FileAgentStore
+from agentic_primitives_gateway.agents.file_store import FileAgentStore
 from agentic_primitives_gateway.main import app
 from agentic_primitives_gateway.primitives.llm.base import LLMProvider
 from agentic_primitives_gateway.routes.agents import set_agent_store

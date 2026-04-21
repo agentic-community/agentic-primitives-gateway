@@ -6,8 +6,7 @@ from typing import Any
 
 import pytest
 
-from agentic_primitives_gateway.agents.store import FileAgentStore
-from agentic_primitives_gateway.agents.team_store import FileTeamStore
+from agentic_primitives_gateway.agents.file_store import FileAgentStore, FileTeamStore
 from agentic_primitives_gateway.auth.models import AuthenticatedPrincipal
 from agentic_primitives_gateway.config import settings
 from agentic_primitives_gateway.models.agents import (

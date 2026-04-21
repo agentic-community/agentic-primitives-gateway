@@ -57,3 +57,30 @@ class FileSpecStore:
             tmp = self._path.with_suffix(self._path.suffix + ".tmp")
             tmp.write_text(json.dumps(state.to_json(), indent=2, default=str))
             tmp.replace(self._path)
+
+
+# ── Concrete file-backed stores ───────────────────────────────────────────
+#
+# Compose the ``FileSpecStore`` mixin with the spec-specific logic in
+# ``store.py`` / ``team_store.py``.  These live here (next to the
+# persistence mixin) rather than in the spec modules so the file backend
+# stays self-contained.
+
+
+from agentic_primitives_gateway.agents.store import AgentStore  # noqa: E402
+from agentic_primitives_gateway.agents.team_store import TeamStore  # noqa: E402
+
+
+class FileAgentStore(FileSpecStore, AgentStore):
+    """File-backed versioned agent store."""
+
+    def __init__(self, path: str = "agents.json") -> None:
+        FileSpecStore.__init__(self, path=path)
+
+
+class FileTeamStore(FileSpecStore, TeamStore):
+    """File-backed versioned team store."""
+
+    def __init__(self, path: str = "teams.json") -> None:
+        TeamStore.__init__(self)
+        FileSpecStore.__init__(self, path=path)
