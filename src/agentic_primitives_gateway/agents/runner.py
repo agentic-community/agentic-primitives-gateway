@@ -21,6 +21,7 @@ from agentic_primitives_gateway.agents.namespace import (
     resolve_knowledge_namespace,
     resolve_shared_pools,
 )
+from agentic_primitives_gateway.agents.store import AgentStore
 from agentic_primitives_gateway.agents.tools import (
     MAX_AGENT_DEPTH,
     ToolDefinition,
@@ -28,7 +29,6 @@ from agentic_primitives_gateway.agents.tools import (
     execute_tool,
     to_llm_tools,
 )
-from agentic_primitives_gateway.agents.versioned_agent_store import VersionedAgentStore as AgentStore
 from agentic_primitives_gateway.audit.emit import emit_audit_event
 from agentic_primitives_gateway.audit.models import AuditAction, AuditOutcome, ResourceType
 from agentic_primitives_gateway.context import get_authenticated_principal

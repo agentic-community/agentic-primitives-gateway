@@ -266,13 +266,13 @@ class GovernanceConfig(BaseModel):
 
 # Well-known store backend aliases → dotted class paths
 AGENT_STORE_ALIASES: dict[str, str] = {
-    "file": "agentic_primitives_gateway.agents.versioned_agent_store.FileVersionedAgentStore",
-    "redis": "agentic_primitives_gateway.agents.versioned_agent_store.RedisVersionedAgentStore",
+    "file": "agentic_primitives_gateway.agents.store.FileAgentStore",
+    "redis": "agentic_primitives_gateway.agents.store.RedisAgentStore",
 }
 
 TEAM_STORE_ALIASES: dict[str, str] = {
-    "file": "agentic_primitives_gateway.agents.versioned_team_store.FileVersionedTeamStore",
-    "redis": "agentic_primitives_gateway.agents.versioned_team_store.RedisVersionedTeamStore",
+    "file": "agentic_primitives_gateway.agents.team_store.FileTeamStore",
+    "redis": "agentic_primitives_gateway.agents.team_store.RedisTeamStore",
 }
 
 

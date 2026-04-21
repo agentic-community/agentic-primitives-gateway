@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from agentic_primitives_gateway.agents.versioned_agent_store import FileVersionedAgentStore
+from agentic_primitives_gateway.agents.store import FileAgentStore
 from agentic_primitives_gateway.config import settings
 from agentic_primitives_gateway.main import app
 from agentic_primitives_gateway.routes.agents import set_agent_store
@@ -21,8 +21,8 @@ def _reset_switch() -> Any:
 
 
 @pytest.fixture
-async def store(tmp_path: Any) -> FileVersionedAgentStore:
-    s = FileVersionedAgentStore(path=str(tmp_path / "agents.json"))
+async def store(tmp_path: Any) -> FileAgentStore:
+    s = FileAgentStore(path=str(tmp_path / "agents.json"))
     set_agent_store(s)
     return s
 
@@ -49,7 +49,7 @@ async def _create(client: AsyncClient, name: str, **overrides: Any) -> dict[str,
 
 class TestCreateVersion:
     async def test_create_version_auto_deploys_when_switch_off(
-        self, store: FileVersionedAgentStore, client: AsyncClient
+        self, store: FileAgentStore, client: AsyncClient
     ) -> None:
         await _create(client, "r")
         resp = await client.post(
@@ -65,9 +65,7 @@ class TestCreateVersion:
         assert get.status_code == 200
         assert get.json()["description"] == "v2"
 
-    async def test_put_returns_409_under_approval_gate(
-        self, store: FileVersionedAgentStore, client: AsyncClient
-    ) -> None:
+    async def test_put_returns_409_under_approval_gate(self, store: FileAgentStore, client: AsyncClient) -> None:
         await _create(client, "r")
         settings.governance.require_admin_approval_for_deploy = True
 
@@ -81,7 +79,7 @@ class TestCreateVersion:
 
 
 class TestApprovalFlow:
-    async def test_propose_approve_deploy(self, store: FileVersionedAgentStore, client: AsyncClient) -> None:
+    async def test_propose_approve_deploy(self, store: FileAgentStore, client: AsyncClient) -> None:
         await _create(client, "r")
         settings.governance.require_admin_approval_for_deploy = True
 
@@ -119,9 +117,7 @@ class TestApprovalFlow:
 
 
 class TestFork:
-    async def test_fork_creates_identity_in_caller_namespace(
-        self, store: FileVersionedAgentStore, client: AsyncClient
-    ) -> None:
+    async def test_fork_creates_identity_in_caller_namespace(self, store: FileAgentStore, client: AsyncClient) -> None:
         # Noop auth uses principal id "noop".  Seed an agent "in system" so
         # we can fork it to ``noop``.
         await store.seed_async({"source": {"model": "m", "description": "original"}})
@@ -139,7 +135,7 @@ class TestFork:
 
 
 class TestVersionsList:
-    async def test_list_versions_returns_history(self, store: FileVersionedAgentStore, client: AsyncClient) -> None:
+    async def test_list_versions_returns_history(self, store: FileAgentStore, client: AsyncClient) -> None:
         await _create(client, "r")
         await client.post("/api/v1/agents/r/versions", json={"description": "v2"})
         await client.post("/api/v1/agents/r/versions", json={"description": "v3"})
@@ -151,7 +147,7 @@ class TestVersionsList:
 
 
 class TestLineage:
-    async def test_lineage_includes_fork(self, store: FileVersionedAgentStore, client: AsyncClient) -> None:
+    async def test_lineage_includes_fork(self, store: FileAgentStore, client: AsyncClient) -> None:
         await _create(client, "r")
         await client.post("/api/v1/agents/r/versions", json={"description": "v2"})
         # Fork noop's r back into system namespace via admin override.

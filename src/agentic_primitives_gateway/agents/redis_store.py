@@ -1,17 +1,129 @@
-"""Back-compat shim.
+"""Redis-backed persistence mixin for the versioned spec store.
 
-The Redis implementations now live in
-:mod:`agentic_primitives_gateway.agents.versioned_agent_store` and
-:mod:`agentic_primitives_gateway.agents.versioned_team_store`.
+Concrete Redis-backed agent and team stores compose :class:`RedisSpecStore`
+with the spec-specific logic in ``store.py`` / ``team_store.py``.
+
+The mixin uses a snapshot read / full rewrite pattern (one pipeline per
+save).  Low contention in practice because every mutation already holds
+the fully-computed new state; swapping to a WATCH/MULTI per-op layout
+is a future optimization.
+
+Key layout (per store — the ``_namespace_prefix`` class attr distinguishes
+agent vs team in the same Redis instance):
+
+* ``{prefix}:versions``     hash   version_id → JSON version record
+* ``{prefix}:identities``   hash   "owner:name" → JSON identity metadata
+* ``{prefix}:proposals``    list   pending proposal keys
 """
 
 from __future__ import annotations
 
-from agentic_primitives_gateway.agents.versioned_agent_store import (
-    RedisVersionedAgentStore as RedisAgentStore,
-)
-from agentic_primitives_gateway.agents.versioned_team_store import (
-    RedisVersionedTeamStore as RedisTeamStore,
+import json
+import logging
+from typing import Any
+from uuid import NAMESPACE_OID, uuid5
+
+from agentic_primitives_gateway.agents.base_store import (
+    _StoreState,
+    migrate_legacy_mapping,
 )
 
-__all__ = ["RedisAgentStore", "RedisTeamStore"]
+logger = logging.getLogger(__name__)
+
+
+class RedisSpecStore:
+    """Redis-backed persistence — supplies ``_load_state`` / ``_save_state``.
+
+    Expected attributes on the composed class:
+
+    * ``_entity_label``         — for log messages
+    * ``_version_name_field``   — the version model's name field key
+    * ``_migration_namespace_oid`` — UUIDv5 namespace string for idempotent
+      legacy migration.
+    * ``_namespace_prefix``     — Redis key prefix
+    * ``_legacy_hash``          — legacy single-hash key to migrate from
+    """
+
+    _entity_label: str
+    _migration_namespace_oid: str
+    _version_name_field: str
+    _namespace_prefix: str
+    _legacy_hash: str
+
+    def __init__(self, redis_url: str = "redis://localhost:6379/0") -> None:
+        import redis.asyncio as aioredis
+
+        self._redis = aioredis.from_url(redis_url, decode_responses=True)
+        self._redis_url = redis_url
+        logger.info(
+            "%s initialized (url=%s)",
+            type(self).__name__,
+            redis_url.split("@")[-1],
+        )
+
+    async def _load_state(self) -> _StoreState:
+        pipe = self._redis.pipeline()
+        pipe.hgetall(f"{self._namespace_prefix}:versions")
+        pipe.hgetall(f"{self._namespace_prefix}:identities")
+        pipe.lrange(f"{self._namespace_prefix}:proposals", 0, -1)
+        versions_raw, identities_raw, proposals = await pipe.execute()
+        state = _StoreState()
+        state.versions = {k: json.loads(v) for k, v in versions_raw.items()}
+        state.identities = {k: json.loads(v) for k, v in identities_raw.items()}
+        state.proposals = list(proposals)
+        return state
+
+    async def _save_state(self, state: _StoreState) -> None:
+        pipe = self._redis.pipeline()
+        pipe.delete(f"{self._namespace_prefix}:versions")
+        if state.versions:
+            pipe.hset(
+                f"{self._namespace_prefix}:versions",
+                mapping={k: json.dumps(v, default=str) for k, v in state.versions.items()},
+            )
+        pipe.delete(f"{self._namespace_prefix}:identities")
+        if state.identities:
+            pipe.hset(
+                f"{self._namespace_prefix}:identities",
+                mapping={k: json.dumps(v, default=str) for k, v in state.identities.items()},
+            )
+        pipe.delete(f"{self._namespace_prefix}:proposals")
+        if state.proposals:
+            pipe.rpush(f"{self._namespace_prefix}:proposals", *state.proposals)
+        await pipe.execute()
+
+    def create_background_run_manager(self, **kwargs: Any) -> Any:
+        from agentic_primitives_gateway.routes._background import (
+            BackgroundRunManager,
+            RedisEventStore,
+        )
+
+        return BackgroundRunManager(event_store=RedisEventStore(self._redis_url), **kwargs)
+
+    def create_session_registry(self) -> Any:
+        from agentic_primitives_gateway.agents.session_registry import RedisSessionRegistry
+
+        return RedisSessionRegistry(redis_url=self._redis_url)
+
+    def create_checkpoint_store(self) -> Any:
+        from agentic_primitives_gateway.agents.checkpoint import RedisCheckpointStore
+
+        return RedisCheckpointStore(redis_url=self._redis_url)
+
+    async def migrate_from_legacy(self) -> int:
+        legacy_raw: dict[str, str] = await self._redis.hgetall(self._legacy_hash)  # type: ignore[misc]
+        if not legacy_raw:
+            return 0
+        state = await self._load_state()
+        legacy_mapping = {k: json.loads(v) for k, v in legacy_raw.items()}
+        migrated = migrate_legacy_mapping(
+            legacy_mapping,
+            state=state,
+            version_cls_name=self._entity_label,
+            migration_ns=uuid5(NAMESPACE_OID, self._migration_namespace_oid),
+            version_name_field=self._version_name_field,
+        )
+        if migrated:
+            await self._save_state(state)
+            await self._redis.delete(self._legacy_hash)
+        return migrated

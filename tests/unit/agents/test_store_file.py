@@ -6,8 +6,8 @@ from typing import Any
 
 import pytest
 
-from agentic_primitives_gateway.agents.versioned_agent_store import FileVersionedAgentStore
-from agentic_primitives_gateway.agents.versioned_team_store import FileVersionedTeamStore
+from agentic_primitives_gateway.agents.store import FileAgentStore
+from agentic_primitives_gateway.agents.team_store import FileTeamStore
 from agentic_primitives_gateway.auth.models import AuthenticatedPrincipal
 from agentic_primitives_gateway.config import settings
 from agentic_primitives_gateway.models.agents import (
@@ -19,13 +19,13 @@ from agentic_primitives_gateway.models.teams import TeamSpec
 
 
 @pytest.fixture
-def agent_store(tmp_path: Any) -> FileVersionedAgentStore:
-    return FileVersionedAgentStore(path=str(tmp_path / "agents.json"))
+def agent_store(tmp_path: Any) -> FileAgentStore:
+    return FileAgentStore(path=str(tmp_path / "agents.json"))
 
 
 @pytest.fixture
-def team_store(tmp_path: Any, agent_store: FileVersionedAgentStore) -> FileVersionedTeamStore:
-    store = FileVersionedTeamStore(path=str(tmp_path / "teams.json"))
+def team_store(tmp_path: Any, agent_store: FileAgentStore) -> FileTeamStore:
+    store = FileTeamStore(path=str(tmp_path / "teams.json"))
     store.bind_agent_store(agent_store)
     return store
 
@@ -45,7 +45,7 @@ def _reset_approval_switch() -> Any:
 
 
 class TestVersionLifecycle:
-    async def test_create_version_auto_deploys(self, agent_store: FileVersionedAgentStore) -> None:
+    async def test_create_version_auto_deploys(self, agent_store: FileAgentStore) -> None:
         spec = _make_agent("r", "alice")
         v = await agent_store.create_version(name="r", owner_id="alice", spec=spec, created_by="alice")
         assert v.version_number == 1
@@ -53,7 +53,7 @@ class TestVersionLifecycle:
         got = await agent_store.get_deployed("r", "alice")
         assert got is not None and got.version_id == v.version_id
 
-    async def test_monotonic_version_numbering(self, agent_store: FileVersionedAgentStore) -> None:
+    async def test_monotonic_version_numbering(self, agent_store: FileAgentStore) -> None:
         for i in range(3):
             await agent_store.create_version(
                 name="r",
@@ -64,7 +64,7 @@ class TestVersionLifecycle:
         versions = await agent_store.list_versions("r", "alice")
         assert [v.version_number for v in versions] == [1, 2, 3]
 
-    async def test_cross_identity_independent_numbering(self, agent_store: FileVersionedAgentStore) -> None:
+    async def test_cross_identity_independent_numbering(self, agent_store: FileAgentStore) -> None:
         await agent_store.create_version(name="r", owner_id="alice", spec=_make_agent("r", "alice"), created_by="alice")
         await agent_store.create_version(
             name="r", owner_id="alice", spec=_make_agent("r", "alice", model="v2"), created_by="alice"
@@ -75,7 +75,7 @@ class TestVersionLifecycle:
         assert [v.version_number for v in alice_versions] == [1, 2]
         assert [v.version_number for v in bob_versions] == [1]
 
-    async def test_deploy_archives_previous(self, agent_store: FileVersionedAgentStore) -> None:
+    async def test_deploy_archives_previous(self, agent_store: FileAgentStore) -> None:
         v1 = await agent_store.create_version(
             name="r", owner_id="alice", spec=_make_agent("r", "alice"), created_by="alice"
         )
@@ -92,7 +92,7 @@ class TestVersionLifecycle:
         assert stored_v2 is not None
         assert stored_v2.status == VersionStatus.DEPLOYED
 
-    async def test_delete_archives_all_versions(self, agent_store: FileVersionedAgentStore) -> None:
+    async def test_delete_archives_all_versions(self, agent_store: FileAgentStore) -> None:
         await agent_store.create_version(name="r", owner_id="alice", spec=_make_agent("r", "alice"), created_by="alice")
         await agent_store.create_version(
             name="r",
@@ -112,7 +112,7 @@ class TestVersionLifecycle:
 
 
 class TestResolution:
-    async def test_resolve_for_caller_own_namespace_first(self, agent_store: FileVersionedAgentStore) -> None:
+    async def test_resolve_for_caller_own_namespace_first(self, agent_store: FileAgentStore) -> None:
         await agent_store.create_version(
             name="r", owner_id="system", spec=_make_agent("r", "system"), created_by="system"
         )
@@ -128,7 +128,7 @@ class TestResolution:
         assert spec.owner_id == "alice"
         assert spec.model == "alice-m"
 
-    async def test_resolve_for_caller_falls_through_to_system(self, agent_store: FileVersionedAgentStore) -> None:
+    async def test_resolve_for_caller_falls_through_to_system(self, agent_store: FileAgentStore) -> None:
         await agent_store.create_version(
             name="r",
             owner_id="system",
@@ -140,7 +140,7 @@ class TestResolution:
         assert spec is not None
         assert spec.owner_id == "system"
 
-    async def test_resolve_for_caller_ignores_shared_bare(self, agent_store: FileVersionedAgentStore) -> None:
+    async def test_resolve_for_caller_ignores_shared_bare(self, agent_store: FileAgentStore) -> None:
         await agent_store.create_version(
             name="r",
             owner_id="alice",
@@ -158,7 +158,7 @@ class TestResolution:
 
 
 class TestFork:
-    async def test_fork_creates_independent_identity(self, agent_store: FileVersionedAgentStore) -> None:
+    async def test_fork_creates_independent_identity(self, agent_store: FileAgentStore) -> None:
         await agent_store.create_version(
             name="r",
             owner_id="alice",
@@ -176,7 +176,7 @@ class TestFork:
         assert fork.forked_from is not None
         assert fork.forked_from.owner_id == "alice"
 
-    async def test_fork_rewrites_sub_refs_to_source_owner(self, agent_store: FileVersionedAgentStore) -> None:
+    async def test_fork_rewrites_sub_refs_to_source_owner(self, agent_store: FileAgentStore) -> None:
         # Alice has `analyst` in her namespace plus `researcher` which
         # delegates to `analyst`.
         await agent_store.create_version(
@@ -204,7 +204,7 @@ class TestFork:
         forked_tools = fork.spec.primitives["agents"].tools
         assert forked_tools == ["alice:analyst"]
 
-    async def test_fork_leaves_system_refs_bare(self, agent_store: FileVersionedAgentStore) -> None:
+    async def test_fork_leaves_system_refs_bare(self, agent_store: FileAgentStore) -> None:
         # `sys-analyst` exists only in system; `researcher` is Alice's fork target.
         await agent_store.create_version(
             name="sys-analyst",
@@ -232,7 +232,7 @@ class TestFork:
         forked_tools = fork.spec.primitives["agents"].tools
         assert forked_tools == ["sys-analyst"]
 
-    async def test_fork_collision_raises(self, agent_store: FileVersionedAgentStore) -> None:
+    async def test_fork_collision_raises(self, agent_store: FileAgentStore) -> None:
         await agent_store.create_version(name="r", owner_id="alice", spec=_make_agent("r", "alice"), created_by="alice")
         await agent_store.create_version(name="r", owner_id="bob", spec=_make_agent("r", "bob"), created_by="bob")
         with pytest.raises(KeyError):
@@ -248,7 +248,7 @@ class TestFork:
 
 
 class TestLineage:
-    async def test_lineage_traverses_forks(self, agent_store: FileVersionedAgentStore) -> None:
+    async def test_lineage_traverses_forks(self, agent_store: FileAgentStore) -> None:
         await agent_store.create_version(name="r", owner_id="alice", spec=_make_agent("r", "alice"), created_by="alice")
         await agent_store.fork(
             source_name="r",
@@ -271,28 +271,28 @@ class TestLineage:
 
 
 class TestApprovalMode:
-    async def test_switch_off_auto_deploys(self, agent_store: FileVersionedAgentStore) -> None:
+    async def test_switch_off_auto_deploys(self, agent_store: FileAgentStore) -> None:
         settings.governance.require_admin_approval_for_deploy = False
         v = await agent_store.create_version(
             name="r", owner_id="alice", spec=_make_agent("r", "alice"), created_by="alice"
         )
         assert v.status == VersionStatus.DEPLOYED
 
-    async def test_switch_on_creates_draft(self, agent_store: FileVersionedAgentStore) -> None:
+    async def test_switch_on_creates_draft(self, agent_store: FileAgentStore) -> None:
         settings.governance.require_admin_approval_for_deploy = True
         v = await agent_store.create_version(
             name="r", owner_id="alice", spec=_make_agent("r", "alice"), created_by="alice"
         )
         assert v.status == VersionStatus.DRAFT
 
-    async def test_seed_bypasses_approval(self, agent_store: FileVersionedAgentStore) -> None:
+    async def test_seed_bypasses_approval(self, agent_store: FileAgentStore) -> None:
         settings.governance.require_admin_approval_for_deploy = True
         await agent_store.seed_async({"s": {"model": "m"}})
         v = await agent_store.get_deployed("s", "system")
         assert v is not None
         assert v.status == VersionStatus.DEPLOYED
 
-    async def test_approval_flow(self, agent_store: FileVersionedAgentStore) -> None:
+    async def test_approval_flow(self, agent_store: FileAgentStore) -> None:
         settings.governance.require_admin_approval_for_deploy = True
         v = await agent_store.create_version(
             name="r", owner_id="alice", spec=_make_agent("r", "alice"), created_by="alice"
@@ -311,7 +311,7 @@ class TestApprovalMode:
         deployed = await agent_store.deploy_version("r", "alice", v.version_id, deployed_by="alice")
         assert deployed.status == VersionStatus.DEPLOYED
 
-    async def test_approval_mode_blocks_draft_deploy(self, agent_store: FileVersionedAgentStore) -> None:
+    async def test_approval_mode_blocks_draft_deploy(self, agent_store: FileAgentStore) -> None:
         settings.governance.require_admin_approval_for_deploy = True
         v = await agent_store.create_version(
             name="r", owner_id="alice", spec=_make_agent("r", "alice"), created_by="alice"
@@ -326,8 +326,8 @@ class TestApprovalMode:
 class TestTeamFork:
     async def test_team_fork_rewrites_worker_refs(
         self,
-        agent_store: FileVersionedAgentStore,
-        team_store: FileVersionedTeamStore,
+        agent_store: FileAgentStore,
+        team_store: FileTeamStore,
     ) -> None:
         # Alice has two agents + a team that references them by bare name.
         await agent_store.create_version(
@@ -360,7 +360,7 @@ class TestTeamFork:
 
 
 class TestRetention:
-    async def test_retention_archives_oldest(self, agent_store: FileVersionedAgentStore) -> None:
+    async def test_retention_archives_oldest(self, agent_store: FileAgentStore) -> None:
         orig_cap = settings.agents.max_versions_per_identity
         settings.agents.max_versions_per_identity = 3
         try:
@@ -399,7 +399,7 @@ class TestMigration:
             }
         }
         path.write_text(_json.dumps(legacy))
-        store = FileVersionedAgentStore(path=str(path))
+        store = FileAgentStore(path=str(path))
         count = await store.migrate_from_legacy()
         assert count == 1
         spec = await store.resolve_qualified("system", "legacy-a")
@@ -411,7 +411,7 @@ class TestMigration:
         path = tmp_path / "agents.json"
         legacy = {"legacy-a": {"name": "legacy-a", "model": "m", "owner_id": "system"}}
         path.write_text(_json.dumps(legacy))
-        store = FileVersionedAgentStore(path=str(path))
+        store = FileAgentStore(path=str(path))
         first = await store.migrate_from_legacy()
         second = await store.migrate_from_legacy()
         # First call migrates; second is a no-op because the file is now in
