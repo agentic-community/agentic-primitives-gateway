@@ -1236,6 +1236,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#taming-audit-volume" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Taming Audit Volume
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#correlating-signals" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3250,6 +3261,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#taming-audit-volume" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Taming Audit Volume
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#correlating-signals" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3458,6 +3480,37 @@
 <a id="__codelineno-11-12" name="__codelineno-11-12" href="#__codelineno-11-12"></a><span class="c1"># Policy decision mix</span>
 <a id="__codelineno-11-13" name="__codelineno-11-13" href="#__codelineno-11-13"></a><span class="k">sum</span><span class="w"> </span><span class="k">by</span><span class="w"> </span><span class="o">(</span><span class="nv">decision</span><span class="p">,</span><span class="w"> </span><span class="nv">action_category</span><span class="o">)</span><span class="w"> </span><span class="o">(</span><span class="kr">rate</span><span class="o">(</span><span class="nv">gateway_policy_decisions_total</span><span class="p">[</span><span class="s">5m</span><span class="p">]</span><span class="o">))</span>
 </code></pre></div>
+<h2 id="taming-audit-volume">Taming Audit Volume<a class="headerlink" href="#taming-audit-volume" title="Permanent link">&para;</a></h2>
+<p>APG emits audit events for every mutation <em>and</em> for every primitive call
+(via the <code>MetricsProxy</code>), so high-traffic deployments can generate a lot
+of events.  The <code>audit.filter</code> config drops events at the router — before
+any sink sees them — giving you a single knob to cut noise without
+losing compliance-relevant signal.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="nt">audit</span><span class="p">:</span>
+<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="w">  </span><span class="nt">enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="w">  </span><span class="nt">stdout_json</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="w">  </span><span class="nt">filter</span><span class="p">:</span>
+<a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a><span class="w">    </span><span class="c1"># Drop the firehose — every provider call emits one, so it&#39;s</span>
+<a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a><span class="w">    </span><span class="c1"># typically the biggest source of volume.</span>
+<a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a><span class="w">    </span><span class="nt">exclude_actions</span><span class="p">:</span>
+<a id="__codelineno-12-8" name="__codelineno-12-8" href="#__codelineno-12-8"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">&quot;provider.call&quot;</span>
+<a id="__codelineno-12-9" name="__codelineno-12-9" href="#__codelineno-12-9"></a>
+<a id="__codelineno-12-10" name="__codelineno-12-10" href="#__codelineno-12-10"></a><span class="w">    </span><span class="c1"># Or drop a whole category.  Drops memory.record.write /</span>
+<a id="__codelineno-12-11" name="__codelineno-12-11" href="#__codelineno-12-11"></a><span class="w">    </span><span class="c1"># memory.record.delete / memory.event.* / memory.branch.create etc.</span>
+<a id="__codelineno-12-12" name="__codelineno-12-12" href="#__codelineno-12-12"></a><span class="w">    </span><span class="nt">exclude_action_categories</span><span class="p">:</span>
+<a id="__codelineno-12-13" name="__codelineno-12-13" href="#__codelineno-12-13"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">&quot;memory&quot;</span>
+<a id="__codelineno-12-14" name="__codelineno-12-14" href="#__codelineno-12-14"></a>
+<a id="__codelineno-12-15" name="__codelineno-12-15" href="#__codelineno-12-15"></a><span class="w">    </span><span class="c1"># Or keep a statistical sample of the high-volume actions.</span>
+<a id="__codelineno-12-16" name="__codelineno-12-16" href="#__codelineno-12-16"></a><span class="w">    </span><span class="c1"># Probabilistic per-event, independent sampling.</span>
+<a id="__codelineno-12-17" name="__codelineno-12-17" href="#__codelineno-12-17"></a><span class="w">    </span><span class="nt">sample_rates</span><span class="p">:</span>
+<a id="__codelineno-12-18" name="__codelineno-12-18" href="#__codelineno-12-18"></a><span class="w">      </span><span class="nt">tool.call</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.1</span><span class="w">         </span><span class="c1"># keep 10% of tool calls</span>
+<a id="__codelineno-12-19" name="__codelineno-12-19" href="#__codelineno-12-19"></a><span class="w">      </span><span class="nt">llm.generate</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.25</span><span class="w">     </span><span class="c1"># keep 25% of LLM calls</span>
+</code></pre></div>
+<p>Filtered events increment
+<code>gateway_audit_events_dropped_total{sink="__router__",reason="filtered"}</code>
+so you can monitor how aggressively the filter is trimming.  Keep
+auth / policy / version / fork / credential events unfiltered — those
+are the compliance-critical ones.</p>
 <h2 id="correlating-signals">Correlating Signals<a class="headerlink" href="#correlating-signals" title="Permanent link">&para;</a></h2>
 <p>Every audit event, log line, and response header carries <code>request_id</code> and <code>correlation_id</code>. Given a user complaint with a response header:</p>
 <ol>

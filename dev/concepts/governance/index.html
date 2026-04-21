@@ -973,6 +973,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#wire-everything-filter-at-config" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Wire Everything, Filter At Config
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#choosing-sinks" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3227,6 +3238,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#wire-everything-filter-at-config" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Wire Everything, Filter At Config
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#choosing-sinks" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3298,6 +3320,11 @@
 </ul>
 <p>See <a href="../../api/audit/">Audit API Reference</a> for the <code>AuditEvent</code> schema and the full action taxonomy.</p>
 <h2 id="signals-at-a-glance">Signals at a Glance<a class="headerlink" href="#signals-at-a-glance" title="Permanent link">&para;</a></h2>
+<p>Every primitive emits structured audit events for its mutations.
+Read-only operations are covered by the universal <code>provider.call</code> emit
+from <code>MetricsProxy</code>.  Subsystems (auth, policy, credentials) emit at the
+middleware layer.</p>
+<p><strong>Cross-cutting:</strong></p>
 <table>
 <thead>
 <tr>
@@ -3314,18 +3341,18 @@
 </tr>
 <tr>
 <td>Auth</td>
-<td><code>auth.success</code> / <code>auth.failure</code></td>
+<td><code>auth.success</code> / <code>auth.failure</code> / <code>auth.logout</code></td>
 <td><code>AuthenticationMiddleware</code></td>
 </tr>
 <tr>
 <td>Policy</td>
-<td><code>policy.allow</code> / <code>policy.deny</code></td>
-<td><code>PolicyEnforcementMiddleware</code> (Cedar)</td>
+<td><code>policy.allow</code> / <code>policy.deny</code> / <code>policy.load</code></td>
+<td><code>PolicyEnforcementMiddleware</code> + <code>CedarPolicyEnforcer.load_policies()</code></td>
 </tr>
 <tr>
 <td>Credentials</td>
-<td><code>credential.resolve</code> / <code>credential.write</code> / <code>credential.delete</code></td>
-<td><code>CredentialResolutionMiddleware</code> + <code>routes/credentials.py</code></td>
+<td><code>credential.resolve</code> / <code>credential.read</code> / <code>credential.write</code> / <code>credential.delete</code></td>
+<td><code>CredentialResolutionMiddleware</code> + <code>routes/{credentials,identity}.py</code></td>
 </tr>
 <tr>
 <td>Ownership</td>
@@ -3333,24 +3360,105 @@
 <td><code>auth/access.py::require_access</code> / <code>require_owner_or_admin</code></td>
 </tr>
 <tr>
-<td>CRUD</td>
-<td><code>agent.create/update/delete</code>, <code>team.*</code>, <code>policy.*</code></td>
-<td>Mutation routes</td>
+<td>Network</td>
+<td><code>network.access.denied</code></td>
+<td>gateway egress guards (URL-shaped credential rejection)</td>
 </tr>
 <tr>
-<td>Lifecycle</td>
-<td><code>agent.run.{start,complete,failed,cancelled}</code>, <code>team.run.*</code></td>
-<td><code>AgentRunner</code>, <code>TeamRunner</code></td>
-</tr>
-<tr>
-<td>Invocation</td>
-<td><code>tool.call</code> (per tool), <code>llm.generate</code> (with tokens)</td>
-<td><code>execute_tool</code>, <code>LLMProvider</code> ABC</td>
-</tr>
-<tr>
-<td>Primitive</td>
+<td>Primitive (universal)</td>
 <td><code>provider.call</code></td>
-<td><code>MetricsProxy</code> — every wrapped primitive method</td>
+<td><code>MetricsProxy</code> — every wrapped primitive method (coroutine + async generator)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Per-primitive CRUD + lifecycle:</strong></p>
+<table>
+<thead>
+<tr>
+<th>Primitive</th>
+<th>Resource type(s)</th>
+<th>Actions</th>
+<th>Where it fires</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Agents</td>
+<td><code>agent</code></td>
+<td><code>agent.{create,update,delete}</code>, <code>agent.run.{start,complete,failed,cancelled}</code>, <code>agent.delegate</code>, <code>agent.version.{create,propose,approve,reject,deploy}</code>, <code>agent.fork</code></td>
+<td><code>routes/agents.py</code>, <code>AgentRunner</code>, <code>agents/tools/delegation.py</code></td>
+</tr>
+<tr>
+<td>Teams</td>
+<td><code>team</code></td>
+<td><code>team.{create,update,delete}</code>, <code>team.run.{start,complete,failed,cancelled}</code>, <code>team.version.{create,propose,approve,reject,deploy}</code>, <code>team.fork</code></td>
+<td><code>routes/teams.py</code>, <code>TeamRunner</code></td>
+</tr>
+<tr>
+<td>Policy</td>
+<td><code>policy</code>, <code>policy_engine</code></td>
+<td><code>policy.{create,update,delete}</code>, <code>policy.load</code></td>
+<td><code>routes/policy.py</code>, <code>CedarPolicyEnforcer</code></td>
+</tr>
+<tr>
+<td>Credentials</td>
+<td><code>credential</code>, <code>user</code></td>
+<td><code>credential.{resolve,read,write,delete}</code></td>
+<td><code>credentials/middleware.py</code>, <code>routes/credentials.py</code>, <code>routes/identity.py</code></td>
+</tr>
+<tr>
+<td>Identity</td>
+<td><code>identity</code></td>
+<td><code>identity.credential_provider.{create,update,delete}</code>, <code>identity.workload.{create,update,delete}</code></td>
+<td><code>routes/identity.py</code></td>
+</tr>
+<tr>
+<td>Memory</td>
+<td><code>memory</code></td>
+<td><code>memory.resource.{create,delete}</code>, <code>memory.strategy.{create,delete}</code>, <code>memory.branch.create</code>, <code>memory.event.{append,delete}</code>, <code>memory.record.{write,delete}</code></td>
+<td><code>routes/memory.py</code></td>
+</tr>
+<tr>
+<td>Tools</td>
+<td><code>tool</code></td>
+<td><code>tool.{register,delete}</code>, <code>tool.server.register</code>, <code>tool.call</code> (per execution)</td>
+<td><code>routes/tools.py</code>, <code>agents/tools/catalog.execute_tool</code></td>
+</tr>
+<tr>
+<td>LLM</td>
+<td><code>llm</code></td>
+<td><code>llm.generate</code> (with input/output tokens)</td>
+<td><code>LLMProvider.__init_subclass__</code> (automatic on every backend)</td>
+</tr>
+<tr>
+<td>Evaluations</td>
+<td><code>evaluator</code></td>
+<td><code>evaluator.{create,update,delete}</code>, <code>evaluator.score.{create,delete}</code>, <code>evaluator.online_config.{create,delete}</code></td>
+<td><code>routes/evaluations.py</code></td>
+</tr>
+<tr>
+<td>Observability</td>
+<td><code>trace</code></td>
+<td><code>observability.trace.{ingest,update}</code>, <code>observability.trace.generation.log</code>, <code>observability.trace.score.create</code>, <code>observability.log.ingest</code>, <code>observability.flush</code></td>
+<td><code>routes/observability.py</code></td>
+</tr>
+<tr>
+<td>Browser</td>
+<td><code>session</code>, <code>page</code></td>
+<td><code>session.{create,terminate}</code> (with <code>metadata.primitive=browser</code>), <code>browser.{navigate,click,type,evaluate}</code></td>
+<td><code>routes/browser.py</code></td>
+</tr>
+<tr>
+<td>Code-interpreter</td>
+<td><code>session</code>, <code>code_execution</code>, <code>file</code></td>
+<td><code>session.{create,terminate}</code> (with <code>metadata.primitive=code_interpreter</code>), <code>code_interpreter.execute</code>, <code>code_interpreter.file.{upload,download}</code></td>
+<td><code>routes/code_interpreter.py</code></td>
+</tr>
+<tr>
+<td>Tasks</td>
+<td><code>task</code></td>
+<td><code>task.{create,claim,update,note}</code></td>
+<td><code>agents/tools/handlers.py</code> (when invoked via agent tool calls)</td>
 </tr>
 </tbody>
 </table>
@@ -3456,6 +3564,23 @@
 </tr>
 </tbody>
 </table>
+<h2 id="wire-everything-filter-at-config">Wire Everything, Filter At Config<a class="headerlink" href="#wire-everything-filter-at-config" title="Permanent link">&para;</a></h2>
+<p>APG's default is <strong>emit-everything</strong> — every mutation, every primitive
+call, every session lifecycle event — so the audit stream is the
+authoritative record of <em>what happened</em>, not just <em>what somebody
+remembered to audit</em>.  High-volume deployments tame the stream at the
+router with <code>audit.filter</code>:</p>
+<ul>
+<li><code>exclude_actions</code>: exact action drops (<code>provider.call</code>).</li>
+<li><code>exclude_action_categories</code>: category prefix drops (<code>memory</code> → every <code>memory.*</code>).</li>
+<li><code>sample_rates</code>: per-action keep fraction in <code>[0.0, 1.0]</code>.</li>
+</ul>
+<p>Filtered events increment
+<code>gateway_audit_events_dropped_total{sink="__router__",reason="filtered"}</code>
+so operators can see how aggressive the filter is.  Keep the
+compliance-relevant events unfiltered — auth, policy, ownership,
+version/fork, and credential events.  See the <a href="../../guides/observability/#taming-audit-volume">Observability
+Guide</a> for recipes.</p>
 <h2 id="choosing-sinks">Choosing Sinks<a class="headerlink" href="#choosing-sinks" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
