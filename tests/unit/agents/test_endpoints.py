@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from starlette.testclient import TestClient
 
-from agentic_primitives_gateway.agents.store import FileAgentStore
+from agentic_primitives_gateway.agents.file_store import FileAgentStore
 from agentic_primitives_gateway.main import app
 from agentic_primitives_gateway.routes import agents as agents_module
 from agentic_primitives_gateway.routes._background import BackgroundRunManager
@@ -470,12 +470,14 @@ class TestCancelSessionRunEndpoint:
         agents_module._bg._event_store = mock_event_store
         mock_event_store.get_owner = AsyncMock(return_value="other-user-id")
 
-        # Noop auth returns principal with is_admin=True, so patch to non-admin
+        # Noop auth returns principal with is_admin=True, so patch to non-admin.
+        # The agent was created in the ``noop`` owner namespace; a non-admin
+        # user has to address it qualified to see it at all.
         from agentic_primitives_gateway.auth.models import AuthenticatedPrincipal
 
         non_admin = AuthenticatedPrincipal(id="user1", type="user", scopes=frozenset())
         with patch("agentic_primitives_gateway.routes.agents.require_principal", return_value=non_admin):
-            resp = client.delete("/api/v1/agents/test-agent/sessions/sid1/run")
+            resp = client.delete("/api/v1/agents/noop:test-agent/sessions/sid1/run")
         assert resp.status_code == 403
 
         # Clean up

@@ -7,7 +7,7 @@ import asyncio
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from agentic_primitives_gateway.agents.store import FileAgentStore
+from agentic_primitives_gateway.agents.file_store import FileAgentStore
 from agentic_primitives_gateway.audit.base import AuditSink
 from agentic_primitives_gateway.audit.emit import set_audit_router
 from agentic_primitives_gateway.audit.models import AuditAction, AuditEvent
@@ -65,7 +65,10 @@ async def test_agent_create_update_delete_emits(audit_client):
 
     await asyncio.sleep(0.05)
 
-    seen = {e.action for e in sink.events if e.resource_id == "audit-test-agent"}
+    # resource_id is the qualified identity ``"{owner}:{name}"`` under the
+    # versioned store; the test fixture uses the noop auth principal ``"noop"``.
+    qualified = "noop:audit-test-agent"
+    seen = {e.action for e in sink.events if e.resource_id == qualified}
     assert AuditAction.AGENT_CREATE in seen
     assert AuditAction.AGENT_UPDATE in seen
     assert AuditAction.AGENT_DELETE in seen
@@ -89,7 +92,9 @@ async def test_agent_create_event_carries_model_metadata(audit_client):
 
     try:
         matches = [
-            e for e in sink.events if e.action == AuditAction.AGENT_CREATE and e.resource_id == "audit-test-agent-2"
+            e
+            for e in sink.events
+            if e.action == AuditAction.AGENT_CREATE and e.resource_id == "noop:audit-test-agent-2"
         ]
         assert matches, "expected agent.create event"
         assert matches[0].metadata["model"] == "my-special-model"

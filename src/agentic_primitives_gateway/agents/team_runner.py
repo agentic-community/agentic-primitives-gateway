@@ -60,6 +60,23 @@ def _emit_team_event(action: str, outcome: AuditOutcome, team_name: str, team_ru
     )
 
 
+async def _resolve_team_agent(store: Any, team_owner_id: str, ref: str) -> Any:
+    """Resolve a team-scope agent reference.
+
+    Qualified ``owner:name`` goes straight to ``resolve_qualified``.
+    Bare refs resolve in the *team owner's* namespace first, then fall
+    back to ``system`` — so the team behaves consistently regardless of
+    who ran it.  See ``docs/concepts/team-versioning.md``.
+    """
+    if ":" in ref:
+        owner_id, _, bare = ref.partition(":")
+        return await store.resolve_qualified(owner_id, bare)
+    spec = await store.resolve_qualified(team_owner_id, ref)
+    if spec is None and team_owner_id != "system":
+        spec = await store.resolve_qualified("system", ref)
+    return spec
+
+
 # How long a worker waits before re-checking the board (seconds)
 _POLL_INTERVAL = 1.0
 
@@ -215,6 +232,7 @@ class TeamRunner:
         data: dict[str, Any] = {
             "type": "team",
             "spec_name": team_spec.name,
+            "spec_owner": team_spec.owner_id,
             "team_run_id": team_run_id,
             "message": message,
             "phase": phase,
@@ -277,9 +295,10 @@ class TeamRunner:
         principal = restore_auth_context(data)
 
         spec_name = data["spec_name"]
-        team_spec = await self._team_store.get(spec_name)  # type: ignore[union-attr]
+        spec_owner = data.get("spec_owner", "system")
+        team_spec = await self._team_store.resolve_qualified(spec_owner, spec_name)  # type: ignore[union-attr]
         if team_spec is None:
-            logger.warning("Team '%s' not found during resume — skipping", spec_name)
+            logger.warning("Team '%s:%s' not found during resume — skipping", spec_owner, spec_name)
             return
 
         team_run_id = data["team_run_id"]
@@ -569,7 +588,7 @@ class TeamRunner:
     # ── Phase 1: Planning ────────────────────────────────────────────
 
     async def _run_planner(self, team_spec: TeamSpec, team_run_id: str, message: str) -> None:
-        planner_spec = await self._get_agent(team_spec.planner, "Planner")
+        planner_spec = await self._get_agent(team_spec.planner, "Planner", team_spec.owner_id)
         prompt = await build_planner_prompt(team_spec, message, self._agent_store)  # type: ignore[arg-type]
         tools = self._planner_tools(team_run_id, team_spec.planner)
         await run_agent_with_tools(planner_spec, prompt, tools, max_turns=planner_spec.max_turns)
@@ -577,7 +596,7 @@ class TeamRunner:
     async def _run_planner_stream(
         self, team_spec: TeamSpec, team_run_id: str, message: str, resume_hint: str | None = None
     ) -> AsyncIterator[dict[str, Any]]:
-        planner_spec = await self._get_agent(team_spec.planner, "Planner")
+        planner_spec = await self._get_agent(team_spec.planner, "Planner", team_spec.owner_id)
         prompt = await build_planner_prompt(team_spec, message, self._agent_store)  # type: ignore[arg-type]
         tools = self._planner_tools(team_run_id, team_spec.planner)
         logger.info("Planner prompt:\n%s", prompt)
@@ -604,7 +623,7 @@ class TeamRunner:
 
     async def _run_replanner(self, team_spec: TeamSpec, team_run_id: str, message: str) -> int:
         """Evaluate completed tasks and create follow-ups. Returns new task count."""
-        planner_spec = await self._agent_store.get(team_spec.planner)  # type: ignore[union-attr]
+        planner_spec = await _resolve_team_agent(self._agent_store, team_spec.owner_id, team_spec.planner)
         if planner_spec is None:
             return 0
         prompt = await build_replan_prompt(team_spec, team_run_id, message, self._agent_store)  # type: ignore[arg-type]
@@ -629,7 +648,7 @@ class TeamRunner:
         event_queue: asyncio.Queue[dict[str, Any] | None],
     ) -> int:
         """Streaming re-planner. Puts events on the queue. Returns new task count."""
-        planner_spec = await self._agent_store.get(team_spec.planner)  # type: ignore[union-attr]
+        planner_spec = await _resolve_team_agent(self._agent_store, team_spec.owner_id, team_spec.planner)
         if planner_spec is None:
             return 0
         prompt = await build_replan_prompt(team_spec, team_run_id, message, self._agent_store)  # type: ignore[arg-type]
@@ -791,7 +810,7 @@ class TeamRunner:
 
     async def _worker_loop(self, worker_name: str, team_spec: TeamSpec, team_run_id: str) -> None:
         """Non-streaming worker: poll board, claim tasks, execute in parallel batches."""
-        worker_spec = await self._agent_store.get(worker_name)  # type: ignore[union-attr]
+        worker_spec = await _resolve_team_agent(self._agent_store, team_spec.owner_id, worker_name)
         if worker_spec is None:
             logger.warning("Worker agent '%s' not found — skipping", worker_name)
             return
@@ -833,7 +852,7 @@ class TeamRunner:
         self, worker_name: str, team_spec: TeamSpec, team_run_id: str
     ) -> AsyncIterator[dict[str, Any]]:
         """Streaming worker: same as _worker_loop but yields events."""
-        worker_spec = await self._agent_store.get(worker_name)  # type: ignore[union-attr]
+        worker_spec = await _resolve_team_agent(self._agent_store, team_spec.owner_id, worker_name)
         if worker_spec is None:
             yield {"type": "worker_error", "agent": worker_name, "error": f"Agent '{worker_name}' not found"}
             return
@@ -1016,7 +1035,7 @@ class TeamRunner:
     # ── Phase 3: Synthesis ───────────────────────────────────────────
 
     async def _run_synthesizer(self, team_spec: TeamSpec, team_run_id: str, message: str) -> str:
-        synth_spec = await self._get_agent(team_spec.synthesizer, "Synthesizer")
+        synth_spec = await self._get_agent(team_spec.synthesizer, "Synthesizer", team_spec.owner_id)
         prompt = await build_synthesis_prompt(team_run_id, message)
         tools = self._synthesizer_tools(team_run_id, team_spec.synthesizer)
         return await run_agent_with_tools(synth_spec, prompt, tools, max_turns=synth_spec.max_turns)
@@ -1024,7 +1043,7 @@ class TeamRunner:
     async def _run_synthesizer_stream(
         self, team_spec: TeamSpec, team_run_id: str, message: str, resume_hint: str | None = None
     ) -> AsyncIterator[dict[str, Any]]:
-        synth_spec = await self._get_agent(team_spec.synthesizer, "Synthesizer")
+        synth_spec = await self._get_agent(team_spec.synthesizer, "Synthesizer", team_spec.owner_id)
         prompt = await build_synthesis_prompt(team_run_id, message)
         tools = self._synthesizer_tools(team_run_id, team_spec.synthesizer)
         cancel_evt = self._cancel_events.get(team_run_id)
@@ -1075,7 +1094,7 @@ class TeamRunner:
             yield {"type": "error", "detail": f"Task '{task_id}' has no assigned worker"}
             return
 
-        worker_spec = await self._agent_store.get(worker_name)  # type: ignore[union-attr]
+        worker_spec = await _resolve_team_agent(self._agent_store, team_spec.owner_id, worker_name)
         if worker_spec is None:
             yield {"type": "error", "detail": f"Worker agent '{worker_name}' not found"}
             return
@@ -1183,9 +1202,9 @@ class TeamRunner:
             logger.debug("Failed to recover task tokens for %s/%s", team_run_id, task_id, exc_info=True)
             return ""
 
-    async def _get_agent(self, name: str, role: str) -> AgentSpec:
-        """Load an agent spec by name, raising if not found."""
-        spec = await self._agent_store.get(name)  # type: ignore[union-attr]
+    async def _get_agent(self, name: str, role: str, team_owner_id: str = "system") -> AgentSpec:
+        """Load an agent spec by name from the team owner's namespace."""
+        spec: AgentSpec | None = await _resolve_team_agent(self._agent_store, team_owner_id, name)
         if spec is None:
             raise ValueError(f"{role} agent '{name}' not found")
         return spec

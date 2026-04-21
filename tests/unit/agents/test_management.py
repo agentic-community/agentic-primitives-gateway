@@ -7,8 +7,8 @@ from unittest.mock import patch
 
 import pytest
 
+from agentic_primitives_gateway.agents.file_store import FileAgentStore
 from agentic_primitives_gateway.agents.runner import AgentRunner
-from agentic_primitives_gateway.agents.store import FileAgentStore
 from agentic_primitives_gateway.agents.tools import build_tool_list
 from agentic_primitives_gateway.agents.tools.handlers import (
     agent_create,

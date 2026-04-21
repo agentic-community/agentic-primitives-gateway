@@ -1,8 +1,11 @@
 import type {
+  AgentLineage,
   AgentListResponse,
   AgentMemoryResponse,
   AgentSpec,
   AgentToolsResponse,
+  AgentVersion,
+  AgentVersionListResponse,
   AuditFilters,
   AuditListResponse,
   AuditStatus,
@@ -10,7 +13,10 @@ import type {
   ChatResponse,
   CreateAgentRequest,
   CreateTeamRequest,
+  CreateTeamVersionRequest,
+  CreateVersionRequest,
   CredentialStatusResponse,
+  ForkRequest,
   HealthResponse,
   PolicyEngineInfo,
   PolicyEngineListResponse,
@@ -19,10 +25,13 @@ import type {
   ProvidersResponse,
   ReadinessResponse,
   SessionHistoryResponse,
+  TeamLineage,
   TeamListResponse,
   TeamRunRequest,
   TeamRunResponse,
   TeamSpec,
+  TeamVersion,
+  TeamVersionListResponse,
   ToolCatalogResponse,
   UpdateAgentRequest,
   UpdateTeamRequest,
@@ -335,6 +344,99 @@ export const api = {
     const path = `/api/v1/audit/events/stream${qs.toString() ? "?" + qs : ""}`;
     return sseGetStream(path, signal);
   },
+
+  // ── Agent versioning / fork / lineage ───────────────────────────
+  // ``name`` may be bare (``"researcher"``) or qualified (``"alice:researcher"``).
+  listAgentVersions: (name: string) =>
+    request<AgentVersionListResponse>(
+      `/api/v1/agents/${encodeURIComponent(name)}/versions`,
+    ).then((r) => r.versions),
+  getAgentVersion: (name: string, versionId: string) =>
+    request<AgentVersion>(
+      `/api/v1/agents/${encodeURIComponent(name)}/versions/${versionId}`,
+    ),
+  createAgentVersion: (name: string, data: CreateVersionRequest) =>
+    request<AgentVersion>(
+      `/api/v1/agents/${encodeURIComponent(name)}/versions`,
+      { method: "POST", body: JSON.stringify(data) },
+    ),
+  proposeAgentVersion: (name: string, versionId: string) =>
+    request<AgentVersion>(
+      `/api/v1/agents/${encodeURIComponent(name)}/versions/${versionId}/propose`,
+      { method: "POST" },
+    ),
+  approveAgentVersion: (name: string, versionId: string) =>
+    request<AgentVersion>(
+      `/api/v1/agents/${encodeURIComponent(name)}/versions/${versionId}/approve`,
+      { method: "POST" },
+    ),
+  rejectAgentVersion: (name: string, versionId: string, reason: string) =>
+    request<AgentVersion>(
+      `/api/v1/agents/${encodeURIComponent(name)}/versions/${versionId}/reject`,
+      { method: "POST", body: JSON.stringify({ reason }) },
+    ),
+  deployAgentVersion: (name: string, versionId: string) =>
+    request<AgentVersion>(
+      `/api/v1/agents/${encodeURIComponent(name)}/versions/${versionId}/deploy`,
+      { method: "POST" },
+    ),
+  forkAgent: (name: string, data: ForkRequest = {}) =>
+    request<AgentVersion>(
+      `/api/v1/agents/${encodeURIComponent(name)}/fork`,
+      { method: "POST", body: JSON.stringify(data) },
+    ),
+  getAgentLineage: (name: string) =>
+    request<AgentLineage>(`/api/v1/agents/${encodeURIComponent(name)}/lineage`),
+  listPendingAgentProposals: () =>
+    request<AgentVersionListResponse>("/api/v1/admin/agents/proposals").then(
+      (r) => r.versions,
+    ),
+
+  // ── Team versioning / fork / lineage ────────────────────────────
+  listTeamVersions: (name: string) =>
+    request<TeamVersionListResponse>(
+      `/api/v1/teams/${encodeURIComponent(name)}/versions`,
+    ).then((r) => r.versions),
+  getTeamVersion: (name: string, versionId: string) =>
+    request<TeamVersion>(
+      `/api/v1/teams/${encodeURIComponent(name)}/versions/${versionId}`,
+    ),
+  createTeamVersion: (name: string, data: CreateTeamVersionRequest) =>
+    request<TeamVersion>(
+      `/api/v1/teams/${encodeURIComponent(name)}/versions`,
+      { method: "POST", body: JSON.stringify(data) },
+    ),
+  proposeTeamVersion: (name: string, versionId: string) =>
+    request<TeamVersion>(
+      `/api/v1/teams/${encodeURIComponent(name)}/versions/${versionId}/propose`,
+      { method: "POST" },
+    ),
+  approveTeamVersion: (name: string, versionId: string) =>
+    request<TeamVersion>(
+      `/api/v1/teams/${encodeURIComponent(name)}/versions/${versionId}/approve`,
+      { method: "POST" },
+    ),
+  rejectTeamVersion: (name: string, versionId: string, reason: string) =>
+    request<TeamVersion>(
+      `/api/v1/teams/${encodeURIComponent(name)}/versions/${versionId}/reject`,
+      { method: "POST", body: JSON.stringify({ reason }) },
+    ),
+  deployTeamVersion: (name: string, versionId: string) =>
+    request<TeamVersion>(
+      `/api/v1/teams/${encodeURIComponent(name)}/versions/${versionId}/deploy`,
+      { method: "POST" },
+    ),
+  forkTeam: (name: string, data: ForkRequest = {}) =>
+    request<TeamVersion>(
+      `/api/v1/teams/${encodeURIComponent(name)}/fork`,
+      { method: "POST", body: JSON.stringify(data) },
+    ),
+  getTeamLineage: (name: string) =>
+    request<TeamLineage>(`/api/v1/teams/${encodeURIComponent(name)}/lineage`),
+  listPendingTeamProposals: () =>
+    request<TeamVersionListResponse>("/api/v1/admin/teams/proposals").then(
+      (r) => r.versions,
+    ),
 };
 
 /** Check if an error message indicates missing user credentials. */

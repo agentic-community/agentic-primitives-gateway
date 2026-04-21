@@ -87,6 +87,22 @@ def _mock_handler(request: httpx.Request) -> httpx.Response:
     if path == "/.well-known/agent.json" or path.startswith("/a2a/"):
         return _handle_a2a(method, path, request)
 
+    # Admin proposals (must route before generic /agents, /teams prefixes)
+    if path == "/api/v1/admin/agents/proposals" and method == "GET":
+        versions = []
+        for vlist in _agent_versions.values():
+            for v in vlist:
+                if v["version_id"] in _agent_proposals:
+                    versions.append(v)
+        return httpx.Response(200, json={"versions": versions})
+    if path == "/api/v1/admin/teams/proposals" and method == "GET":
+        versions = []
+        for vlist in _team_versions.values():
+            for v in vlist:
+                if v["version_id"] in _team_proposals:
+                    versions.append(v)
+        return httpx.Response(200, json={"versions": versions})
+
     # Agent endpoints
     if path.startswith("/api/v1/agents"):
         return _handle_agents(method, path, request)
@@ -245,6 +261,15 @@ _agents_store: dict[str, dict] = {}
 _teams_store: dict[str, dict] = {}
 _team_runs: dict[str, dict] = {}  # run_id -> {events, status}
 
+# Version history — mirrors the versioned store's layout.  Used by the
+# version/fork/lineage mock endpoints.  ``name`` and ``team_name`` keys are
+# the bare name only; the tests don't exercise the qualified addressing
+# via the mock transport.
+_agent_versions: dict[str, list[dict]] = {}  # name -> list[version_dict]
+_team_versions: dict[str, list[dict]] = {}
+_agent_proposals: list[str] = []  # version_ids waiting for admin approval
+_team_proposals: list[str] = []
+
 _ci_sessions: dict[str, dict] = {}
 
 _policy_engines: dict[str, dict] = {}
@@ -253,6 +278,40 @@ _evaluators: dict[str, dict] = {}
 _policy_engine_counter = 0
 _policy_counter = 0
 _evaluator_counter = 0
+
+
+def _make_agent_version(
+    name: str,
+    spec: dict,
+    *,
+    version_number: int,
+    status: str = "deployed",
+    parent_version_id: str | None = None,
+    forked_from: dict | None = None,
+    commit_message: str | None = None,
+) -> dict:
+    """Build a minimal agent-version record matching the server schema."""
+    import uuid as _uuid
+    from datetime import UTC as _UTC
+    from datetime import datetime as _dt
+
+    now = _dt.now(_UTC).isoformat()
+    return {
+        "version_id": _uuid.uuid4().hex,
+        "agent_name": name,
+        "owner_id": spec.get("owner_id", "noop"),
+        "version_number": version_number,
+        "spec": spec,
+        "created_at": now,
+        "created_by": spec.get("owner_id", "noop"),
+        "parent_version_id": parent_version_id,
+        "forked_from": forked_from,
+        "status": status,
+        "approved_by": None,
+        "approved_at": None,
+        "deployed_at": now if status == "deployed" else None,
+        "commit_message": commit_message,
+    }
 
 
 def _handle_agents(method: str, path: str, request: httpx.Request) -> httpx.Response:
@@ -277,10 +336,15 @@ def _handle_agents(method: str, path: str, request: httpx.Request) -> httpx.Resp
             "max_turns": body.get("max_turns", 20),
             "temperature": body.get("temperature", 1.0),
             "max_tokens": body.get("max_tokens"),
+            "owner_id": body.get("owner_id", "noop"),
         }
         if agent["name"] in _agents_store:
             return httpx.Response(409, json={"detail": f"Agent '{agent['name']}' already exists"})
         _agents_store[agent["name"]] = agent
+        # Seed version 1 for the versioning endpoints below.
+        _agent_versions[agent["name"]] = [
+            _make_agent_version(agent["name"], agent, version_number=1, commit_message="initial version")
+        ]
         return httpx.Response(201, json=agent)
 
     # GET "" (list agents)
@@ -396,7 +460,121 @@ def _handle_agents(method: str, path: str, request: httpx.Request) -> httpx.Resp
                 if name not in _agents_store:
                     return httpx.Response(404, json={"detail": f"Agent '{name}' not found"})
                 del _agents_store[name]
+                _agent_versions.pop(name, None)
                 return httpx.Response(200, json={"status": "deleted"})
+
+        # GET /{name}/versions
+        if len(parts) == 2 and parts[1] == "versions" and method == "GET":
+            versions = _agent_versions.get(name, [])
+            return httpx.Response(200, json={"versions": versions})
+
+        # POST /{name}/versions  → create new version
+        if len(parts) == 2 and parts[1] == "versions" and method == "POST":
+            agent = _agents_store.get(name)
+            if agent is None:
+                return httpx.Response(404, json={"detail": f"Agent '{name}' not found"})
+            body = json.loads(request.content)
+            new_spec = {
+                **agent,
+                **{k: v for k, v in body.items() if v is not None and k not in {"commit_message", "parent_version_id"}},
+            }
+            vlist = _agent_versions.setdefault(name, [])
+            parent = body.get("parent_version_id") or (vlist[-1]["version_id"] if vlist else None)
+            version = _make_agent_version(
+                name,
+                new_spec,
+                version_number=len(vlist) + 1,
+                parent_version_id=parent,
+                commit_message=body.get("commit_message"),
+            )
+            vlist.append(version)
+            _agents_store[name] = new_spec
+            return httpx.Response(201, json=version)
+
+        # GET /{name}/versions/{version_id}
+        if len(parts) == 3 and parts[1] == "versions" and method == "GET":
+            vlist = _agent_versions.get(name, [])
+            for v in vlist:
+                if v["version_id"] == parts[2]:
+                    return httpx.Response(200, json=v)
+            return httpx.Response(404, json={"detail": f"Version '{parts[2]}' not found"})
+
+        # POST /{name}/versions/{version_id}/{action}
+        if len(parts) == 4 and parts[1] == "versions" and method == "POST":
+            version_id = parts[2]
+            action = parts[3]
+            vlist = _agent_versions.get(name, [])
+            target = next((v for v in vlist if v["version_id"] == version_id), None)
+            if target is None:
+                return httpx.Response(404, json={"detail": f"Version '{version_id}' not found"})
+            if action == "propose":
+                target["status"] = "proposed"
+                if version_id not in _agent_proposals:
+                    _agent_proposals.append(version_id)
+                return httpx.Response(200, json=target)
+            if action == "approve":
+                target["approved_by"] = "admin"
+                return httpx.Response(200, json=target)
+            if action == "reject":
+                target["status"] = "rejected"
+                if version_id in _agent_proposals:
+                    _agent_proposals.remove(version_id)
+                return httpx.Response(200, json=target)
+            if action == "deploy":
+                for v in vlist:
+                    if v["status"] == "deployed" and v["version_id"] != version_id:
+                        v["status"] = "archived"
+                target["status"] = "deployed"
+                from datetime import UTC as _UTC
+                from datetime import datetime as _dt
+
+                target["deployed_at"] = _dt.now(_UTC).isoformat()
+                _agents_store[name] = target["spec"]
+                if version_id in _agent_proposals:
+                    _agent_proposals.remove(version_id)
+                return httpx.Response(200, json=target)
+
+        # POST /{name}/fork
+        if len(parts) == 2 and parts[1] == "fork" and method == "POST":
+            source = _agents_store.get(name)
+            if source is None:
+                return httpx.Response(404, json={"detail": f"Agent '{name}' not found"})
+            body = json.loads(request.content)
+            target_name = body.get("target_name") or name
+            if target_name in _agents_store:
+                return httpx.Response(409, json={"detail": f"Agent '{target_name}' already exists"})
+            source_version = _agent_versions.get(name, [{}])[-1]
+            forked_spec = {**source, "name": target_name, "owner_id": "noop"}
+            _agents_store[target_name] = forked_spec
+            version = _make_agent_version(
+                target_name,
+                forked_spec,
+                version_number=1,
+                forked_from={
+                    "name": name,
+                    "owner_id": source.get("owner_id", "noop"),
+                    "version_id": source_version.get("version_id", ""),
+                },
+                commit_message=body.get("commit_message"),
+            )
+            _agent_versions[target_name] = [version]
+            return httpx.Response(201, json=version)
+
+        # GET /{name}/lineage
+        if len(parts) == 2 and parts[1] == "lineage" and method == "GET":
+            vlist = _agent_versions.get(name, [])
+            owner = vlist[0].get("owner_id") if vlist else "noop"
+            nodes = [{"version": v, "children_ids": [], "forks_out": []} for v in vlist]
+            deployed = next((v["version_id"] for v in vlist if v["status"] == "deployed"), None)
+            deployed_map = {f"{owner}:{name}": deployed} if deployed else {}
+            return httpx.Response(
+                200,
+                json={
+                    "root_identity": {"owner_id": owner, "name": name},
+                    "nodes": nodes,
+                    "deployed": deployed_map,
+                },
+            )
 
     return httpx.Response(404, json={"detail": "Not found"})
 
@@ -1081,6 +1259,10 @@ def _clear_store():
     _agents_store.clear()
     _teams_store.clear()
     _team_runs.clear()
+    _agent_versions.clear()
+    _team_versions.clear()
+    _agent_proposals.clear()
+    _team_proposals.clear()
     _policy_engines.clear()
     _policies.clear()
     _evaluators.clear()
@@ -1096,6 +1278,10 @@ def _clear_store():
     _agents_store.clear()
     _teams_store.clear()
     _team_runs.clear()
+    _agent_versions.clear()
+    _team_versions.clear()
+    _agent_proposals.clear()
+    _team_proposals.clear()
     _policy_engines.clear()
     _policies.clear()
     _evaluators.clear()

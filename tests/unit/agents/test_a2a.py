@@ -57,7 +57,20 @@ def _auth() -> None:
 
 @pytest.fixture()
 def mock_store() -> AsyncMock:
+    """Shared store mock whose ``get`` is the single source of truth.
+
+    ``resolve_for_caller`` and ``resolve_qualified`` are mocked to forward
+    to ``get`` — existing tests that only stub ``get`` keep working, and
+    the route code's access-check path (which calls ``resolve_agent_spec``
+    and thus ``resolve_for_caller``) sees the same mocked spec.
+    """
     store = AsyncMock()
+
+    async def _forward(*_a: Any, **_kw: Any) -> Any:
+        return await store.get(_a[-1] if _a else "")
+
+    store.resolve_for_caller = AsyncMock(side_effect=_forward)
+    store.resolve_qualified = AsyncMock(side_effect=_forward)
     return store
 
 

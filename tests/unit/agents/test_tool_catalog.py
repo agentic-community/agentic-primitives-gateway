@@ -130,7 +130,7 @@ class TestBuildAgentTools:
     async def test_delegation_handler_calls_runner(self) -> None:
         store = AsyncMock()
         spec = MagicMock()
-        store.get.return_value = spec
+        store.resolve_qualified.return_value = spec
         runner = AsyncMock()
         response = MagicMock()
         response.response = "answer"
@@ -144,7 +144,7 @@ class TestBuildAgentTools:
 
     async def test_delegation_handler_agent_not_found(self) -> None:
         store = AsyncMock()
-        store.get.return_value = None
+        store.resolve_qualified.return_value = None
         runner = AsyncMock()
 
         config = PrimitiveConfig(enabled=True, tools=["missing"])
@@ -154,7 +154,7 @@ class TestBuildAgentTools:
 
     async def test_delegation_handler_error(self) -> None:
         store = AsyncMock()
-        store.get.return_value = MagicMock()
+        store.resolve_qualified.return_value = MagicMock()
         runner = AsyncMock()
         runner.run.side_effect = RuntimeError("boom")
 
@@ -166,7 +166,7 @@ class TestBuildAgentTools:
 
     async def test_delegation_handler_with_artifacts(self) -> None:
         store = AsyncMock()
-        store.get.return_value = MagicMock()
+        store.resolve_qualified.return_value = MagicMock()
         runner = AsyncMock()
         artifact = MagicMock()
         artifact.tool_name = "code_execute"

@@ -242,7 +242,7 @@ class TestPlannerPromptSharedMemory:
         from agentic_primitives_gateway.agents.team_prompts import build_planner_prompt
 
         mock_store = AsyncMock()
-        mock_store.get.return_value = AgentSpec(name="researcher", model="m", description="A researcher")
+        mock_store.resolve_qualified.return_value = AgentSpec(name="researcher", model="m", description="A researcher")
         spec = TeamSpec(
             name="team",
             planner="p",
@@ -259,7 +259,7 @@ class TestPlannerPromptSharedMemory:
         from agentic_primitives_gateway.agents.team_prompts import build_planner_prompt
 
         mock_store = AsyncMock()
-        mock_store.get.return_value = AgentSpec(name="researcher", model="m", description="A researcher")
+        mock_store.resolve_qualified.return_value = AgentSpec(name="researcher", model="m", description="A researcher")
         spec = TeamSpec(
             name="team",
             planner="p",

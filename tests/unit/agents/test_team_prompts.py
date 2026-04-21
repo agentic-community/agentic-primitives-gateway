@@ -51,7 +51,9 @@ class TestBuildWorkerDescriptions:
         spec = MagicMock()
         spec.description = "Researches stuff"
         spec.primitives = {"memory": MagicMock(enabled=True), "browser": MagicMock(enabled=True)}
-        store.get.return_value = spec
+        # Versioned store — worker resolution goes through
+        # ``_resolve_team_agent`` which calls ``resolve_qualified``.
+        store.resolve_qualified.return_value = spec
 
         team_spec = _make_team_spec(workers=["researcher"])
         result = await build_worker_descriptions(team_spec, store)
@@ -61,7 +63,7 @@ class TestBuildWorkerDescriptions:
 
     async def test_worker_not_found(self) -> None:
         store = AsyncMock()
-        store.get.return_value = None
+        store.resolve_qualified.return_value = None
 
         team_spec = _make_team_spec(workers=["missing"])
         result = await build_worker_descriptions(team_spec, store)
@@ -71,7 +73,7 @@ class TestBuildWorkerDescriptions:
 class TestBuildPlannerPrompt:
     async def test_planner_prompt(self) -> None:
         store = AsyncMock()
-        store.get.return_value = None
+        store.resolve_qualified.return_value = None
         team_spec = _make_team_spec()
         result = await build_planner_prompt(team_spec, "build a website", store)
         assert "build a website" in result
@@ -89,7 +91,7 @@ class TestBuildReplanPrompt:
 
     async def test_returns_prompt_with_completed_tasks(self) -> None:
         store = AsyncMock()
-        store.get.return_value = None
+        store.resolve_qualified.return_value = None
         with patch("agentic_primitives_gateway.agents.team_prompts.registry") as mock_reg:
             mock_reg.tasks = AsyncMock()
             mock_reg.tasks.list_tasks.return_value = [

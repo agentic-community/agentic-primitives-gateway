@@ -129,6 +129,94 @@ browser_session_owners = SessionOwnershipStore()
 code_interpreter_session_owners = SessionOwnershipStore()
 
 
+# ── Agent/Team spec addressing ────────────────────────────────────────
+#
+# Routes accept three forms of ``{name}``:
+#
+# 1. ``/agents/{name}`` (bare) — caller-context resolution via the
+#    versioned store: ``(principal.id, name)`` first, else ``(system, name)``.
+#    Never falls through to shared agents; qualified addressing is required
+#    for those.
+# 2. ``/agents/{owner_id}:{name}`` (qualified) — direct addressing.
+# 3. ``/agents/{name}?owner=alice`` — admin-only alternative to qualified form.
+#
+# The helpers below parse + resolve these forms and apply ``require_access``.
+
+
+def parse_spec_addr(
+    raw_name: str,
+    principal: AuthenticatedPrincipal,
+    owner_query: str | None = None,
+) -> tuple[str, str]:
+    """Parse a route ``{name}`` parameter into ``(owner_id, bare_name)``.
+
+    An empty ``owner_id`` return value means "caller-context resolution".
+    Admin-only rules:
+
+    * ``owner_query`` requires admin scope.
+    * Qualified ``"{owner}:{name}"`` where ``owner != principal.id`` is
+      allowed for non-admins but the share rules still apply when the
+      resolved spec is loaded.
+    """
+    if owner_query:
+        if not principal.is_admin:
+            raise HTTPException(status_code=403, detail="?owner=... requires admin scope")
+        return owner_query, raw_name
+    if ":" in raw_name:
+        owner, _, bare = raw_name.partition(":")
+        if not owner or not bare:
+            raise HTTPException(status_code=422, detail="Malformed qualified name")
+        return owner, bare
+    return "", raw_name  # bare — caller-context
+
+
+async def resolve_agent_spec(
+    store: Any,
+    raw_name: str,
+    principal: AuthenticatedPrincipal,
+    *,
+    owner_query: str | None = None,
+) -> Any:
+    """Resolve an ``AgentSpec`` by bare or qualified name + enforce access.
+
+    Raises HTTPException 404 if nothing resolves, 403 if access check fails.
+    """
+    from agentic_primitives_gateway.auth.access import require_access
+
+    owner, bare = parse_spec_addr(raw_name, principal, owner_query)
+    if owner:
+        spec = await store.resolve_qualified(owner, bare)
+    else:
+        spec = await store.resolve_for_caller(bare, principal)
+    if spec is None:
+        raise HTTPException(status_code=404, detail=f"Agent '{raw_name}' not found")
+    # ``resolve_for_caller`` already applied check_access; qualified
+    # lookups need the same check here.
+    require_access(principal, spec.owner_id, spec.shared_with)
+    return spec
+
+
+async def resolve_team_spec(
+    store: Any,
+    raw_name: str,
+    principal: AuthenticatedPrincipal,
+    *,
+    owner_query: str | None = None,
+) -> Any:
+    """Team equivalent of :func:`resolve_agent_spec`."""
+    from agentic_primitives_gateway.auth.access import require_access
+
+    owner, bare = parse_spec_addr(raw_name, principal, owner_query)
+    if owner:
+        spec = await store.resolve_qualified(owner, bare)
+    else:
+        spec = await store.resolve_for_caller(bare, principal)
+    if spec is None:
+        raise HTTPException(status_code=404, detail=f"Team '{raw_name}' not found")
+    require_access(principal, spec.owner_id, spec.shared_with)
+    return spec
+
+
 def handle_provider_errors(
     not_implemented: str = "Not supported by this provider",
     not_found: str | None = None,

@@ -34,6 +34,11 @@ interface AuthContextValue {
   principalLoaded: boolean;
   /** Whether the authenticated principal has admin scope (from /whoami). */
   isAdmin: boolean;
+  /** Server-side principal id (e.g. ``"alice"`` or ``"noop"``) — the
+   *  owner_id of agents/teams this user creates. */
+  principalId: string;
+  /** Groups the principal is a member of (used to match ``shared_with``). */
+  principalGroups: string[];
 }
 
 const AuthContext = createContext<AuthContextValue>({
@@ -45,6 +50,8 @@ const AuthContext = createContext<AuthContextValue>({
   backend: "noop",
   principalLoaded: false,
   isAdmin: false,
+  principalId: "",
+  principalGroups: [],
 });
 
 export function useAuth() {
@@ -65,6 +72,8 @@ export default function AuthProvider({
   const [loading, setLoading] = useState(true);
   const [backend, setBackend] = useState("noop");
   const [isAdmin, setIsAdmin] = useState(false);
+  const [principalId, setPrincipalId] = useState("");
+  const [principalGroups, setPrincipalGroups] = useState<string[]>([]);
   const [principalLoaded, setPrincipalLoaded] = useState(false);
   const managerRef = useRef<UserManager | null>(null);
   const initRef = useRef(false);
@@ -223,10 +232,14 @@ export default function AuthProvider({
         const principal = await api.whoami();
         if (cancelled) return;
         setIsAdmin(principal.is_admin);
+        setPrincipalId(principal.id);
+        setPrincipalGroups(principal.groups ?? []);
       } catch {
         // 401 on api_key/jwt with no creds, or 5xx — default to non-admin.
         if (cancelled) return;
         setIsAdmin(false);
+        setPrincipalId("");
+        setPrincipalGroups([]);
       } finally {
         if (!cancelled) setPrincipalLoaded(true);
       }
@@ -247,6 +260,8 @@ export default function AuthProvider({
         backend,
         principalLoaded,
         isAdmin,
+        principalId,
+        principalGroups,
       }}
     >
       {children}

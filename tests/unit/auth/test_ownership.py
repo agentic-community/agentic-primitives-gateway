@@ -40,14 +40,14 @@ def _make_backend() -> ApiKeyAuthBackend:
 
 @pytest.fixture()
 def agent_store(tmp_path):
-    from agentic_primitives_gateway.agents.store import FileAgentStore
+    from agentic_primitives_gateway.agents.file_store import FileAgentStore
 
     return FileAgentStore(path=str(tmp_path / "agents.json"))
 
 
 @pytest.fixture()
 def team_store(tmp_path):
-    from agentic_primitives_gateway.agents.team_store import FileTeamStore
+    from agentic_primitives_gateway.agents.file_store import FileTeamStore
 
     return FileTeamStore(path=str(tmp_path / "teams.json"))
 
@@ -126,7 +126,16 @@ class TestAgentOwnership:
 
     @pytest.mark.asyncio
     async def test_get_checks_access(self, agent_store):
-        """get_agent returns 403 if the user doesn't have access."""
+        """Bob cannot see Alice's private agent via bare lookup.
+
+        Under caller-scoped resolution, bare ``/agents/{name}`` only
+        checks the caller's and the system namespace.  Shared agents in
+        other owners' namespaces require qualified addressing; a private
+        agent therefore 404s rather than 403s when addressed bare.
+
+        When addressed qualified (``alice:private-agent``) the share
+        check runs and returns 403 for the non-shared private agent.
+        """
         await agent_store.create(AgentSpec(name="private-agent", model="m", owner_id="alice", shared_with=[]))
 
         from agentic_primitives_gateway.routes import agents as agent_routes
@@ -135,12 +144,17 @@ class TestAgentOwnership:
         agent_routes._store = agent_store
 
         try:
-            # Bob tries to access Alice's private agent
             set_authenticated_principal(AuthenticatedPrincipal(id="bob", type="user"))
             from fastapi import HTTPException
 
+            # Bare lookup: 404.
             with pytest.raises(HTTPException) as exc_info:
                 await agent_routes.get_agent("private-agent")
+            assert exc_info.value.status_code == 404
+
+            # Qualified lookup: 403 (share rules deny).
+            with pytest.raises(HTTPException) as exc_info:
+                await agent_routes.get_agent("alice:private-agent")
             assert exc_info.value.status_code == 403
         finally:
             agent_routes._store = original_store
@@ -173,7 +187,7 @@ class TestAgentOwnership:
 
             with pytest.raises(HTTPException) as exc_info:
                 await agent_routes.update_agent(
-                    "alice-agent",
+                    "alice:alice-agent",
                     UpdateAgentRequest(description="hacked"),
                 )
             assert exc_info.value.status_code == 403
@@ -195,7 +209,7 @@ class TestAgentOwnership:
             from fastapi import HTTPException
 
             with pytest.raises(HTTPException) as exc_info:
-                await agent_routes.delete_agent("alice-agent")
+                await agent_routes.delete_agent("alice:alice-agent")
             assert exc_info.value.status_code == 403
         finally:
             agent_routes._store = original_store
@@ -217,7 +231,7 @@ class TestAgentOwnership:
             from agentic_primitives_gateway.models.agents import UpdateAgentRequest
 
             result = await agent_routes.update_agent(
-                "alice-agent",
+                "alice:alice-agent",
                 UpdateAgentRequest(description="admin edit"),
             )
             assert result.description == "admin edit"
@@ -238,8 +252,8 @@ class TestAgentOwnership:
             set_authenticated_principal(
                 AuthenticatedPrincipal(id="admin-user", type="user", scopes=frozenset({"admin"}))
             )
-            result = await agent_routes.delete_agent("alice-agent")
-            assert result == {"status": "deleted"}
+            result = await agent_routes.delete_agent("alice:alice-agent")
+            assert result["status"] == "deleted"
         finally:
             agent_routes._store = original_store
 
@@ -277,33 +291,24 @@ class TestTeamSpecDefaults:
 
 
 class TestSeedInjectsWildcard:
-    def test_file_agent_store_seed_adds_wildcard(self, agent_store):
+    async def test_file_agent_store_seed_adds_wildcard(self, agent_store):
         """Seeding from config injects shared_with=['*'] by default."""
-        agent_store.seed({"seeded": {"model": "m"}})
-
-        import asyncio
-
-        spec = asyncio.get_event_loop().run_until_complete(agent_store.get("seeded"))
+        await agent_store.seed_async({"seeded": {"model": "m"}})
+        spec = await agent_store.get("seeded")
         assert spec is not None
         assert spec.shared_with == ["*"]
         assert spec.owner_id == "system"
 
-    def test_file_agent_store_seed_respects_explicit(self, agent_store):
+    async def test_file_agent_store_seed_respects_explicit(self, agent_store):
         """Seeding from config respects explicitly set shared_with."""
-        agent_store.seed({"private": {"model": "m", "shared_with": ["engineering"]}})
-
-        import asyncio
-
-        spec = asyncio.get_event_loop().run_until_complete(agent_store.get("private"))
+        await agent_store.seed_async({"private": {"model": "m", "shared_with": ["engineering"]}})
+        spec = await agent_store.get("private")
         assert spec is not None
         assert spec.shared_with == ["engineering"]
 
-    def test_file_team_store_seed_adds_wildcard(self, team_store):
+    async def test_file_team_store_seed_adds_wildcard(self, team_store):
         """Seeding teams from config injects shared_with=['*'] by default."""
-        team_store.seed({"t": {"planner": "p", "synthesizer": "s", "workers": ["w"]}})
-
-        import asyncio
-
-        spec = asyncio.get_event_loop().run_until_complete(team_store.get("t"))
+        await team_store.seed_async({"t": {"planner": "p", "synthesizer": "s", "workers": ["w"]}})
+        spec = await team_store.get("t")
         assert spec is not None
         assert spec.shared_with == ["*"]

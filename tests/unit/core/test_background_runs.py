@@ -15,8 +15,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from starlette.testclient import TestClient
 
-from agentic_primitives_gateway.agents.store import FileAgentStore
-from agentic_primitives_gateway.agents.team_store import FileTeamStore
+from agentic_primitives_gateway.agents.file_store import FileAgentStore, FileTeamStore
 from agentic_primitives_gateway.main import app
 from agentic_primitives_gateway.routes.agents import _active_runs, set_agent_store
 from agentic_primitives_gateway.routes.agents import _bg as agent_bg

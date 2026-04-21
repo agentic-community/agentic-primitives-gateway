@@ -15,7 +15,10 @@ const links = [
 ];
 
 // Links rendered only for principals with the admin scope (via /whoami).
-const adminLinks = [{ to: "/audit", label: "Audit", end: false }];
+const adminLinks = [
+  { to: "/audit", label: "Audit", end: false },
+  { to: "/admin/proposals", label: "Proposals", end: false },
+];
 
 export default function Sidebar() {
   const { user, logout, backend, isAdmin } = useAuth();

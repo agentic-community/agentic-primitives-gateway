@@ -3,14 +3,19 @@ import AuthProvider, { useAuth } from "./auth/AuthProvider";
 import AdminGuard from "./components/AdminGuard";
 import Layout from "./components/Layout";
 import AgentChat from "./pages/AgentChat";
+import AgentLineage from "./pages/AgentLineage";
 import AgentList from "./pages/AgentList";
+import AgentVersions from "./pages/AgentVersions";
 import Audit from "./pages/Audit";
 import Dashboard from "./pages/Dashboard";
+import PendingProposals from "./pages/PendingProposals";
 import PolicyManager from "./pages/PolicyManager";
 import PrimitiveExplorer from "./pages/PrimitiveExplorer";
 import Settings from "./pages/Settings";
+import TeamLineage from "./pages/TeamLineage";
 import TeamList from "./pages/TeamList";
 import TeamRun from "./pages/TeamRun";
+import TeamVersions from "./pages/TeamVersions";
 
 /** Blocks rendering until auth is resolved (token set or noop confirmed). */
 function AuthGate({ children }: { children: React.ReactNode }) {
@@ -43,8 +48,12 @@ export default function App() {
                 <Route index element={<Dashboard />} />
                 <Route path="agents" element={<AgentList />} />
                 <Route path="agents/:name/chat" element={<AgentChat />} />
+                <Route path="agents/:name/versions" element={<AgentVersions />} />
+                <Route path="agents/:name/lineage" element={<AgentLineage />} />
                 <Route path="teams" element={<TeamList />} />
                 <Route path="teams/:name/run" element={<TeamRun />} />
+                <Route path="teams/:name/versions" element={<TeamVersions />} />
+                <Route path="teams/:name/lineage" element={<TeamLineage />} />
                 <Route path="policies" element={<PolicyManager />} />
                 <Route path="explorer" element={<PrimitiveExplorer />} />
                 <Route path="settings" element={<Settings />} />
@@ -53,6 +62,14 @@ export default function App() {
                   element={
                     <AdminGuard>
                       <Audit />
+                    </AdminGuard>
+                  }
+                />
+                <Route
+                  path="admin/proposals"
+                  element={
+                    <AdminGuard>
+                      <PendingProposals />
                     </AdminGuard>
                   }
                 />

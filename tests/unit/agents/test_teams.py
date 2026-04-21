@@ -8,9 +8,8 @@ from unittest.mock import patch
 import pytest
 from fastapi.testclient import TestClient
 
-from agentic_primitives_gateway.agents.store import FileAgentStore
+from agentic_primitives_gateway.agents.file_store import FileAgentStore, FileTeamStore
 from agentic_primitives_gateway.agents.team_runner import TeamRunner
-from agentic_primitives_gateway.agents.team_store import FileTeamStore
 from agentic_primitives_gateway.main import app
 from agentic_primitives_gateway.models.agents import AgentSpec
 from agentic_primitives_gateway.models.teams import TeamSpec
@@ -96,7 +95,7 @@ async def test_team_store_crud(tmp_path: Any) -> None:
 @pytest.mark.asyncio
 async def test_team_store_seed(tmp_path: Any) -> None:
     store = FileTeamStore(path=str(tmp_path / "teams.json"))
-    store.seed(
+    await store.seed_async(
         {
             "my-team": {
                 "planner": "planner-agent",

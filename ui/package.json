@@ -10,7 +10,10 @@
   },
   "dependencies": {
     "@tailwindcss/typography": "^0.5.19",
+    "@types/dagre": "^0.7.54",
     "@types/react-syntax-highlighter": "^15.5.13",
+    "@xyflow/react": "^12.10.2",
+    "dagre": "^0.8.5",
     "oidc-client-ts": "^3.4.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",

@@ -240,6 +240,9 @@ class AgentsConfig(BaseModel):
     default_model: str = "us.anthropic.claude-sonnet-4-20250514-v1:0"
     max_turns: int = 20
     specs: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    # Oldest non-deployed/non-draft versions past this count are archived on
+    # every create.  Keeps lineage readable without unbounded growth.
+    max_versions_per_identity: int = 50
 
 
 class TeamsConfig(BaseModel):
@@ -247,16 +250,28 @@ class TeamsConfig(BaseModel):
 
     store: StoreConfig = StoreConfig()
     specs: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    max_versions_per_identity: int = 50
+
+
+class GovernanceConfig(BaseModel):
+    """Cross-subsystem governance switches.
+
+    The approval gate applies to *both* agent and team version deploys —
+    one switch, one production story.  Pre-seeded YAML specs always bypass
+    the gate on first load so bootstrapping never deadlocks.
+    """
+
+    require_admin_approval_for_deploy: bool = False
 
 
 # Well-known store backend aliases → dotted class paths
 AGENT_STORE_ALIASES: dict[str, str] = {
-    "file": "agentic_primitives_gateway.agents.store.FileAgentStore",
+    "file": "agentic_primitives_gateway.agents.file_store.FileAgentStore",
     "redis": "agentic_primitives_gateway.agents.redis_store.RedisAgentStore",
 }
 
 TEAM_STORE_ALIASES: dict[str, str] = {
-    "file": "agentic_primitives_gateway.agents.team_store.FileTeamStore",
+    "file": "agentic_primitives_gateway.agents.file_store.FileTeamStore",
     "redis": "agentic_primitives_gateway.agents.redis_store.RedisTeamStore",
 }
 
@@ -377,6 +392,7 @@ class Settings(BaseSettings):
     credentials: CredentialsConfig = CredentialsConfig()
     agents: AgentsConfig = AgentsConfig()
     teams: TeamsConfig = TeamsConfig()
+    governance: GovernanceConfig = GovernanceConfig()
     audit: AuditConfig = AuditConfig()
     logging: LoggingConfig = LoggingConfig()
 

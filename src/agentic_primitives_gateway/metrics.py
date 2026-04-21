@@ -144,6 +144,51 @@ LLM_REQUESTS = Counter(
     ["model", "status"],  # status: success|failure
 )
 
+# ── Versioning / fork / approval ─────────────────────────────────────
+#
+# Labels are deliberately bounded:
+#   - ``ns_kind`` reduces unbounded owner IDs to ``system`` vs ``user``
+#     so dashboards stay readable even with thousands of users.
+#   - ``auto_deployed`` is a boolean so we can split initial-create +
+#     PUT-update traffic from admin-gated-deploy traffic without
+#     exploding the cardinality by owner.
+
+AGENT_VERSIONS_CREATED = Counter(
+    "gateway_agent_versions_created_total",
+    "New agent-version records persisted.",
+    ["ns_kind", "auto_deployed"],
+)
+
+TEAM_VERSIONS_CREATED = Counter(
+    "gateway_team_versions_created_total",
+    "New team-version records persisted.",
+    ["ns_kind", "auto_deployed"],
+)
+
+AGENT_FORKS = Counter(
+    "gateway_agent_forks_total",
+    "Agent fork operations.",
+    ["source_ns_kind"],  # which namespace the source lived in (system|user)
+)
+
+TEAM_FORKS = Counter(
+    "gateway_team_forks_total",
+    "Team fork operations.",
+    ["source_ns_kind"],
+)
+
+AGENT_VERSION_APPROVALS = Counter(
+    "gateway_agent_version_approvals_total",
+    "Admin decisions on agent-version proposals.",
+    ["outcome"],  # approved|rejected|deployed
+)
+
+TEAM_VERSION_APPROVALS = Counter(
+    "gateway_team_version_approvals_total",
+    "Admin decisions on team-version proposals.",
+    ["outcome"],
+)
+
 # Methods that represent session lifecycle transitions.
 _SESSION_START_METHODS = frozenset({"start_session"})
 _SESSION_STOP_METHODS = frozenset({"stop_session"})

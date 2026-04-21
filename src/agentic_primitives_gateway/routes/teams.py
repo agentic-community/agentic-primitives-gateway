@@ -5,22 +5,32 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from starlette.responses import Response, StreamingResponse
 
+from agentic_primitives_gateway import metrics
 from agentic_primitives_gateway.agents.team_runner import TeamRunner
 from agentic_primitives_gateway.agents.team_store import TeamStore
 from agentic_primitives_gateway.audit.emit import emit_audit_event
 from agentic_primitives_gateway.audit.models import AuditAction, AuditOutcome, ResourceType
-from agentic_primitives_gateway.auth.access import require_access, require_owner_or_admin
+from agentic_primitives_gateway.auth.access import require_owner_or_admin
+from agentic_primitives_gateway.models.agents import ForkRequest, RejectionRequest
 from agentic_primitives_gateway.models.teams import (
     CreateTeamRequest,
+    CreateTeamVersionRequest,
+    TeamLineage,
     TeamListResponse,
     TeamRunRequest,
     TeamRunResponse,
     TeamSpec,
+    TeamVersion,
+    TeamVersionListResponse,
     UpdateTeamRequest,
 )
 from agentic_primitives_gateway.registry import registry
 from agentic_primitives_gateway.routes._background import BackgroundRunManager, reconnect_event_generator, sse_response
-from agentic_primitives_gateway.routes._helpers import require_principal
+from agentic_primitives_gateway.routes._helpers import (
+    require_admin,
+    require_principal,
+    resolve_team_spec,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/teams", tags=["teams"])
@@ -54,28 +64,51 @@ def _get_store() -> TeamStore:
     return _store
 
 
+def _ns_kind(owner_id: str) -> str:
+    """Collapse ``owner_id`` → bounded metric label (``system`` or ``user``)."""
+    return "system" if owner_id == "system" else "user"
+
+
 @router.post("", response_model=TeamSpec, status_code=201)
 async def create_team(request: CreateTeamRequest) -> TeamSpec:
+    """Create a new team identity in the caller's namespace.
+
+    See :func:`routes.agents.create_agent` for the versioning semantics.
+    """
     store = _get_store()
     principal = require_principal()
     data = request.model_dump()
     data["owner_id"] = principal.id
     spec = TeamSpec(**data)
-    existing = await store.get(spec.name)
+
+    existing = await store.get_deployed(spec.name, principal.id)
     if existing is not None:
         raise HTTPException(status_code=409, detail=f"Team '{spec.name}' already exists")
-    try:
-        created = await store.create(spec)
-    except KeyError:
-        raise HTTPException(status_code=409, detail=f"Team '{spec.name}' already exists") from None
+    version = await store.create_version(
+        name=spec.name,
+        owner_id=principal.id,
+        spec=spec,
+        created_by=principal.id,
+        commit_message="initial version",
+        auto_deploy=True,
+    )
     emit_audit_event(
         action=AuditAction.TEAM_CREATE,
         outcome=AuditOutcome.SUCCESS,
         resource_type=ResourceType.TEAM,
-        resource_id=spec.name,
-        metadata={"workers": list(spec.workers), "planner": spec.planner, "synthesizer": spec.synthesizer},
+        resource_id=f"{principal.id}:{spec.name}",
+        metadata={
+            "workers": list(spec.workers),
+            "planner": spec.planner,
+            "synthesizer": spec.synthesizer,
+            "version_id": version.version_id,
+        },
     )
-    return created
+    metrics.TEAM_VERSIONS_CREATED.labels(
+        ns_kind=_ns_kind(principal.id),
+        auto_deployed=str(version.status.value == "deployed").lower(),
+    ).inc()
+    return version.spec
 
 
 @router.get("", response_model=TeamListResponse)
@@ -87,25 +120,30 @@ async def list_teams() -> TeamListResponse:
 
 
 @router.get("/{name}/export")
-async def export_team(name: str) -> Response:
+async def export_team(name: str, owner: str | None = None) -> Response:
     """Export a team spec as a standalone Python script."""
     from agentic_primitives_gateway.agents.export import export_team as _export
     from agentic_primitives_gateway.routes.agents import _get_store as _get_agent_store
 
     store = _get_store()
-    spec = await store.get(name)
-    if spec is None:
-        raise HTTPException(status_code=404, detail=f"Team '{name}' not found")
-    require_access(require_principal(), spec.owner_id, spec.shared_with)
+    principal = require_principal()
+    spec: TeamSpec = await resolve_team_spec(store, name, principal, owner_query=owner)
 
-    # Load all referenced agent specs
+    # Load all referenced agent specs.  Workers/planner/synthesizer resolve
+    # in the team owner's namespace first, then fall back to ``system``.
     agent_store = _get_agent_store()
-    agent_names = {spec.planner, spec.synthesizer, *spec.workers}
-    agent_specs = {}
-    for aname in agent_names:
-        aspec = await agent_store.get(aname)
+    agent_refs = {spec.planner, spec.synthesizer, *spec.workers}
+    agent_specs: dict[str, Any] = {}
+    for ref in agent_refs:
+        if ":" in ref:
+            owner_id, _, bare = ref.partition(":")
+            aspec = await agent_store.resolve_qualified(owner_id, bare)
+        else:
+            aspec = await agent_store.resolve_qualified(spec.owner_id, ref)
+            if aspec is None:
+                aspec = await agent_store.resolve_qualified("system", ref)
         if aspec:
-            agent_specs[aname] = aspec
+            agent_specs[ref] = aspec
 
     code = _export(spec, agent_specs)
     return Response(
@@ -116,59 +154,79 @@ async def export_team(name: str) -> Response:
 
 
 @router.get("/{name}", response_model=TeamSpec)
-async def get_team(name: str) -> TeamSpec:
+async def get_team(name: str, owner: str | None = None) -> TeamSpec:
     store = _get_store()
-    spec = await store.get(name)
-    if spec is None:
-        raise HTTPException(status_code=404, detail=f"Team '{name}' not found")
-    require_access(require_principal(), spec.owner_id, spec.shared_with)
+    spec: TeamSpec = await resolve_team_spec(store, name, require_principal(), owner_query=owner)
     return spec
 
 
 @router.put("/{name}", response_model=TeamSpec)
-async def update_team(name: str, request: UpdateTeamRequest) -> TeamSpec:
+async def update_team(name: str, request: UpdateTeamRequest, owner: str | None = None) -> TeamSpec:
+    """Create + auto-deploy a new version of a team.  Returns 409 under the
+    admin-approval gate — see :func:`routes.agents.update_agent`.
+    """
+    from agentic_primitives_gateway.config import settings
+
     store = _get_store()
-    existing = await store.get(name)
-    if existing is None:
-        raise HTTPException(status_code=404, detail=f"Team '{name}' not found")
-    require_owner_or_admin(require_principal(), existing.owner_id)
+    principal = require_principal()
+    existing: TeamSpec = await resolve_team_spec(store, name, principal, owner_query=owner)
+    require_owner_or_admin(principal, existing.owner_id)
+
+    if settings.governance.require_admin_approval_for_deploy:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "Direct PUT is disabled while the admin-approval gate is on. Create a version via POST /versions.",
+                "versions_url": f"/api/v1/teams/{existing.owner_id}:{existing.name}/versions",
+            },
+        )
+
     updates = {k: v for k, v in request.model_dump().items() if v is not None}
-    result = await store.update(name, updates)
+    merged = existing.model_dump() | updates
+    merged["owner_id"] = existing.owner_id
+    merged["name"] = existing.name
+    new_spec = TeamSpec(**merged)
+    current_deployed = await store.get_deployed(existing.name, existing.owner_id)
+    version = await store.create_version(
+        name=existing.name,
+        owner_id=existing.owner_id,
+        spec=new_spec,
+        created_by=principal.id,
+        parent_version_id=current_deployed.version_id if current_deployed else None,
+        commit_message="updated via PUT /teams/{name}",
+        auto_deploy=True,
+    )
     emit_audit_event(
         action=AuditAction.TEAM_UPDATE,
         outcome=AuditOutcome.SUCCESS,
         resource_type=ResourceType.TEAM,
-        resource_id=name,
-        metadata={"fields": sorted(updates.keys())},
+        resource_id=f"{existing.owner_id}:{existing.name}",
+        metadata={"fields": sorted(updates.keys()), "version_id": version.version_id},
     )
-    return result
+    return version.spec
 
 
 @router.delete("/{name}")
-async def delete_team(name: str) -> dict[str, str]:
+async def delete_team(name: str, owner: str | None = None) -> dict[str, Any]:
     store = _get_store()
-    spec = await store.get(name)
-    if spec is None:
-        raise HTTPException(status_code=404, detail=f"Team '{name}' not found")
-    require_owner_or_admin(require_principal(), spec.owner_id)
-    await store.delete(name)
+    principal = require_principal()
+    spec: TeamSpec = await resolve_team_spec(store, name, principal, owner_query=owner)
+    require_owner_or_admin(principal, spec.owner_id)
+    archived = await store.archive_identity(spec.name, spec.owner_id)
     emit_audit_event(
         action=AuditAction.TEAM_DELETE,
         outcome=AuditOutcome.SUCCESS,
         resource_type=ResourceType.TEAM,
-        resource_id=name,
+        resource_id=f"{spec.owner_id}:{spec.name}",
+        metadata={"versions_archived": archived},
     )
-    return {"status": "deleted"}
+    return {"status": "deleted", "versions_archived": archived}
 
 
 @router.post("/{name}/run", response_model=TeamRunResponse)
 async def run_team(name: str, request: TeamRunRequest) -> TeamRunResponse:
     store = _get_store()
-    spec = await store.get(name)
-    if spec is None:
-        raise HTTPException(status_code=404, detail=f"Team '{name}' not found")
-    require_access(require_principal(), spec.owner_id, spec.shared_with)
-
+    spec = await resolve_team_spec(store, name, require_principal())
     return await _runner.run(team_spec=spec, message=request.message)
 
 
@@ -180,10 +238,7 @@ async def run_team_stream(name: str, request: TeamRunRequest) -> StreamingRespon
     if the client disconnects mid-stream.
     """
     store = _get_store()
-    spec = await store.get(name)
-    if spec is None:
-        raise HTTPException(status_code=404, detail=f"Team '{name}' not found")
-    require_access(require_principal(), spec.owner_id, spec.shared_with)
+    spec = await resolve_team_spec(store, name, require_principal())
 
     # Use a placeholder key since team_run_id is generated inside the runner.
     # The background task re-keys automatically when it sees team_run_id.
@@ -207,10 +262,7 @@ async def list_team_runs(name: str) -> dict:
     runs associated with this team.
     """
     store = _get_store()
-    spec = await store.get(name)
-    if spec is None:
-        raise HTTPException(status_code=404, detail=f"Team '{name}' not found")
-    require_access(require_principal(), spec.owner_id, spec.shared_with)
+    await resolve_team_spec(store, name, require_principal())
 
     runs: list[dict[str, Any]] = []
     seen_ids: set[str] = set()
@@ -252,10 +304,7 @@ async def _require_run_owner(team_run_id: str) -> None:
 async def delete_team_run(name: str, team_run_id: str) -> dict:
     """Delete a team run's data (tasks, events)."""
     store = _get_store()
-    spec = await store.get(name)
-    if spec is None:
-        raise HTTPException(status_code=404, detail=f"Team '{name}' not found")
-    require_access(require_principal(), spec.owner_id, spec.shared_with)
+    await resolve_team_spec(store, name, require_principal())
     await _require_run_owner(team_run_id)
 
     # Clean up task board
@@ -286,10 +335,7 @@ async def stream_team_run_events(name: str, team_run_id: str) -> StreamingRespon
     drop (e.g. server restart with checkpoint recovery).
     """
     store = _get_store()
-    spec = await store.get(name)
-    if spec is None:
-        raise HTTPException(status_code=404, detail=f"Team '{name}' not found")
-    require_access(require_principal(), spec.owner_id, spec.shared_with)
+    await resolve_team_spec(store, name, require_principal())
     await _require_run_owner(team_run_id)
 
     return StreamingResponse(
@@ -303,10 +349,7 @@ async def stream_team_run_events(name: str, team_run_id: str) -> StreamingRespon
 async def get_team_run_status(name: str, team_run_id: str) -> dict:
     """Check if a team run is currently active."""
     store = _get_store()
-    spec = await store.get(name)
-    if spec is None:
-        raise HTTPException(status_code=404, detail=f"Team '{name}' not found")
-    require_access(require_principal(), spec.owner_id, spec.shared_with)
+    await resolve_team_spec(store, name, require_principal())
     await _require_run_owner(team_run_id)
 
     _bg.cleanup()
@@ -323,10 +366,7 @@ async def cancel_team_run(name: str, team_run_id: str) -> dict:
     so the run stops naturally.
     """
     store = _get_store()
-    spec = await store.get(name)
-    if spec is None:
-        raise HTTPException(status_code=404, detail=f"Team '{name}' not found")
-    require_access(require_principal(), spec.owner_id, spec.shared_with)
+    await resolve_team_spec(store, name, require_principal())
     await _require_run_owner(team_run_id)
 
     # Signal the team runner to stop workers at the next checkpoint
@@ -373,10 +413,7 @@ async def cancel_team_run(name: str, team_run_id: str) -> dict:
 async def get_team_run_events(name: str, team_run_id: str) -> dict:
     """Return all recorded SSE events for a team run (for UI replay)."""
     store = _get_store()
-    spec = await store.get(name)
-    if spec is None:
-        raise HTTPException(status_code=404, detail=f"Team '{name}' not found")
-    require_access(require_principal(), spec.owner_id, spec.shared_with)
+    await resolve_team_spec(store, name, require_principal())
     await _require_run_owner(team_run_id)
 
     _bg.cleanup()
@@ -395,10 +432,7 @@ async def get_team_run_events(name: str, team_run_id: str) -> dict:
 async def get_team_run(name: str, team_run_id: str) -> dict:
     """Retrieve task board state for a completed or in-progress team run."""
     store = _get_store()
-    spec = await store.get(name)
-    if spec is None:
-        raise HTTPException(status_code=404, detail=f"Team '{name}' not found")
-    require_access(require_principal(), spec.owner_id, spec.shared_with)
+    await resolve_team_spec(store, name, require_principal())
     await _require_run_owner(team_run_id)
 
     try:
@@ -442,10 +476,7 @@ async def retry_task(name: str, team_run_id: str, task_id: str) -> StreamingResp
     agent. Returns an SSE stream of events.
     """
     store = _get_store()
-    spec = await store.get(name)
-    if spec is None:
-        raise HTTPException(status_code=404, detail=f"Team '{name}' not found")
-    require_access(require_principal(), spec.owner_id, spec.shared_with)
+    spec = await resolve_team_spec(store, name, require_principal())
     await _require_run_owner(team_run_id)
 
     queue, _ = _bg.start(
@@ -455,3 +486,238 @@ async def retry_task(name: str, team_run_id: str, task_id: str) -> StreamingResp
         record_events=True,
     )
     return sse_response(queue)
+
+
+# ── Versioning / fork / lineage ────────────────────────────────────────
+
+
+@router.get("/{name}/versions", response_model=TeamVersionListResponse)
+async def list_team_versions(name: str, owner: str | None = None) -> TeamVersionListResponse:
+    """List all versions for a team identity (all statuses)."""
+    store = _get_store()
+    principal = require_principal()
+    spec: TeamSpec = await resolve_team_spec(store, name, principal, owner_query=owner)
+    versions = await store.list_versions(spec.name, spec.owner_id)
+    return TeamVersionListResponse(versions=versions)
+
+
+@router.get("/{name}/versions/{version_id}", response_model=TeamVersion)
+async def get_team_version(name: str, version_id: str, owner: str | None = None) -> TeamVersion:
+    store = _get_store()
+    principal = require_principal()
+    spec: TeamSpec = await resolve_team_spec(store, name, principal, owner_query=owner)
+    v = await store.get_version(spec.name, spec.owner_id, version_id)
+    if v is None:
+        raise HTTPException(status_code=404, detail=f"Version '{version_id}' not found")
+    return v
+
+
+@router.post("/{name}/versions", response_model=TeamVersion, status_code=201)
+async def create_team_version(name: str, request: CreateTeamVersionRequest, owner: str | None = None) -> TeamVersion:
+    """Create a new version of a team.
+
+    Auto-deploys when the admin-approval gate is off; otherwise lands as
+    ``draft`` requiring ``propose`` → ``approve`` → ``deploy``.
+    """
+    store = _get_store()
+    principal = require_principal()
+    existing: TeamSpec = await resolve_team_spec(store, name, principal, owner_query=owner)
+    require_owner_or_admin(principal, existing.owner_id)
+
+    updates = {
+        k: v for k, v in request.model_dump(exclude={"commit_message", "parent_version_id"}).items() if v is not None
+    }
+    merged = existing.model_dump() | updates
+    merged["owner_id"] = existing.owner_id
+    merged["name"] = existing.name
+    new_spec = TeamSpec(**merged)
+    parent_id = request.parent_version_id
+    if parent_id is None:
+        current_deployed = await store.get_deployed(existing.name, existing.owner_id)
+        parent_id = current_deployed.version_id if current_deployed else None
+    version = await store.create_version(
+        name=existing.name,
+        owner_id=existing.owner_id,
+        spec=new_spec,
+        created_by=principal.id,
+        parent_version_id=parent_id,
+        commit_message=request.commit_message,
+        auto_deploy=True,
+    )
+    emit_audit_event(
+        action=AuditAction.TEAM_VERSION_CREATE,
+        outcome=AuditOutcome.SUCCESS,
+        resource_type=ResourceType.TEAM,
+        resource_id=f"{existing.owner_id}:{existing.name}",
+        metadata={
+            "version_id": version.version_id,
+            "version_number": version.version_number,
+            "parent_version_id": parent_id,
+            "commit_message": request.commit_message,
+            "auto_deployed": version.status.value == "deployed",
+        },
+    )
+    metrics.TEAM_VERSIONS_CREATED.labels(
+        ns_kind=_ns_kind(existing.owner_id),
+        auto_deployed=str(version.status.value == "deployed").lower(),
+    ).inc()
+    return version
+
+
+@router.post("/{name}/versions/{version_id}/propose", response_model=TeamVersion)
+async def propose_team_version(name: str, version_id: str, owner: str | None = None) -> TeamVersion:
+    store = _get_store()
+    principal = require_principal()
+    spec: TeamSpec = await resolve_team_spec(store, name, principal, owner_query=owner)
+    require_owner_or_admin(principal, spec.owner_id)
+    try:
+        version = await store.propose_version(spec.name, spec.owner_id, version_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Version '{version_id}' not found") from None
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    emit_audit_event(
+        action=AuditAction.TEAM_VERSION_PROPOSE,
+        outcome=AuditOutcome.SUCCESS,
+        resource_type=ResourceType.TEAM,
+        resource_id=f"{spec.owner_id}:{spec.name}",
+        metadata={"version_id": version.version_id, "version_number": version.version_number},
+    )
+    return version
+
+
+@router.post("/{name}/versions/{version_id}/approve", response_model=TeamVersion)
+async def approve_team_version(name: str, version_id: str, owner: str | None = None) -> TeamVersion:
+    principal = require_admin()
+    store = _get_store()
+    spec: TeamSpec = await resolve_team_spec(store, name, principal, owner_query=owner)
+    try:
+        version = await store.approve_version(spec.name, spec.owner_id, version_id, approver_id=principal.id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Version '{version_id}' not found") from None
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    emit_audit_event(
+        action=AuditAction.TEAM_VERSION_APPROVE,
+        outcome=AuditOutcome.SUCCESS,
+        resource_type=ResourceType.TEAM,
+        resource_id=f"{spec.owner_id}:{spec.name}",
+        metadata={
+            "version_id": version.version_id,
+            "version_number": version.version_number,
+            "approver_id": principal.id,
+        },
+    )
+    metrics.TEAM_VERSION_APPROVALS.labels(outcome="approved").inc()
+    return version
+
+
+@router.post("/{name}/versions/{version_id}/reject", response_model=TeamVersion)
+async def reject_team_version(
+    name: str, version_id: str, request: RejectionRequest, owner: str | None = None
+) -> TeamVersion:
+    principal = require_admin()
+    store = _get_store()
+    spec: TeamSpec = await resolve_team_spec(store, name, principal, owner_query=owner)
+    try:
+        version = await store.reject_version(
+            spec.name,
+            spec.owner_id,
+            version_id,
+            approver_id=principal.id,
+            reason=request.reason,
+        )
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Version '{version_id}' not found") from None
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    emit_audit_event(
+        action=AuditAction.TEAM_VERSION_REJECT,
+        outcome=AuditOutcome.SUCCESS,
+        resource_type=ResourceType.TEAM,
+        resource_id=f"{spec.owner_id}:{spec.name}",
+        metadata={
+            "version_id": version.version_id,
+            "version_number": version.version_number,
+            "approver_id": principal.id,
+            "reason_truncated": request.reason[:200],
+        },
+    )
+    metrics.TEAM_VERSION_APPROVALS.labels(outcome="rejected").inc()
+    return version
+
+
+@router.post("/{name}/versions/{version_id}/deploy", response_model=TeamVersion)
+async def deploy_team_version(name: str, version_id: str, owner: str | None = None) -> TeamVersion:
+    store = _get_store()
+    principal = require_principal()
+    spec: TeamSpec = await resolve_team_spec(store, name, principal, owner_query=owner)
+    require_owner_or_admin(principal, spec.owner_id)
+    previous = await store.get_deployed(spec.name, spec.owner_id)
+    try:
+        version = await store.deploy_version(spec.name, spec.owner_id, version_id, deployed_by=principal.id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Version '{version_id}' not found") from None
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    emit_audit_event(
+        action=AuditAction.TEAM_VERSION_DEPLOY,
+        outcome=AuditOutcome.SUCCESS,
+        resource_type=ResourceType.TEAM,
+        resource_id=f"{spec.owner_id}:{spec.name}",
+        metadata={
+            "version_id": version.version_id,
+            "version_number": version.version_number,
+            "previous_version_id": previous.version_id if previous else None,
+        },
+    )
+    metrics.TEAM_VERSION_APPROVALS.labels(outcome="deployed").inc()
+    return version
+
+
+@router.post("/{name}/fork", response_model=TeamVersion, status_code=201)
+async def fork_team(name: str, request: ForkRequest, owner: str | None = None) -> TeamVersion:
+    """Fork an accessible team into the caller's namespace.
+
+    Worker/planner/synthesizer references in the forked spec are
+    auto-qualified to the source owner's namespace so the forked team
+    keeps working.
+    """
+    store = _get_store()
+    principal = require_principal()
+    source: TeamSpec = await resolve_team_spec(store, name, principal, owner_query=owner)
+    try:
+        version = await store.fork(
+            source_name=source.name,
+            source_owner_id=source.owner_id,
+            target_owner_id=principal.id,
+            target_name=request.target_name,
+            created_by=principal.id,
+            commit_message=request.commit_message,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
+    emit_audit_event(
+        action=AuditAction.TEAM_FORK,
+        outcome=AuditOutcome.SUCCESS,
+        resource_type=ResourceType.TEAM,
+        resource_id=f"{principal.id}:{version.team_name}",
+        metadata={
+            "source_owner_id": source.owner_id,
+            "source_name": source.name,
+            "source_version_id": version.forked_from.version_id if version.forked_from else None,
+            "target_owner_id": principal.id,
+            "target_name": version.team_name,
+            "target_version_id": version.version_id,
+        },
+    )
+    metrics.TEAM_FORKS.labels(source_ns_kind=_ns_kind(source.owner_id)).inc()
+    return version
+
+
+@router.get("/{name}/lineage", response_model=TeamLineage)
+async def get_team_lineage(name: str, owner: str | None = None) -> TeamLineage:
+    store = _get_store()
+    principal = require_principal()
+    spec: TeamSpec = await resolve_team_spec(store, name, principal, owner_query=owner)
+    return await store.get_lineage_model(spec.name, spec.owner_id)

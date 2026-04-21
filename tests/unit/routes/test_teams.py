@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from agentic_primitives_gateway.agents.team_store import FileTeamStore
+from agentic_primitives_gateway.agents.file_store import FileTeamStore
 from agentic_primitives_gateway.main import app
 from agentic_primitives_gateway.models.teams import TeamRunPhase, TeamRunResponse
 from agentic_primitives_gateway.routes import teams as teams_module
@@ -366,8 +366,10 @@ class TestCancelTeamRun:
         from agentic_primitives_gateway.auth.models import AuthenticatedPrincipal
 
         non_admin = AuthenticatedPrincipal(id="user1", type="user", scopes=frozenset())
+        # The team was created under the noop owner namespace; a non-admin
+        # user must address it qualified to pass through route resolution.
         with patch("agentic_primitives_gateway.routes.teams.require_principal", return_value=non_admin):
-            resp = teams_client.delete("/api/v1/teams/test-team/runs/run-xyz/cancel")
+            resp = teams_client.delete("/api/v1/teams/noop:test-team/runs/run-xyz/cancel")
         assert resp.status_code == 403
 
         # Clean up

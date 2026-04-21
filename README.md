@@ -156,9 +156,10 @@ The gateway emits structured audit events, Prometheus metrics, and JSON logs for
 
 | Subsystem | What it records | Default backend |
 |---|---|---|
-| **Audit events** | `auth.*`, `policy.*`, `credential.*`, `agent.run.*`, `team.run.*`, `tool.call`, `llm.generate`, `http.request`, `provider.call`, `resource.access.denied` | `stdout_json` (always on); pluggable sinks: `file`, `redis_stream`, `observability` |
-| **Metrics** | `gateway_auth_events_total`, `gateway_policy_decisions_total`, `gateway_credential_operations_total`, `gateway_agent_runs_total`, `gateway_team_runs_total`, `gateway_tool_calls_total`, `gateway_llm_{requests,tokens}_total`, `gateway_access_denials_total`, plus audit-pipeline health | Prometheus scrape at `/metrics` |
+| **Audit events** | `auth.*`, `policy.*`, `credential.*`, `agent.run.*`, `team.run.*`, `agent.version.*`, `team.version.*`, `{agent,team}.fork`, `tool.call`, `llm.generate`, `http.request`, `provider.call`, `resource.access.denied` | `stdout_json` (always on); pluggable sinks: `file`, `redis_stream`, `observability` |
+| **Metrics** | `gateway_auth_events_total`, `gateway_policy_decisions_total`, `gateway_credential_operations_total`, `gateway_agent_runs_total`, `gateway_team_runs_total`, `gateway_{agent,team}_versions_created_total`, `gateway_{agent,team}_forks_total`, `gateway_{agent,team}_version_approvals_total`, `gateway_tool_calls_total`, `gateway_llm_{requests,tokens}_total`, `gateway_access_denials_total`, plus audit-pipeline health | Prometheus scrape at `/metrics` |
 | **Logs** | Structured JSON with `request_id`, `correlation_id`, `principal_id` on every line; secret scrubbing filter enabled by default | stdout (opt-in via `logging.format: json`) |
+| **Versioning + approval** | Immutable `AgentVersion` / `TeamVersion` records, fork lineage DAG, optional admin-approval gate on deploy | Redis or file-backed spec stores; `/ui/agents/{name}/lineage` + `/ui/admin/proposals` |
 
 See the [Governance Guide](https://agentic-community.github.io/agentic-primitives-gateway/concepts/governance/) for the architecture, [Observability Guide](https://agentic-community.github.io/agentic-primitives-gateway/guides/observability/) for SIEM/Loki/Datadog/CloudWatch recipes, and [Compliance Guide](https://agentic-community.github.io/agentic-primitives-gateway/guides/compliance/) for SOC 2 / GDPR alignment.
 
@@ -188,6 +189,8 @@ Key capabilities:
 - **User-scoped memory** — automatic per-user isolation in multi-tenant deployments
 - **Durable execution** — Redis checkpointing with cross-replica recovery
 - **Background runs** — agent/team runs continue if the client disconnects
+- **Versioning + fork + lineage** — every edit produces an immutable `AgentVersion`; identities are owner-scoped so users can fork shared agents into their own namespace with auto-qualified sub-refs; `/ui/agents/{name}/lineage` renders the fork DAG
+- **Admin-approval gate** (opt-in) — `governance.require_admin_approval_for_deploy: true` forces deploys through a propose → approve → deploy workflow with `/ui/admin/proposals`
 
 See the [Agents Guide](https://agentic-community.github.io/agentic-primitives-gateway/concepts/agents/) and [Teams Guide](https://agentic-community.github.io/agentic-primitives-gateway/concepts/teams/) for full documentation.
 
