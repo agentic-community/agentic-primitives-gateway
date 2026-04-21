@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api/client";
 import type {
@@ -7,6 +7,7 @@ import type {
   TeamSpec,
   UpdateTeamRequest,
 } from "../api/types";
+import { useAuth } from "../auth/AuthProvider";
 import LoadingSpinner from "../components/LoadingSpinner";
 import SharedWithInput from "../components/SharedWithInput";
 import { useTeams } from "../hooks/useTeams";
@@ -325,12 +326,25 @@ function TeamForm({ initial, mode: modeProp, onDone, onCancel }: TeamFormProps) 
 
 export default function TeamList() {
   const { teams, loading, error, refresh } = useTeams();
+  const { principalId } = useAuth();
   const [deleting, setDeleting] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
   // Same pattern as AgentList: fork opens a prefilled form; no call to
   // the server until the user clicks Save.
   const [forking, setForking] = useState<TeamSpec | null>(null);
+
+  const { mine, system, shared } = useMemo(() => {
+    const mine: TeamSpec[] = [];
+    const system: TeamSpec[] = [];
+    const shared: TeamSpec[] = [];
+    for (const t of teams) {
+      if (t.owner_id === principalId && principalId) mine.push(t);
+      else if (t.owner_id === "system") system.push(t);
+      else shared.push(t);
+    }
+    return { mine, system, shared };
+  }, [teams, principalId]);
 
   const handleDelete = useCallback(
     async (name: string) => {
@@ -349,6 +363,43 @@ export default function TeamList() {
   );
 
   if (loading) return <LoadingSpinner className="mt-32" />;
+
+  const renderRow = (team: TeamSpec, canEditOrDelete: boolean) => (
+    <div key={`${team.owner_id}:${team.name}`}>
+      {editing === team.name ? (
+        <TeamForm
+          initial={team}
+          mode="edit"
+          onDone={() => { setEditing(null); refresh(); }}
+          onCancel={() => setEditing(null)}
+        />
+      ) : forking &&
+        forking.owner_id === team.owner_id &&
+        forking.name === team.name ? (
+        <TeamForm
+          initial={team}
+          mode="fork"
+          onDone={() => { setForking(null); refresh(); }}
+          onCancel={() => setForking(null)}
+        />
+      ) : (
+        <TeamRow
+          team={team}
+          canEditOrDelete={canEditOrDelete}
+          deleting={deleting === team.name}
+          onEdit={() => { setEditing(team.name); setCreating(false); }}
+          onFork={() => {
+            setForking(team);
+            setEditing(null);
+            setCreating(false);
+          }}
+          onDelete={() => handleDelete(team.name)}
+        />
+      )}
+    </div>
+  );
+
+  const totalVisible = mine.length + system.length + shared.length;
 
   return (
     <div className="max-w-4xl space-y-4">
@@ -375,142 +426,194 @@ export default function TeamList() {
         />
       )}
 
-      {teams.length === 0 && !creating ? (
+      {totalVisible === 0 && !creating ? (
         <p className="text-sm text-gray-500 dark:text-gray-400 py-8 text-center">
           No teams configured. Create one to get started.
         </p>
       ) : (
-        <div className="space-y-2">
-          {teams.map((team) => (
-            <div key={`${team.owner_id}:${team.name}`}>
-              {editing === team.name ? (
-                <TeamForm
-                  initial={team}
-                  mode="edit"
-                  onDone={() => { setEditing(null); refresh(); }}
-                  onCancel={() => setEditing(null)}
-                />
-              ) : forking &&
-                forking.owner_id === team.owner_id &&
-                forking.name === team.name ? (
-                <TeamForm
-                  initial={team}
-                  mode="fork"
-                  onDone={() => { setForking(null); refresh(); }}
-                  onCancel={() => setForking(null)}
-                />
-              ) : (
-                <div className="rounded-lg border border-gray-200 dark:border-gray-800 px-4 py-3">
-                  <div className="flex items-center justify-between gap-4">
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono text-sm font-medium text-gray-900 dark:text-gray-100">
-                          {team.name}
-                        </span>
-                        {team.description && (
-                          <span className="text-xs text-gray-400 dark:text-gray-500 truncate">
-                            {team.description}
-                          </span>
-                        )}
-                      </div>
-                      <div className="flex flex-wrap items-center gap-1.5 mt-1">
-                        <span className="rounded bg-blue-100 dark:bg-blue-900/30 px-1.5 py-0.5 text-[10px] font-mono text-blue-600 dark:text-blue-400">
-                          planner: {team.planner}
-                        </span>
-                        <span className="rounded bg-green-100 dark:bg-green-900/30 px-1.5 py-0.5 text-[10px] font-mono text-green-600 dark:text-green-400">
-                          synth: {team.synthesizer}
-                        </span>
-                        {team.workers.map((w) => (
-                          <span
-                            key={w}
-                            className="rounded bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 text-[10px] font-mono text-gray-500 dark:text-gray-400"
-                          >
-                            {w}
-                          </span>
-                        ))}
-                        {team.shared_with?.length > 0 ? (
-                          team.shared_with.includes("*") ? (
-                            <span className="rounded bg-green-100 dark:bg-green-900/30 px-1.5 py-0.5 text-[10px] font-mono text-green-600 dark:text-green-400">
-                              public
-                            </span>
-                          ) : (
-                            team.shared_with.map((g) => (
-                              <span
-                                key={g}
-                                className="rounded bg-indigo-100 dark:bg-indigo-900/30 px-1.5 py-0.5 text-[10px] font-mono text-indigo-600 dark:text-indigo-400"
-                              >
-                                {g}
-                              </span>
-                            ))
-                          )
-                        ) : (
-                          <span className="rounded bg-yellow-100 dark:bg-yellow-900/30 px-1.5 py-0.5 text-[10px] font-mono text-yellow-600 dark:text-yellow-400">
-                            private
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-1.5 shrink-0">
-                      <Link
-                        to={`/teams/${team.owner_id}:${team.name}/versions`}
-                        className="rounded border border-gray-300 dark:border-gray-700 px-2 py-1 text-xs text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"
-                        title="Version history"
-                      >
-                        Versions
-                      </Link>
-                      <Link
-                        to={`/teams/${team.owner_id}:${team.name}/lineage`}
-                        className="rounded border border-gray-300 dark:border-gray-700 px-2 py-1 text-xs text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"
-                        title="Lineage graph"
-                      >
-                        Lineage
-                      </Link>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setForking(team);
-                          setEditing(null);
-                          setCreating(false);
-                        }}
-                        className="rounded border border-gray-300 dark:border-gray-700 px-2 py-1 text-xs text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"
-                        title="Fork into my namespace"
-                      >
-                        Fork
-                      </button>
-                      <Link
-                        to={`/teams/${team.name}/run`}
-                        className="rounded bg-indigo-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-indigo-700"
-                      >
-                        Run
-                      </Link>
-                      <button
-                        onClick={() => api.exportTeam(team.name)}
-                        className="rounded border border-gray-300 dark:border-gray-700 px-2 py-1 text-xs text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"
-                        title="Export as Python script"
-                      >
-                        Export
-                      </button>
-                      <button
-                        onClick={() => { setEditing(team.name); setCreating(false); }}
-                        className="rounded border border-gray-300 dark:border-gray-700 px-2.5 py-1 text-xs text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"
-                      >
-                        Edit
-                      </button>
-                      <button
-                        onClick={() => handleDelete(team.name)}
-                        disabled={deleting === team.name}
-                        className="rounded border border-red-300 dark:border-red-800 px-2.5 py-1 text-xs text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 disabled:opacity-50"
-                      >
-                        {deleting === team.name ? "..." : "Delete"}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
-          ))}
+        <div className="space-y-6">
+          {mine.length > 0 && (
+            <TeamSection title="My Teams" count={mine.length}>
+              {mine.map((t) => renderRow(t, true))}
+            </TeamSection>
+          )}
+          {shared.length > 0 && (
+            <TeamSection
+              title="Shared with me"
+              count={shared.length}
+              subtitle="Teams other users shared with you. Fork to make your own editable copy."
+            >
+              {shared.map((t) => renderRow(t, false))}
+            </TeamSection>
+          )}
+          {system.length > 0 && (
+            <TeamSection
+              title="System Teams"
+              count={system.length}
+              subtitle="Pre-seeded from config. Fork to customize in your namespace."
+            >
+              {system.map((t) => renderRow(t, false))}
+            </TeamSection>
+          )}
         </div>
       )}
+    </div>
+  );
+}
+
+function TeamSection({
+  title,
+  count,
+  subtitle,
+  children,
+}: {
+  title: string;
+  count: number;
+  subtitle?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section>
+      <header className="mb-2">
+        <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+          {title}{" "}
+          <span className="font-mono text-[10px] text-gray-400 dark:text-gray-500">
+            ({count})
+          </span>
+        </h2>
+        {subtitle && (
+          <p className="text-[11px] text-gray-400 dark:text-gray-500">
+            {subtitle}
+          </p>
+        )}
+      </header>
+      <div className="space-y-2">{children}</div>
+    </section>
+  );
+}
+
+function TeamRow({
+  team,
+  canEditOrDelete,
+  deleting,
+  onEdit,
+  onFork,
+  onDelete,
+}: {
+  team: TeamSpec;
+  canEditOrDelete: boolean;
+  deleting: boolean;
+  onEdit: () => void;
+  onFork: () => void;
+  onDelete: () => void;
+}) {
+  const qualified = `${team.owner_id}:${team.name}`;
+  return (
+    <div className="rounded-lg border border-gray-200 dark:border-gray-800 px-4 py-3">
+      <div className="flex items-center justify-between gap-4">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <span className="font-mono text-sm font-medium text-gray-900 dark:text-gray-100">
+              {team.name}
+            </span>
+            {team.description && (
+              <span className="text-xs text-gray-400 dark:text-gray-500 truncate">
+                {team.description}
+              </span>
+            )}
+          </div>
+          <div className="flex flex-wrap items-center gap-1.5 mt-1">
+            <span className="rounded bg-blue-100 dark:bg-blue-900/30 px-1.5 py-0.5 text-[10px] font-mono text-blue-600 dark:text-blue-400">
+              planner: {team.planner}
+            </span>
+            <span className="rounded bg-green-100 dark:bg-green-900/30 px-1.5 py-0.5 text-[10px] font-mono text-green-600 dark:text-green-400">
+              synth: {team.synthesizer}
+            </span>
+            {team.workers.map((w) => (
+              <span
+                key={w}
+                className="rounded bg-gray-100 dark:bg-gray-800 px-1.5 py-0.5 text-[10px] font-mono text-gray-500 dark:text-gray-400"
+              >
+                {w}
+              </span>
+            ))}
+            {team.shared_with?.length > 0 ? (
+              team.shared_with.includes("*") ? (
+                <span className="rounded bg-green-100 dark:bg-green-900/30 px-1.5 py-0.5 text-[10px] font-mono text-green-600 dark:text-green-400">
+                  public
+                </span>
+              ) : (
+                team.shared_with.map((g) => (
+                  <span
+                    key={g}
+                    className="rounded bg-indigo-100 dark:bg-indigo-900/30 px-1.5 py-0.5 text-[10px] font-mono text-indigo-600 dark:text-indigo-400"
+                  >
+                    {g}
+                  </span>
+                ))
+              )
+            ) : (
+              <span className="rounded bg-yellow-100 dark:bg-yellow-900/30 px-1.5 py-0.5 text-[10px] font-mono text-yellow-600 dark:text-yellow-400">
+                private
+              </span>
+            )}
+          </div>
+        </div>
+        <div className="flex items-center gap-1.5 shrink-0">
+          <Link
+            to={`/teams/${qualified}/versions`}
+            className="rounded border border-gray-300 dark:border-gray-700 px-2 py-1 text-xs text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"
+            title="Version history"
+          >
+            Versions
+          </Link>
+          <Link
+            to={`/teams/${qualified}/lineage`}
+            className="rounded border border-gray-300 dark:border-gray-700 px-2 py-1 text-xs text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"
+            title="Lineage graph"
+          >
+            Lineage
+          </Link>
+          <button
+            type="button"
+            onClick={onFork}
+            className="rounded border border-gray-300 dark:border-gray-700 px-2 py-1 text-xs text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"
+            title="Fork into my namespace"
+          >
+            Fork
+          </button>
+          <Link
+            to={`/teams/${qualified}/run`}
+            className="rounded bg-indigo-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-indigo-700"
+          >
+            Run
+          </Link>
+          <button
+            onClick={() => api.exportTeam(team.name)}
+            className="rounded border border-gray-300 dark:border-gray-700 px-2 py-1 text-xs text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"
+            title="Export as Python script"
+          >
+            Export
+          </button>
+          {canEditOrDelete && (
+            <>
+              <button
+                onClick={onEdit}
+                className="rounded border border-gray-300 dark:border-gray-700 px-2.5 py-1 text-xs text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"
+              >
+                Edit
+              </button>
+              <button
+                onClick={onDelete}
+                disabled={deleting}
+                className="rounded border border-red-300 dark:border-red-800 px-2.5 py-1 text-xs text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 disabled:opacity-50"
+              >
+                {deleting ? "..." : "Delete"}
+              </button>
+            </>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

@@ -1,7 +1,8 @@
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api/client";
 import type { AgentSpec, PrimitiveConfig, UpdateAgentRequest } from "../api/types";
+import { useAuth } from "../auth/AuthProvider";
 import LoadingSpinner from "../components/LoadingSpinner";
 import PrimitivesSelector from "../components/PrimitivesSelector";
 import SharedWithInput from "../components/SharedWithInput";
@@ -251,12 +252,32 @@ function AgentForm({ initial, mode: modeProp, onDone, onCancel }: AgentFormProps
 
 export default function AgentList() {
   const { agents, loading, error, refresh } = useAgents();
+  const { principalId, principalGroups } = useAuth();
   const [deleting, setDeleting] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
   // When set, we render the AgentForm in "fork" mode prefilled from this
   // agent.  The fork request doesn't fire until the user clicks Save.
   const [forking, setForking] = useState<AgentSpec | null>(null);
+
+  // Partition by ownership:
+  //   mine   → agent.owner_id === the caller's principal id
+  //   system → owner_id == "system" (YAML-seeded)
+  //   shared → everything else the caller can see; the server's list
+  //            already filtered to accessible specs, so anything that
+  //            isn't mine or system reached us via shared_with or an
+  //            admin scope.
+  const { mine, system, shared } = useMemo(() => {
+    const mine: AgentSpec[] = [];
+    const system: AgentSpec[] = [];
+    const shared: AgentSpec[] = [];
+    for (const a of agents) {
+      if (a.owner_id === principalId && principalId) mine.push(a);
+      else if (a.owner_id === "system") system.push(a);
+      else shared.push(a);
+    }
+    return { mine, system, shared };
+  }, [agents, principalId, principalGroups]);
 
   const handleDelete = useCallback(
     async (name: string) => {
@@ -275,6 +296,43 @@ export default function AgentList() {
   );
 
   if (loading) return <LoadingSpinner className="mt-32" />;
+
+  const renderRow = (agent: AgentSpec, canEditOrDelete: boolean) => (
+    <div key={`${agent.owner_id}:${agent.name}`}>
+      {editing === agent.name ? (
+        <AgentForm
+          initial={agent}
+          mode="edit"
+          onDone={() => { setEditing(null); refresh(); }}
+          onCancel={() => setEditing(null)}
+        />
+      ) : forking &&
+        forking.owner_id === agent.owner_id &&
+        forking.name === agent.name ? (
+        <AgentForm
+          initial={agent}
+          mode="fork"
+          onDone={() => { setForking(null); refresh(); }}
+          onCancel={() => setForking(null)}
+        />
+      ) : (
+        <AgentRow
+          agent={agent}
+          canEditOrDelete={canEditOrDelete}
+          deleting={deleting === agent.name}
+          onEdit={() => { setEditing(agent.name); setCreating(false); }}
+          onFork={() => {
+            setForking(agent);
+            setEditing(null);
+            setCreating(false);
+          }}
+          onDelete={() => handleDelete(agent.name)}
+        />
+      )}
+    </div>
+  );
+
+  const totalVisible = mine.length + system.length + shared.length;
 
   return (
     <div className="max-w-4xl space-y-4">
@@ -303,31 +361,89 @@ export default function AgentList() {
         />
       )}
 
-      {agents.length === 0 && !creating ? (
+      {totalVisible === 0 && !creating ? (
         <p className="text-sm text-gray-500 dark:text-gray-400 py-8 text-center">
           No agents configured. Create one to get started.
         </p>
       ) : (
-        <div className="space-y-2">
-          {agents.map((agent) => (
-            <div key={`${agent.owner_id}:${agent.name}`}>
-              {editing === agent.name ? (
-                <AgentForm
-                  initial={agent}
-                  mode="edit"
-                  onDone={() => { setEditing(null); refresh(); }}
-                  onCancel={() => setEditing(null)}
-                />
-              ) : forking &&
-                forking.owner_id === agent.owner_id &&
-                forking.name === agent.name ? (
-                <AgentForm
-                  initial={agent}
-                  mode="fork"
-                  onDone={() => { setForking(null); refresh(); }}
-                  onCancel={() => setForking(null)}
-                />
-              ) : (
+        <div className="space-y-6">
+          {mine.length > 0 && (
+            <Section title="My Agents" count={mine.length}>
+              {mine.map((a) => renderRow(a, true))}
+            </Section>
+          )}
+          {shared.length > 0 && (
+            <Section
+              title="Shared with me"
+              count={shared.length}
+              subtitle="Agents other users shared with you. Fork to make your own editable copy."
+            >
+              {shared.map((a) => renderRow(a, false))}
+            </Section>
+          )}
+          {system.length > 0 && (
+            <Section
+              title="System Agents"
+              count={system.length}
+              subtitle="Pre-seeded from config. Fork to customize in your namespace."
+            >
+              {system.map((a) => renderRow(a, false))}
+            </Section>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Section({
+  title,
+  count,
+  subtitle,
+  children,
+}: {
+  title: string;
+  count: number;
+  subtitle?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section>
+      <header className="mb-2">
+        <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
+          {title}{" "}
+          <span className="font-mono text-[10px] text-gray-400 dark:text-gray-500">
+            ({count})
+          </span>
+        </h2>
+        {subtitle && (
+          <p className="text-[11px] text-gray-400 dark:text-gray-500">
+            {subtitle}
+          </p>
+        )}
+      </header>
+      <div className="space-y-2">{children}</div>
+    </section>
+  );
+}
+
+function AgentRow({
+  agent,
+  canEditOrDelete,
+  deleting,
+  onEdit,
+  onFork,
+  onDelete,
+}: {
+  agent: AgentSpec;
+  canEditOrDelete: boolean;
+  deleting: boolean;
+  onEdit: () => void;
+  onFork: () => void;
+  onDelete: () => void;
+}) {
+  const qualified = `${agent.owner_id}:${agent.name}`;
+  return (
                 <div className="rounded-lg border border-gray-200 dark:border-gray-800 px-4 py-3">
                   <div className="flex items-center justify-between gap-4">
                     <div className="min-w-0 flex-1">
@@ -380,60 +496,54 @@ export default function AgentList() {
                         )}
                       </div>
                     </div>
-                    <div className="flex items-center gap-1.5 shrink-0">
-                      <Link
-                        to={`/agents/${agent.owner_id}:${agent.name}/versions`}
-                        className="rounded border border-gray-300 dark:border-gray-700 px-2 py-1 text-xs text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"
-                        title="Version history"
-                      >
-                        Versions
-                      </Link>
-                      <Link
-                        to={`/agents/${agent.owner_id}:${agent.name}/lineage`}
-                        className="rounded border border-gray-300 dark:border-gray-700 px-2 py-1 text-xs text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"
-                        title="Lineage graph"
-                      >
-                        Lineage
-                      </Link>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setForking(agent);
-                          setEditing(null);
-                          setCreating(false);
-                        }}
-                        className="rounded border border-gray-300 dark:border-gray-700 px-2 py-1 text-xs text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"
-                        title="Fork into my namespace"
-                      >
-                        Fork
-                      </button>
-                      <Link
-                        to={`/agents/${agent.name}/chat`}
-                        className="rounded bg-indigo-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-indigo-700"
-                      >
-                        Chat
-                      </Link>
-                      <button
-                        onClick={() => { setEditing(agent.name); setCreating(false); }}
-                        className="rounded border border-gray-300 dark:border-gray-700 px-2.5 py-1 text-xs text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"
-                      >
-                        Edit
-                      </button>
-                      <button
-                        onClick={() => handleDelete(agent.name)}
-                        disabled={deleting === agent.name}
-                        className="rounded border border-red-300 dark:border-red-800 px-2.5 py-1 text-xs text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 disabled:opacity-50"
-                      >
-                        {deleting === agent.name ? "..." : "Delete"}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
+      <div className="flex items-center gap-1.5 shrink-0">
+        <Link
+          to={`/agents/${qualified}/versions`}
+          className="rounded border border-gray-300 dark:border-gray-700 px-2 py-1 text-xs text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"
+          title="Version history"
+        >
+          Versions
+        </Link>
+        <Link
+          to={`/agents/${qualified}/lineage`}
+          className="rounded border border-gray-300 dark:border-gray-700 px-2 py-1 text-xs text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"
+          title="Lineage graph"
+        >
+          Lineage
+        </Link>
+        <button
+          type="button"
+          onClick={onFork}
+          className="rounded border border-gray-300 dark:border-gray-700 px-2 py-1 text-xs text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"
+          title="Fork into my namespace"
+        >
+          Fork
+        </button>
+        <Link
+          to={`/agents/${qualified}/chat`}
+          className="rounded bg-indigo-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-indigo-700"
+        >
+          Chat
+        </Link>
+        {canEditOrDelete && (
+          <>
+            <button
+              onClick={onEdit}
+              className="rounded border border-gray-300 dark:border-gray-700 px-2.5 py-1 text-xs text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"
+            >
+              Edit
+            </button>
+            <button
+              onClick={onDelete}
+              disabled={deleting}
+              className="rounded border border-red-300 dark:border-red-800 px-2.5 py-1 text-xs text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 disabled:opacity-50"
+            >
+              {deleting ? "..." : "Delete"}
+            </button>
+          </>
+        )}
+      </div>
+      </div>
     </div>
   );
 }
