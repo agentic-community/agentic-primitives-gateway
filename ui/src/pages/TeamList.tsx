@@ -134,7 +134,13 @@ function TeamForm({ initial, mode: modeProp, onDone, onCancel }: TeamFormProps) 
             shared_with: sharedWith,
             checkpointing_enabled: checkpointingEnabled,
           };
-          await api.updateTeam(name, updates);
+          // Edit mode targets the identity we loaded from — use the
+          // qualified addr so we don't accidentally update a different
+          // owner's team that happens to share the bare name.
+          const target = initial
+            ? `${initial.owner_id}:${initial.name}`
+            : name;
+          await api.updateTeam(target, updates);
         } else if (isFork && initial) {
           // Fork first, then layer edits on top as a new version only if
           // the user changed something.  We send ONLY the fields that
@@ -346,12 +352,15 @@ export default function TeamList() {
     return { mine, system, shared };
   }, [teams, principalId]);
 
+  // ``editing`` / ``deleting`` / ``forking`` are keyed by the *qualified*
+  // identity ``"{owner_id}:{name}"`` so a forked team and its source
+  // don't trigger the same state when they share a bare name.
   const handleDelete = useCallback(
-    async (name: string) => {
-      if (!confirm(`Delete team "${name}"?`)) return;
-      setDeleting(name);
+    async (qualified: string, displayName: string) => {
+      if (!confirm(`Delete team "${displayName}"?`)) return;
+      setDeleting(qualified);
       try {
-        await api.deleteTeam(name);
+        await api.deleteTeam(qualified);
         refresh();
       } catch {
         // handled via refresh
@@ -364,40 +373,43 @@ export default function TeamList() {
 
   if (loading) return <LoadingSpinner className="mt-32" />;
 
-  const renderRow = (team: TeamSpec, canEditOrDelete: boolean) => (
-    <div key={`${team.owner_id}:${team.name}`}>
-      {editing === team.name ? (
-        <TeamForm
-          initial={team}
-          mode="edit"
-          onDone={() => { setEditing(null); refresh(); }}
-          onCancel={() => setEditing(null)}
-        />
-      ) : forking &&
-        forking.owner_id === team.owner_id &&
-        forking.name === team.name ? (
-        <TeamForm
-          initial={team}
-          mode="fork"
-          onDone={() => { setForking(null); refresh(); }}
-          onCancel={() => setForking(null)}
-        />
-      ) : (
-        <TeamRow
-          team={team}
-          canEditOrDelete={canEditOrDelete}
-          deleting={deleting === team.name}
-          onEdit={() => { setEditing(team.name); setCreating(false); }}
-          onFork={() => {
-            setForking(team);
-            setEditing(null);
-            setCreating(false);
-          }}
-          onDelete={() => handleDelete(team.name)}
-        />
-      )}
-    </div>
-  );
+  const renderRow = (team: TeamSpec, canEditOrDelete: boolean) => {
+    const qualified = `${team.owner_id}:${team.name}`;
+    return (
+      <div key={qualified}>
+        {editing === qualified ? (
+          <TeamForm
+            initial={team}
+            mode="edit"
+            onDone={() => { setEditing(null); refresh(); }}
+            onCancel={() => setEditing(null)}
+          />
+        ) : forking &&
+          forking.owner_id === team.owner_id &&
+          forking.name === team.name ? (
+          <TeamForm
+            initial={team}
+            mode="fork"
+            onDone={() => { setForking(null); refresh(); }}
+            onCancel={() => setForking(null)}
+          />
+        ) : (
+          <TeamRow
+            team={team}
+            canEditOrDelete={canEditOrDelete}
+            deleting={deleting === qualified}
+            onEdit={() => { setEditing(qualified); setCreating(false); }}
+            onFork={() => {
+              setForking(team);
+              setEditing(null);
+              setCreating(false);
+            }}
+            onDelete={() => handleDelete(qualified, team.name)}
+          />
+        )}
+      </div>
+    );
+  };
 
   const totalVisible = mine.length + system.length + shared.length;
 

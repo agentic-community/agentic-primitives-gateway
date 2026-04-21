@@ -60,7 +60,13 @@ function AgentForm({ initial, mode: modeProp, onDone, onCancel }: AgentFormProps
             shared_with: sharedWith,
             checkpointing_enabled: checkpointingEnabled,
           };
-          await api.updateAgent(name, updates);
+          // Edit mode targets the identity we loaded from — use the
+          // qualified addr so we don't accidentally update a different
+          // owner's agent that happens to share the bare name.
+          const target = initial
+            ? `${initial.owner_id}:${initial.name}`
+            : name;
+          await api.updateAgent(target, updates);
         } else if (isFork && initial) {
           // Fork the source identity into the caller's namespace under
           // the (possibly renamed) ``name``.  Only send the fields that
@@ -279,12 +285,15 @@ export default function AgentList() {
     return { mine, system, shared };
   }, [agents, principalId, principalGroups]);
 
+  // ``editing`` / ``deleting`` / ``forking`` are keyed by the *qualified*
+  // identity ``"{owner_id}:{name}"`` so a forked agent and its source
+  // don't trigger the same state when they share a bare name.
   const handleDelete = useCallback(
-    async (name: string) => {
-      if (!confirm(`Delete agent "${name}"?`)) return;
-      setDeleting(name);
+    async (qualified: string, displayName: string) => {
+      if (!confirm(`Delete agent "${displayName}"?`)) return;
+      setDeleting(qualified);
       try {
-        await api.deleteAgent(name);
+        await api.deleteAgent(qualified);
         refresh();
       } catch {
         // error handling via refresh
@@ -297,40 +306,43 @@ export default function AgentList() {
 
   if (loading) return <LoadingSpinner className="mt-32" />;
 
-  const renderRow = (agent: AgentSpec, canEditOrDelete: boolean) => (
-    <div key={`${agent.owner_id}:${agent.name}`}>
-      {editing === agent.name ? (
-        <AgentForm
-          initial={agent}
-          mode="edit"
-          onDone={() => { setEditing(null); refresh(); }}
-          onCancel={() => setEditing(null)}
-        />
-      ) : forking &&
-        forking.owner_id === agent.owner_id &&
-        forking.name === agent.name ? (
-        <AgentForm
-          initial={agent}
-          mode="fork"
-          onDone={() => { setForking(null); refresh(); }}
-          onCancel={() => setForking(null)}
-        />
-      ) : (
-        <AgentRow
-          agent={agent}
-          canEditOrDelete={canEditOrDelete}
-          deleting={deleting === agent.name}
-          onEdit={() => { setEditing(agent.name); setCreating(false); }}
-          onFork={() => {
-            setForking(agent);
-            setEditing(null);
-            setCreating(false);
-          }}
-          onDelete={() => handleDelete(agent.name)}
-        />
-      )}
-    </div>
-  );
+  const renderRow = (agent: AgentSpec, canEditOrDelete: boolean) => {
+    const qualified = `${agent.owner_id}:${agent.name}`;
+    return (
+      <div key={qualified}>
+        {editing === qualified ? (
+          <AgentForm
+            initial={agent}
+            mode="edit"
+            onDone={() => { setEditing(null); refresh(); }}
+            onCancel={() => setEditing(null)}
+          />
+        ) : forking &&
+          forking.owner_id === agent.owner_id &&
+          forking.name === agent.name ? (
+          <AgentForm
+            initial={agent}
+            mode="fork"
+            onDone={() => { setForking(null); refresh(); }}
+            onCancel={() => setForking(null)}
+          />
+        ) : (
+          <AgentRow
+            agent={agent}
+            canEditOrDelete={canEditOrDelete}
+            deleting={deleting === qualified}
+            onEdit={() => { setEditing(qualified); setCreating(false); }}
+            onFork={() => {
+              setForking(agent);
+              setEditing(null);
+              setCreating(false);
+            }}
+            onDelete={() => handleDelete(qualified, agent.name)}
+          />
+        )}
+      </div>
+    );
+  };
 
   const totalVisible = mine.length + system.length + shared.length;
 
