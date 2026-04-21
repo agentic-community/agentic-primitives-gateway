@@ -116,7 +116,10 @@ class TestCheckProviderAuthenticated:
             result = await _check_provider_authenticated("memory", "default")
 
         _, _, _, status = result
-        assert status == "down"
+        # Timeouts are reported distinctly from generic "down" so audit
+        # events + dashboards can distinguish hung backends from connection
+        # failures.  Both still map to outcome=failure at the audit layer.
+        assert status == "timeout"
 
     @pytest.mark.asyncio
     async def test_returns_correct_key_format(self):

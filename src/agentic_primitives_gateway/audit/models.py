@@ -205,6 +205,15 @@ class AuditAction:
     # evaluations / tasks / observability.
     PROVIDER_CALL = "provider.call"
 
+    # Provider healthcheck outcome — emitted by the /readyz and
+    # /api/v1/providers/status routes for every (primitive, provider) pair.
+    # Distinct from ``provider.call`` so dashboards can filter connection
+    # failures (bad credentials, unreachable backend, dim mismatch, etc.)
+    # without wading through every primitive RPC.  ``metadata`` carries
+    # ``primitive``, ``provider``, ``status`` (ok|reachable|down|timeout),
+    # and ``error_type`` + truncated ``error_message`` on failure.
+    PROVIDER_HEALTHCHECK = "provider.healthcheck"
+
     # Resource access control
     RESOURCE_ACCESS_DENIED = "resource.access.denied"
 
