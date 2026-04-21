@@ -28,8 +28,6 @@ from agentic_primitives_gateway.models.teams import (
 
 logger = logging.getLogger(__name__)
 
-_TEAM_MIGRATION_OID = "agentic-primitives-gateway/teams"
-
 
 class TeamStore(SpecStore[TeamSpec, TeamVersion]):
     """Team-spec versioning logic (persistence supplied by a mixin)."""
@@ -38,7 +36,6 @@ class TeamStore(SpecStore[TeamSpec, TeamVersion]):
     _version_cls = TeamVersion
     _entity_label = "team"
     _version_name_field = "team_name"
-    _migration_namespace_oid = _TEAM_MIGRATION_OID
 
     def __init__(self) -> None:
         self._agent_store: AgentStore | None = None
@@ -118,7 +115,6 @@ class RedisTeamStore(RedisSpecStore, TeamStore):
     """Redis-backed versioned team store."""
 
     _namespace_prefix = "gateway:teams"
-    _legacy_hash = "gateway:teams"
 
     def __init__(self, redis_url: str = "redis://localhost:6379/0") -> None:
         TeamStore.__init__(self)

@@ -236,14 +236,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     agent_store_cls = _load_class(AGENT_STORE_ALIASES.get(settings.agents.store.backend, settings.agents.store.backend))
     agent_store = agent_store_cls(**settings.agents.store.config)
-    # One-shot, idempotent migration from legacy store layout → versioned.
-    if hasattr(agent_store, "migrate_from_legacy"):
-        try:
-            migrated = await agent_store.migrate_from_legacy()
-            if migrated:
-                logger.info("Migrated %d legacy agent record(s) to versioned layout", migrated)
-        except Exception:
-            logger.exception("Agent store migration failed")
     if settings.agents.specs:
         await agent_store.seed_async(settings.agents.specs)
     set_agent_store(agent_store)
@@ -291,13 +283,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     team_store = team_store_cls(**settings.teams.store.config)
     if hasattr(team_store, "bind_agent_store"):
         team_store.bind_agent_store(agent_store)
-    if hasattr(team_store, "migrate_from_legacy"):
-        try:
-            migrated_teams = await team_store.migrate_from_legacy()
-            if migrated_teams:
-                logger.info("Migrated %d legacy team record(s) to versioned layout", migrated_teams)
-        except Exception:
-            logger.exception("Team store migration failed")
     if settings.teams.specs:
         await team_store.seed_async(settings.teams.specs)
     set_team_store(team_store)

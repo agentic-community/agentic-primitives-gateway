@@ -21,12 +21,8 @@ from __future__ import annotations
 import json
 import logging
 from typing import Any
-from uuid import NAMESPACE_OID, uuid5
 
-from agentic_primitives_gateway.agents.base_store import (
-    _StoreState,
-    migrate_legacy_mapping,
-)
+from agentic_primitives_gateway.agents.base_store import _StoreState
 
 logger = logging.getLogger(__name__)
 
@@ -36,19 +32,14 @@ class RedisSpecStore:
 
     Expected attributes on the composed class:
 
-    * ``_entity_label``         — for log messages
-    * ``_version_name_field``   — the version model's name field key
-    * ``_migration_namespace_oid`` — UUIDv5 namespace string for idempotent
-      legacy migration.
-    * ``_namespace_prefix``     — Redis key prefix
-    * ``_legacy_hash``          — legacy single-hash key to migrate from
+    * ``_entity_label``       — for log messages
+    * ``_version_name_field`` — the version model's name field key
+    * ``_namespace_prefix``   — Redis key prefix
     """
 
     _entity_label: str
-    _migration_namespace_oid: str
     _version_name_field: str
     _namespace_prefix: str
-    _legacy_hash: str
 
     def __init__(self, redis_url: str = "redis://localhost:6379/0") -> None:
         import redis.asyncio as aioredis
@@ -109,21 +100,3 @@ class RedisSpecStore:
         from agentic_primitives_gateway.agents.checkpoint import RedisCheckpointStore
 
         return RedisCheckpointStore(redis_url=self._redis_url)
-
-    async def migrate_from_legacy(self) -> int:
-        legacy_raw: dict[str, str] = await self._redis.hgetall(self._legacy_hash)  # type: ignore[misc]
-        if not legacy_raw:
-            return 0
-        state = await self._load_state()
-        legacy_mapping = {k: json.loads(v) for k, v in legacy_raw.items()}
-        migrated = migrate_legacy_mapping(
-            legacy_mapping,
-            state=state,
-            version_cls_name=self._entity_label,
-            migration_ns=uuid5(NAMESPACE_OID, self._migration_namespace_oid),
-            version_name_field=self._version_name_field,
-        )
-        if migrated:
-            await self._save_state(state)
-            await self._redis.delete(self._legacy_hash)
-        return migrated

@@ -25,7 +25,7 @@ import logging
 from abc import ABC, abstractmethod
 from datetime import UTC, datetime
 from typing import Any, Generic, TypeVar, cast
-from uuid import uuid4, uuid5
+from uuid import uuid4
 
 from pydantic import BaseModel
 
@@ -878,58 +878,3 @@ class SpecStore(ABC, Generic[SpecT, VersionT]):
     def create_checkpoint_store(self) -> Any:
         """Default: no durable checkpoint store — return None."""
         return None
-
-
-def migrate_legacy_mapping(
-    legacy: dict[str, dict[str, Any]],
-    *,
-    state: _StoreState,
-    version_cls_name: str,
-    migration_ns: Any,
-    version_name_field: str,
-) -> int:
-    """Turn legacy ``{name: spec_dict}`` records into versioned ``v1`` entries.
-
-    Deterministic UUIDv5 is used so re-running produces the same ids and
-    skips already-present versions.  Used by both the file and redis
-    migration paths.
-    """
-    count = 0
-    now = _now_iso()
-    for name, spec_dict in legacy.items():
-        if not isinstance(spec_dict, dict):
-            continue
-        owner_id = spec_dict.get("owner_id", SYSTEM_OWNER)
-        ident = f"{owner_id}:{name}"
-        version_id = uuid5(migration_ns, f"{ident}:v1").hex
-        if version_id in state.versions:
-            continue
-        spec_dict.setdefault("shared_with", ["*"])
-        spec_dict.setdefault("name", name)
-        spec_dict["owner_id"] = owner_id
-        version = {
-            "version_id": version_id,
-            version_name_field: name,
-            "owner_id": owner_id,
-            "version_number": 1,
-            "spec": spec_dict,
-            "created_at": now,
-            "created_by": SYSTEM_OWNER,
-            "parent_version_id": None,
-            "forked_from": None,
-            "status": VersionStatus.DEPLOYED.value,
-            "approved_by": None,
-            "approved_at": None,
-            "deployed_at": now,
-            "commit_message": "migrated from legacy store",
-        }
-        state.versions[version_id] = version
-        state.identities[ident] = {
-            "deployed_version_id": version_id,
-            "draft_version_id": None,
-            "version_number_cursor": 1,
-            "version_ids": [version_id],
-        }
-        count += 1
-        logger.info("Migrated legacy %s '%s' → version %s", version_cls_name, name, version_id)
-    return count

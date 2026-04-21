@@ -1,18 +1,18 @@
 """Versioned agent store — File + Redis implementations.
 
-Composes the generic persistence mixins in ``versioned_base.py`` with
-the agent-spec-specific logic (fork auto-qualification of
-``primitives.agents.tools`` sub-refs, AgentLineage wrapping).
+Composes the generic persistence mixins in ``file_store.py`` /
+``redis_store.py`` with the agent-spec-specific logic (fork
+auto-qualification of ``primitives.agents.tools`` sub-refs,
+AgentLineage wrapping).
 
 Adding a new persistence backend (Postgres, SQLite, ...) is two steps:
 
-1. Implement a mixin with ``_load_state`` / ``_save_state`` /
-   ``migrate_from_legacy``.
+1. Implement a mixin with ``_load_state`` / ``_save_state``.
 2. Subclass ``AgentStore`` + the new mixin, set
    ``_namespace_prefix`` + any backend-specific attrs.
 
-See ``versioned_base.py`` for the storage shape (identity index,
-deployed pointer, proposal list).
+See ``base_store.py`` for the storage shape (identity index, deployed
+pointer, proposal list).
 """
 
 from __future__ import annotations
@@ -34,8 +34,6 @@ from agentic_primitives_gateway.models.agents import (
 
 logger = logging.getLogger(__name__)
 
-_AGENT_MIGRATION_OID = "agentic-primitives-gateway/agents"
-
 
 class AgentStore(SpecStore[AgentSpec, AgentVersion]):
     """Agent-spec versioning logic (persistence supplied by a mixin)."""
@@ -44,7 +42,6 @@ class AgentStore(SpecStore[AgentSpec, AgentVersion]):
     _version_cls = AgentVersion
     _entity_label = "agent"
     _version_name_field = "agent_name"
-    _migration_namespace_oid = _AGENT_MIGRATION_OID
 
     def _retention_cap(self, settings: Any) -> int:
         return int(getattr(settings.agents, "max_versions_per_identity", 50))
@@ -116,7 +113,6 @@ class RedisAgentStore(RedisSpecStore, AgentStore):
     """Redis-backed versioned agent store."""
 
     _namespace_prefix = "gateway:agents"
-    _legacy_hash = "gateway:agents"
 
     def __init__(self, redis_url: str = "redis://localhost:6379/0") -> None:
         RedisSpecStore.__init__(self, redis_url=redis_url)
