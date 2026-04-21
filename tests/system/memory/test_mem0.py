@@ -22,12 +22,12 @@ from agentic_primitives_gateway_client import AgenticPlatformClient, AgenticPlat
 def _init_registry():
     """Initialise registry with Mem0 memory provider (noop for everything else).
 
-    ``allow_server_credentials=True`` lets ``_with_aws_env`` yield without real
+    ``allow_server_credentials="always"`` lets ``_with_aws_env`` yield without real
     AWS creds. We also patch the module-level ``settings`` singleton so that
     ``_server_credentials_allowed()`` returns True during request handling.
     """
     test_settings = Settings(
-        allow_server_credentials=True,
+        allow_server_credentials="always",
         providers={
             "memory": {
                 "backend": ("agentic_primitives_gateway.primitives.memory.mem0_provider.Mem0MemoryProvider"),

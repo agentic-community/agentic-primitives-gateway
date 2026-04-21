@@ -48,7 +48,7 @@ def _init_registry() -> None:
         ),
     ):
         test_settings = Settings(
-            allow_server_credentials=False,
+            allow_server_credentials="never",
             providers={
                 "memory": {
                     "backend": ("agentic_primitives_gateway.primitives.memory.agentcore.AgentCoreMemoryProvider"),

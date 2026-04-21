@@ -22,7 +22,7 @@ from agentic_primitives_gateway_client import AgenticPlatformClient
 def _init_registry():
     """Initialise registry with Entra identity provider (noop for everything else)."""
     test_settings = Settings(
-        allow_server_credentials=True,
+        allow_server_credentials="always",
         providers={
             "memory": {
                 "backend": "agentic_primitives_gateway.primitives.memory.noop.NoopMemoryProvider",
