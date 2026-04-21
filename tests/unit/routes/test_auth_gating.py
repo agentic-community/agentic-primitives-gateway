@@ -158,7 +158,7 @@ class TestBrowserSessionOwnership:
         """Non-owner cannot access a session owned by someone else."""
         import asyncio
 
-        asyncio.get_event_loop().run_until_complete(browser_session_owners.set_owner("owned-sess", "alice"))
+        asyncio.run(browser_session_owners.set_owner("owned-sess", "alice"))
         # The noop principal is admin and bypasses ownership
         # So we need a non-admin principal to test denial
         from agentic_primitives_gateway.auth.base import AuthBackend
@@ -180,7 +180,7 @@ class TestBrowserSessionOwnership:
         """Owner can access their own session (gets past ownership check)."""
         import asyncio
 
-        asyncio.get_event_loop().run_until_complete(browser_session_owners.set_owner("my-sess", "alice"))
+        asyncio.run(browser_session_owners.set_owner("my-sess", "alice"))
         from agentic_primitives_gateway.auth.base import AuthBackend
 
         class FixedBackend(AuthBackend):
@@ -210,7 +210,7 @@ class TestCodeInterpreterSessionOwnership:
     def test_execute_denied_for_non_owner(self) -> None:
         import asyncio
 
-        asyncio.get_event_loop().run_until_complete(code_interpreter_session_owners.set_owner("ci-sess", "alice"))
+        asyncio.run(code_interpreter_session_owners.set_owner("ci-sess", "alice"))
         from agentic_primitives_gateway.auth.base import AuthBackend
 
         class FixedBackend(AuthBackend):
@@ -232,7 +232,7 @@ class TestCodeInterpreterSessionOwnership:
     def test_history_denied_for_non_owner(self) -> None:
         import asyncio
 
-        asyncio.get_event_loop().run_until_complete(code_interpreter_session_owners.set_owner("ci-sess", "alice"))
+        asyncio.run(code_interpreter_session_owners.set_owner("ci-sess", "alice"))
         from agentic_primitives_gateway.auth.base import AuthBackend
 
         class FixedBackend(AuthBackend):
@@ -483,8 +483,8 @@ class TestBrowserListSessionsFiltering:
     def test_non_admin_sees_only_own_sessions(self) -> None:
         import asyncio
 
-        asyncio.get_event_loop().run_until_complete(browser_session_owners.set_owner("alice-sess", "alice"))
-        asyncio.get_event_loop().run_until_complete(browser_session_owners.set_owner("bob-sess", "bob"))
+        asyncio.run(browser_session_owners.set_owner("alice-sess", "alice"))
+        asyncio.run(browser_session_owners.set_owner("bob-sess", "bob"))
 
         from agentic_primitives_gateway.auth.base import AuthBackend
 
@@ -515,8 +515,8 @@ class TestCodeInterpreterListSessionsFiltering:
     def test_non_admin_sees_only_own_sessions(self) -> None:
         import asyncio
 
-        asyncio.get_event_loop().run_until_complete(code_interpreter_session_owners.set_owner("alice-ci", "alice"))
-        asyncio.get_event_loop().run_until_complete(code_interpreter_session_owners.set_owner("bob-ci", "bob"))
+        asyncio.run(code_interpreter_session_owners.set_owner("alice-ci", "alice"))
+        asyncio.run(code_interpreter_session_owners.set_owner("bob-ci", "bob"))
 
         from agentic_primitives_gateway.auth.base import AuthBackend
 
