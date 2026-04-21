@@ -55,6 +55,13 @@ class ResourceType(StrEnum):
     MEMORY = "memory"
     USER = "user"
     LLM = "llm"
+    EVALUATOR = "evaluator"
+    IDENTITY = "identity"
+    TASK = "task"
+    TRACE = "trace"
+    CODE_EXECUTION = "code_execution"
+    FILE = "file"
+    PAGE = "page"
 
 
 class AuditAction:
@@ -121,6 +128,72 @@ class AuditAction:
     TEAM_VERSION_REJECT = "team.version.reject"
     TEAM_VERSION_DEPLOY = "team.version.deploy"
     TEAM_FORK = "team.fork"
+
+    # Memory primitive — resource CRUD, strategies, branches, event/record writes
+    MEMORY_RESOURCE_CREATE = "memory.resource.create"
+    MEMORY_RESOURCE_DELETE = "memory.resource.delete"
+    MEMORY_STRATEGY_CREATE = "memory.strategy.create"
+    MEMORY_STRATEGY_DELETE = "memory.strategy.delete"
+    MEMORY_BRANCH_CREATE = "memory.branch.create"
+    MEMORY_EVENT_APPEND = "memory.event.append"
+    MEMORY_EVENT_DELETE = "memory.event.delete"
+    MEMORY_RECORD_WRITE = "memory.record.write"
+    MEMORY_RECORD_DELETE = "memory.record.delete"
+
+    # Tools primitive — registry CRUD (single tools + MCP servers).  Per-call
+    # execution is covered by ``TOOL_CALL``.
+    TOOL_REGISTER = "tool.register"
+    TOOL_DELETE = "tool.delete"
+    TOOL_SERVER_REGISTER = "tool.server.register"
+
+    # Evaluations primitive — evaluator CRUD + score writes + online config CRUD
+    EVALUATOR_CREATE = "evaluator.create"
+    EVALUATOR_UPDATE = "evaluator.update"
+    EVALUATOR_DELETE = "evaluator.delete"
+    SCORE_CREATE = "evaluator.score.create"
+    SCORE_DELETE = "evaluator.score.delete"
+    ONLINE_CONFIG_CREATE = "evaluator.online_config.create"
+    ONLINE_CONFIG_DELETE = "evaluator.online_config.delete"
+
+    # Browser primitive — page interactions within a session (sessions
+    # themselves are covered by ``session.create``/``session.terminate``).
+    # These are the mutating actions; read-only ones (screenshot,
+    # get_page_content, live_view) stay on ``provider.call``.
+    BROWSER_NAVIGATE = "browser.navigate"
+    BROWSER_CLICK = "browser.click"
+    BROWSER_TYPE = "browser.type"
+    BROWSER_EVALUATE = "browser.evaluate"
+
+    # Code-interpreter primitive — code execution + file I/O.  Remote
+    # code execution is always audit-worthy.
+    CODE_EXECUTE = "code_interpreter.execute"
+    CODE_FILE_UPLOAD = "code_interpreter.file.upload"
+    CODE_FILE_DOWNLOAD = "code_interpreter.file.download"
+
+    # Tasks primitive — team-run task board mutations.  List/get are
+    # covered by ``provider.call``.
+    TASK_CREATE = "task.create"
+    TASK_CLAIM = "task.claim"
+    TASK_UPDATE = "task.update"
+    TASK_NOTE = "task.note"
+
+    # Observability primitive — trace/score/generation writes (log ingestion
+    # and session reads are covered by ``provider.call``).
+    TRACE_INGEST = "observability.trace.ingest"
+    TRACE_UPDATE = "observability.trace.update"
+    TRACE_GENERATION_LOG = "observability.trace.generation.log"
+    TRACE_SCORE_CREATE = "observability.trace.score.create"
+    LOG_INGEST = "observability.log.ingest"
+    OBSERVABILITY_FLUSH = "observability.flush"
+
+    # Identity primitive — credential provider + workload identity CRUD.
+    # Token/api-key issuance is covered by ``CREDENTIAL_READ``.
+    IDENTITY_CREDENTIAL_PROVIDER_CREATE = "identity.credential_provider.create"
+    IDENTITY_CREDENTIAL_PROVIDER_UPDATE = "identity.credential_provider.update"
+    IDENTITY_CREDENTIAL_PROVIDER_DELETE = "identity.credential_provider.delete"
+    IDENTITY_WORKLOAD_CREATE = "identity.workload.create"
+    IDENTITY_WORKLOAD_UPDATE = "identity.workload.update"
+    IDENTITY_WORKLOAD_DELETE = "identity.workload.delete"
 
     # Tool + LLM invocations
     TOOL_CALL = "tool.call"

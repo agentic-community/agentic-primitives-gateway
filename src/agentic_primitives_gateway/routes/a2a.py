@@ -32,6 +32,8 @@ from starlette.responses import StreamingResponse
 
 from agentic_primitives_gateway.agents.runner import AgentRunner
 from agentic_primitives_gateway.agents.store import AgentStore
+from agentic_primitives_gateway.audit.emit import emit_audit_event
+from agentic_primitives_gateway.audit.models import AuditAction, AuditOutcome, ResourceType
 from agentic_primitives_gateway.auth.access import require_access
 from agentic_primitives_gateway.config import settings
 from agentic_primitives_gateway.context import set_provider_overrides
@@ -438,6 +440,14 @@ async def cancel_task(name: str, task_id: str) -> A2ATask:
 
     cancelled = await agent_bg.cancel(task_id)
     state = A2ATaskState.CANCELED if cancelled else A2ATaskState.COMPLETED
+
+    emit_audit_event(
+        action=AuditAction.AGENT_RUN_CANCELLED,
+        outcome=AuditOutcome.SUCCESS if cancelled else AuditOutcome.FAILURE,
+        resource_type=ResourceType.AGENT,
+        resource_id=name,
+        metadata={"task_id": task_id, "source": "a2a"},
+    )
 
     return A2ATask(
         id=task_id,

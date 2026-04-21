@@ -12,6 +12,10 @@ to call from tests that have not wired the audit subsystem.
 from __future__ import annotations
 
 import logging
+import time
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
 from typing import Any
 
 from agentic_primitives_gateway import metrics
@@ -141,3 +145,86 @@ def emit_audit_event(
         # Audit subsystem not wired (tests, library usage).  Drop silently.
         return
     _router.emit(event)
+
+
+# ── Mutation helper ──────────────────────────────────────────────────────
+
+
+@dataclass
+class AuditContext:
+    """Mutable context a mutation-route hands to ``audit_mutation``.
+
+    Handlers set ``resource_id`` / ``metadata`` *after* the operation
+    returns, so the audit event can carry values the operation itself
+    produced (a freshly-minted ``version_id``, for example).
+    """
+
+    resource_type: ResourceType | None = None
+    resource_id: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@asynccontextmanager
+async def audit_mutation(
+    action: str,
+    *,
+    resource_type: ResourceType | None = None,
+    resource_id: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> AsyncIterator[AuditContext]:
+    """Wrap a mutation so every exit path fires a consistent audit event.
+
+    On clean return the context manager emits one ``<action>`` event with
+    ``outcome=SUCCESS``.  On exception it emits the same action with
+    ``outcome=FAILURE`` + ``metadata.error_type`` and re-raises — so
+    failure audit coverage is automatic rather than per-handler.
+
+    The yielded :class:`AuditContext` lets the handler refine
+    ``resource_id`` / ``metadata`` after the operation completes:
+
+    .. code:: python
+
+        async with audit_mutation(
+            AuditAction.MEMORY_RESOURCE_CREATE,
+            resource_type=ResourceType.MEMORY,
+        ) as audit:
+            result = await registry.memory.create_memory_resource(name=...)
+            audit.resource_id = result["memory_id"]
+            audit.metadata = {"name": result["name"]}
+
+    Every emitted event carries ``duration_ms``; success events use the
+    elapsed wall time, failure events the time until the exception was
+    raised.  ``http_*`` + actor fields come from contextvars just like
+    :func:`emit_audit_event`.
+    """
+    ctx = AuditContext(
+        resource_type=resource_type,
+        resource_id=resource_id,
+        metadata=dict(metadata or {}),
+    )
+    start = time.perf_counter()
+    try:
+        yield ctx
+    except Exception as exc:
+        elapsed_ms = round((time.perf_counter() - start) * 1000, 3)
+        emit_audit_event(
+            action=action,
+            outcome=AuditOutcome.FAILURE,
+            resource_type=ctx.resource_type,
+            resource_id=ctx.resource_id,
+            metadata={
+                **ctx.metadata,
+                "error_type": type(exc).__name__,
+            },
+            duration_ms=elapsed_ms,
+        )
+        raise
+    elapsed_ms = round((time.perf_counter() - start) * 1000, 3)
+    emit_audit_event(
+        action=action,
+        outcome=AuditOutcome.SUCCESS,
+        resource_type=ctx.resource_type,
+        resource_id=ctx.resource_id,
+        metadata=ctx.metadata or None,
+        duration_ms=elapsed_ms,
+    )

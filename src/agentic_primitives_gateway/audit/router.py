@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import random
 
 from agentic_primitives_gateway import metrics
 from agentic_primitives_gateway.audit.base import AuditSink
@@ -38,6 +39,9 @@ class AuditRouter:
         sinks: list[AuditSink],
         queue_size: int = 2048,
         sink_timeout_seconds: float = 2.0,
+        exclude_actions: tuple[str, ...] = (),
+        exclude_action_categories: tuple[str, ...] = (),
+        sample_rates: dict[str, float] | None = None,
     ) -> None:
         if not sinks:
             raise ValueError("AuditRouter requires at least one sink")
@@ -53,6 +57,12 @@ class AuditRouter:
         self._workers: list[asyncio.Task[None]] = []
         self._started = False
 
+        # Filter state — compiled into sets for O(1) membership checks
+        # on the hot emit path.
+        self._exclude_actions: frozenset[str] = frozenset(exclude_actions)
+        self._exclude_categories: frozenset[str] = frozenset(exclude_action_categories)
+        self._sample_rates: dict[str, float] = dict(sample_rates or {})
+
     @property
     def sinks(self) -> list[AuditSink]:
         return list(self._sinks)
@@ -67,12 +77,34 @@ class AuditRouter:
             self._workers.append(asyncio.create_task(self._drain(sink, queue), name=f"audit-{sink.name}"))
         self._started = True
 
+    def _should_emit(self, event: AuditEvent) -> bool:
+        """Return False when ``event`` matches any configured filter rule.
+
+        Evaluated before fan-out so a dropped event never lands on any
+        sink queue.  Rule order (all must pass): exact action match →
+        category prefix match → sample rate dice roll.
+        """
+        action = event.action
+        if action in self._exclude_actions:
+            return False
+        category = action.split(".", 1)[0] if "." in action else action
+        if category in self._exclude_categories:
+            return False
+        rate = self._sample_rates.get(action)
+        return not (rate is not None and random.random() >= rate)
+
     def emit(self, event: AuditEvent) -> None:
         """Enqueue ``event`` on every sink queue.  Non-blocking."""
         if not self._started:
             # Router not yet started or already torn down — drop.
             for sink in self._sinks:
                 metrics.AUDIT_EVENTS_DROPPED.labels(sink=sink.name, reason="not_started").inc()
+            return
+
+        if not self._should_emit(event):
+            # One counter bump per filtered event (not per sink) — the
+            # event was rejected before fan-out, not per destination.
+            metrics.AUDIT_EVENTS_DROPPED.labels(sink="__router__", reason="filtered").inc()
             return
 
         for sink in self._sinks:

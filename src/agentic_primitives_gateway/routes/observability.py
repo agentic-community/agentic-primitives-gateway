@@ -2,6 +2,8 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
+from agentic_primitives_gateway.audit.emit import audit_mutation
+from agentic_primitives_gateway.audit.models import AuditAction, ResourceType
 from agentic_primitives_gateway.models.enums import HealthStatus, Primitive
 from agentic_primitives_gateway.models.observability import (
     FlushResponse,
@@ -34,7 +36,8 @@ router = APIRouter(
 @router.post("/flush", response_model=FlushResponse, status_code=202)
 @handle_provider_errors("flush not supported by this provider")
 async def flush() -> FlushResponse:
-    await registry.observability.flush()
+    async with audit_mutation(AuditAction.OBSERVABILITY_FLUSH):
+        await registry.observability.flush()
     return FlushResponse(status=HealthStatus.ACCEPTED)
 
 
@@ -69,33 +72,45 @@ async def get_session(session_id: str) -> Any:
 @router.post("/traces/{trace_id}/generations", response_model=GenerationInfo, status_code=201)
 async def log_generation(trace_id: str, request: LogGenerationRequest) -> Any:
     usage_dict = request.usage.model_dump(exclude_none=True) if request.usage else None
-    try:
-        return await registry.observability.log_generation(
-            trace_id=trace_id,
-            name=request.name,
-            model=request.model,
-            input=request.input,
-            output=request.output,
-            usage=usage_dict,
-            metadata=request.metadata or None,
-            level=request.level,
-        )
-    except NotImplementedError:
-        raise HTTPException(status_code=501, detail="log_generation not supported by this provider") from None
+    async with audit_mutation(
+        AuditAction.TRACE_GENERATION_LOG,
+        resource_type=ResourceType.TRACE,
+        resource_id=trace_id,
+        metadata={"name": request.name, "model": request.model},
+    ):
+        try:
+            return await registry.observability.log_generation(
+                trace_id=trace_id,
+                name=request.name,
+                model=request.model,
+                input=request.input,
+                output=request.output,
+                usage=usage_dict,
+                metadata=request.metadata or None,
+                level=request.level,
+            )
+        except NotImplementedError:
+            raise HTTPException(status_code=501, detail="log_generation not supported by this provider") from None
 
 
 @router.post("/traces/{trace_id}/scores", response_model=ScoreInfo, status_code=201)
 async def score_trace(trace_id: str, request: ScoreRequest) -> Any:
-    try:
-        return await registry.observability.score_trace(
-            trace_id=trace_id,
-            name=request.name,
-            value=request.value,
-            comment=request.comment,
-            data_type=request.data_type,
-        )
-    except NotImplementedError:
-        raise HTTPException(status_code=501, detail="score_trace not supported by this provider") from None
+    async with audit_mutation(
+        AuditAction.TRACE_SCORE_CREATE,
+        resource_type=ResourceType.TRACE,
+        resource_id=trace_id,
+        metadata={"name": request.name},
+    ):
+        try:
+            return await registry.observability.score_trace(
+                trace_id=trace_id,
+                name=request.name,
+                value=request.value,
+                comment=request.comment,
+                data_type=request.data_type,
+            )
+        except NotImplementedError:
+            raise HTTPException(status_code=501, detail="score_trace not supported by this provider") from None
 
 
 @router.get("/traces/{trace_id}/scores", response_model=ListScoresResponse)
@@ -117,19 +132,24 @@ async def get_trace(trace_id: str) -> Any:
 
 @router.put("/traces/{trace_id}")
 async def update_trace(trace_id: str, request: UpdateTraceRequest) -> Any:
-    try:
-        return await registry.observability.update_trace(
-            trace_id,
-            name=request.name,
-            user_id=request.user_id,
-            session_id=request.session_id,
-            input=request.input,
-            output=request.output,
-            metadata=request.metadata,
-            tags=request.tags,
-        )
-    except NotImplementedError:
-        raise HTTPException(status_code=501, detail="update_trace not supported by this provider") from None
+    async with audit_mutation(
+        AuditAction.TRACE_UPDATE,
+        resource_type=ResourceType.TRACE,
+        resource_id=trace_id,
+    ):
+        try:
+            return await registry.observability.update_trace(
+                trace_id,
+                name=request.name,
+                user_id=request.user_id,
+                session_id=request.session_id,
+                input=request.input,
+                output=request.output,
+                metadata=request.metadata,
+                tags=request.tags,
+            )
+        except NotImplementedError:
+            raise HTTPException(status_code=501, detail="update_trace not supported by this provider") from None
 
 
 # ── Original endpoints (trace/log ingestion, query) ──────────────────
@@ -137,13 +157,15 @@ async def update_trace(trace_id: str, request: UpdateTraceRequest) -> Any:
 
 @router.post("/traces", status_code=202)
 async def ingest_trace(request: IngestTraceRequest) -> dict[str, str]:
-    await registry.observability.ingest_trace(request.model_dump())
+    async with audit_mutation(AuditAction.TRACE_INGEST, resource_type=ResourceType.TRACE):
+        await registry.observability.ingest_trace(request.model_dump())
     return {"status": HealthStatus.ACCEPTED}
 
 
 @router.post("/logs", status_code=202)
 async def ingest_log(request: IngestLogRequest) -> dict[str, str]:
-    await registry.observability.ingest_log(request.model_dump())
+    async with audit_mutation(AuditAction.LOG_INGEST):
+        await registry.observability.ingest_log(request.model_dump())
     return {"status": HealthStatus.ACCEPTED}
 
 

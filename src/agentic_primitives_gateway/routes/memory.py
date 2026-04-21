@@ -2,6 +2,8 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 
+from agentic_primitives_gateway.audit.emit import audit_mutation
+from agentic_primitives_gateway.audit.models import AuditAction, ResourceType
 from agentic_primitives_gateway.models.enums import Primitive
 from agentic_primitives_gateway.models.memory import (
     AddStrategyRequest,
@@ -77,15 +79,24 @@ async def create_event(
     request: CreateEventRequest,
 ) -> Any:
     _check_actor(actor_id)
-    try:
-        return await registry.memory.create_event(
-            actor_id=actor_id,
-            session_id=session_id,
-            messages=[(m.text, m.role) for m in request.messages],
-            metadata=request.metadata,
-        )
-    except NotImplementedError:
-        raise HTTPException(status_code=501, detail="Conversation events not supported by this provider") from None
+    async with audit_mutation(
+        AuditAction.MEMORY_EVENT_APPEND,
+        resource_type=ResourceType.MEMORY,
+        resource_id=f"{actor_id}/{session_id}",
+        metadata={"message_count": len(request.messages)},
+    ) as audit:
+        try:
+            result = await registry.memory.create_event(
+                actor_id=actor_id,
+                session_id=session_id,
+                messages=[(m.text, m.role) for m in request.messages],
+                metadata=request.metadata,
+            )
+        except NotImplementedError:
+            raise HTTPException(status_code=501, detail="Conversation events not supported by this provider") from None
+        if isinstance(result, dict) and "event_id" in result:
+            audit.metadata["event_id"] = result["event_id"]
+        return result
 
 
 @router.get(
@@ -125,11 +136,16 @@ async def get_event(actor_id: str, session_id: str, event_id: str) -> Any:
 @handle_provider_errors("Conversation events not supported by this provider", not_found="Event not found")
 async def delete_event(actor_id: str, session_id: str, event_id: str) -> Response:
     _check_actor(actor_id)
-    await registry.memory.delete_event(
-        actor_id=actor_id,
-        session_id=session_id,
-        event_id=event_id,
-    )
+    async with audit_mutation(
+        AuditAction.MEMORY_EVENT_DELETE,
+        resource_type=ResourceType.MEMORY,
+        resource_id=f"{actor_id}/{session_id}/{event_id}",
+    ):
+        await registry.memory.delete_event(
+            actor_id=actor_id,
+            session_id=session_id,
+            event_id=event_id,
+        )
     return Response(status_code=204)
 
 
@@ -193,16 +209,25 @@ async def fork_conversation(
     request: ForkConversationRequest,
 ) -> Any:
     _check_actor(actor_id)
-    try:
-        return await registry.memory.fork_conversation(
-            actor_id=actor_id,
-            session_id=session_id,
-            root_event_id=request.root_event_id,
-            branch_name=request.branch_name,
-            messages=[(m.text, m.role) for m in request.messages],
-        )
-    except NotImplementedError:
-        raise HTTPException(status_code=501, detail="Branch management not supported by this provider") from None
+    async with audit_mutation(
+        AuditAction.MEMORY_BRANCH_CREATE,
+        resource_type=ResourceType.MEMORY,
+        resource_id=f"{actor_id}/{session_id}",
+        metadata={
+            "branch_name": request.branch_name,
+            "root_event_id": request.root_event_id,
+        },
+    ):
+        try:
+            return await registry.memory.fork_conversation(
+                actor_id=actor_id,
+                session_id=session_id,
+                root_event_id=request.root_event_id,
+                branch_name=request.branch_name,
+                messages=[(m.text, m.role) for m in request.messages],
+            )
+        except NotImplementedError:
+            raise HTTPException(status_code=501, detail="Branch management not supported by this provider") from None
 
 
 @router.get("/sessions/{actor_id}/{session_id}/branches")
@@ -221,16 +246,24 @@ async def list_branches(actor_id: str, session_id: str) -> Any:
 
 @router.post("/resources", status_code=201)
 async def create_memory_resource(request: CreateMemoryResourceRequest) -> Any:
-    try:
-        return await registry.memory.create_memory_resource(
-            name=request.name,
-            strategies=request.strategies,
-            description=request.description,
-        )
-    except NotImplementedError:
-        raise HTTPException(
-            status_code=501, detail="Memory resource management not supported by this provider"
-        ) from None
+    async with audit_mutation(
+        AuditAction.MEMORY_RESOURCE_CREATE,
+        resource_type=ResourceType.MEMORY,
+        metadata={"name": request.name, "strategy_count": len(request.strategies or [])},
+    ) as audit:
+        try:
+            result = await registry.memory.create_memory_resource(
+                name=request.name,
+                strategies=request.strategies,
+                description=request.description,
+            )
+        except NotImplementedError:
+            raise HTTPException(
+                status_code=501, detail="Memory resource management not supported by this provider"
+            ) from None
+        if isinstance(result, dict) and "memory_id" in result:
+            audit.resource_id = result["memory_id"]
+        return result
 
 
 @router.get("/resources")
@@ -249,7 +282,12 @@ async def get_memory_resource(memory_id: str) -> Any:
 @router.delete("/resources/{memory_id}")
 @handle_provider_errors("Memory resource management not supported by this provider")
 async def delete_memory_resource(memory_id: str) -> Response:
-    await registry.memory.delete_memory_resource(memory_id=memory_id)
+    async with audit_mutation(
+        AuditAction.MEMORY_RESOURCE_DELETE,
+        resource_type=ResourceType.MEMORY,
+        resource_id=memory_id,
+    ):
+        await registry.memory.delete_memory_resource(memory_id=memory_id)
     return Response(status_code=204)
 
 
@@ -265,19 +303,33 @@ async def list_strategies(memory_id: str) -> Any:
 
 @router.post("/resources/{memory_id}/strategies", status_code=201)
 async def add_strategy(memory_id: str, request: AddStrategyRequest) -> Any:
-    try:
-        return await registry.memory.add_strategy(
-            memory_id=memory_id,
-            strategy=request.strategy,
-        )
-    except NotImplementedError:
-        raise HTTPException(status_code=501, detail="Strategy management not supported by this provider") from None
+    async with audit_mutation(
+        AuditAction.MEMORY_STRATEGY_CREATE,
+        resource_type=ResourceType.MEMORY,
+        resource_id=memory_id,
+    ) as audit:
+        try:
+            result = await registry.memory.add_strategy(
+                memory_id=memory_id,
+                strategy=request.strategy,
+            )
+        except NotImplementedError:
+            raise HTTPException(status_code=501, detail="Strategy management not supported by this provider") from None
+        if isinstance(result, dict) and "strategy_id" in result:
+            audit.metadata["strategy_id"] = result["strategy_id"]
+        return result
 
 
 @router.delete("/resources/{memory_id}/strategies/{strategy_id}")
 @handle_provider_errors("Strategy management not supported by this provider")
 async def delete_strategy(memory_id: str, strategy_id: str) -> Response:
-    await registry.memory.delete_strategy(memory_id=memory_id, strategy_id=strategy_id)
+    async with audit_mutation(
+        AuditAction.MEMORY_STRATEGY_DELETE,
+        resource_type=ResourceType.MEMORY,
+        resource_id=memory_id,
+        metadata={"strategy_id": strategy_id},
+    ):
+        await registry.memory.delete_strategy(memory_id=memory_id, strategy_id=strategy_id)
     return Response(status_code=204)
 
 
@@ -288,12 +340,17 @@ async def delete_strategy(memory_id: str, strategy_id: str) -> Response:
 @router.post("/{namespace}", response_model=MemoryRecord, status_code=201)
 async def store_memory(namespace: str, request: StoreMemoryRequest) -> MemoryRecord:
     _check_namespace(namespace)
-    return await registry.memory.store(
-        namespace=namespace,
-        key=request.key,
-        content=request.content,
-        metadata=request.metadata,
-    )
+    async with audit_mutation(
+        AuditAction.MEMORY_RECORD_WRITE,
+        resource_type=ResourceType.MEMORY,
+        resource_id=f"{namespace}/{request.key}",
+    ):
+        return await registry.memory.store(
+            namespace=namespace,
+            key=request.key,
+            content=request.content,
+            metadata=request.metadata,
+        )
 
 
 @router.get("/{namespace}/{key}", response_model=MemoryRecord)
@@ -331,7 +388,12 @@ async def search_memories(namespace: str, request: SearchMemoryRequest) -> Searc
 @router.delete("/{namespace}/{key}")
 async def delete_memory(namespace: str, key: str) -> Response:
     _check_namespace(namespace)
-    deleted = await registry.memory.delete(namespace=namespace, key=key)
-    if not deleted:
-        raise HTTPException(status_code=404, detail="Memory not found")
+    async with audit_mutation(
+        AuditAction.MEMORY_RECORD_DELETE,
+        resource_type=ResourceType.MEMORY,
+        resource_id=f"{namespace}/{key}",
+    ):
+        deleted = await registry.memory.delete(namespace=namespace, key=key)
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Memory not found")
     return Response(status_code=204)

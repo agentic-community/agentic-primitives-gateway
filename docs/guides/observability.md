@@ -202,6 +202,42 @@ topk(10, sum by (tool_name) (rate(gateway_tool_calls_total[5m])))
 sum by (decision, action_category) (rate(gateway_policy_decisions_total[5m]))
 ```
 
+## Taming Audit Volume
+
+APG emits audit events for every mutation *and* for every primitive call
+(via the `MetricsProxy`), so high-traffic deployments can generate a lot
+of events.  The `audit.filter` config drops events at the router — before
+any sink sees them — giving you a single knob to cut noise without
+losing compliance-relevant signal.
+
+```yaml
+audit:
+  enabled: true
+  stdout_json: true
+  filter:
+    # Drop the firehose — every provider call emits one, so it's
+    # typically the biggest source of volume.
+    exclude_actions:
+      - "provider.call"
+
+    # Or drop a whole category.  Drops memory.record.write /
+    # memory.record.delete / memory.event.* / memory.branch.create etc.
+    exclude_action_categories:
+      - "memory"
+
+    # Or keep a statistical sample of the high-volume actions.
+    # Probabilistic per-event, independent sampling.
+    sample_rates:
+      tool.call: 0.1         # keep 10% of tool calls
+      llm.generate: 0.25     # keep 25% of LLM calls
+```
+
+Filtered events increment
+`gateway_audit_events_dropped_total{sink="__router__",reason="filtered"}`
+so you can monitor how aggressively the filter is trimming.  Keep
+auth / policy / version / fork / credential events unfiltered — those
+are the compliance-critical ones.
+
 ## Correlating Signals
 
 Every audit event, log line, and response header carries `request_id` and `correlation_id`. Given a user complaint with a response header:

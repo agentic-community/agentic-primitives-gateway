@@ -212,6 +212,9 @@ def _build_audit_router() -> AuditRouter | None:
         sinks=sinks,
         queue_size=audit_cfg.queue_size,
         sink_timeout_seconds=audit_cfg.sink_timeout_seconds,
+        exclude_actions=tuple(audit_cfg.filter.exclude_actions),
+        exclude_action_categories=tuple(audit_cfg.filter.exclude_action_categories),
+        sample_rates=dict(audit_cfg.filter.sample_rates),
     )
 
 

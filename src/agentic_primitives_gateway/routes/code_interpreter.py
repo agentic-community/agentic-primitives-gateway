@@ -2,6 +2,8 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, UploadFile
 
+from agentic_primitives_gateway.audit.emit import audit_mutation
+from agentic_primitives_gateway.audit.models import AuditAction, ResourceType
 from agentic_primitives_gateway.models.code_interpreter import (
     ExecuteRequest,
     ExecutionHistoryEntry,
@@ -30,20 +32,32 @@ router = APIRouter(
 @router.post("/sessions", response_model=SessionInfo, status_code=201)
 async def start_session(request: StartSessionRequest) -> SessionInfo:
     principal = require_principal()
-    result = await registry.code_interpreter.start_session(
-        session_id=request.session_id,
-        config={"language": request.language, **request.config},
-    )
-    info = SessionInfo(**result)
-    await code_interpreter_session_owners.set_owner(info.session_id, principal.id)
+    async with audit_mutation(
+        AuditAction.SESSION_CREATE,
+        resource_type=ResourceType.SESSION,
+        metadata={"primitive": "code_interpreter", "language": request.language},
+    ) as audit:
+        result = await registry.code_interpreter.start_session(
+            session_id=request.session_id,
+            config={"language": request.language, **request.config},
+        )
+        info = SessionInfo(**result)
+        await code_interpreter_session_owners.set_owner(info.session_id, principal.id)
+        audit.resource_id = info.session_id
     return info
 
 
 @router.delete("/sessions/{session_id}")
 async def stop_session(session_id: str) -> Response:
     await code_interpreter_session_owners.require_owner(session_id, require_principal())
-    await registry.code_interpreter.stop_session(session_id)
-    await code_interpreter_session_owners.delete(session_id)
+    async with audit_mutation(
+        AuditAction.SESSION_TERMINATE,
+        resource_type=ResourceType.SESSION,
+        resource_id=session_id,
+        metadata={"primitive": "code_interpreter"},
+    ):
+        await registry.code_interpreter.stop_session(session_id)
+        await code_interpreter_session_owners.delete(session_id)
     return Response(status_code=204)
 
 
@@ -80,14 +94,22 @@ async def get_session(session_id: str) -> Any:
 @router.post("/sessions/{session_id}/execute", response_model=ExecutionResult)
 async def execute_code(session_id: str, request: ExecuteRequest) -> ExecutionResult:
     await code_interpreter_session_owners.require_owner(session_id, require_principal())
-    try:
-        result = await registry.code_interpreter.execute(
-            session_id=session_id,
-            code=request.code,
-            language=request.language,
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e)) from e
+    # Do NOT log the code body — may contain credentials the agent
+    # inlined.  Length + language are enough for forensics.
+    async with audit_mutation(
+        AuditAction.CODE_EXECUTE,
+        resource_type=ResourceType.CODE_EXECUTION,
+        resource_id=session_id,
+        metadata={"language": request.language, "code_length": len(request.code)},
+    ):
+        try:
+            result = await registry.code_interpreter.execute(
+                session_id=session_id,
+                code=request.code,
+                language=request.language,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
     return ExecutionResult(**result)
 
 
@@ -95,24 +117,36 @@ async def execute_code(session_id: str, request: ExecuteRequest) -> ExecutionRes
 async def upload_file(session_id: str, file: UploadFile) -> FileUploadResponse:
     await code_interpreter_session_owners.require_owner(session_id, require_principal())
     content = await file.read()
-    try:
-        result = await registry.code_interpreter.upload_file(
-            session_id=session_id,
-            filename=file.filename or "upload",
-            content=content,
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e)) from e
+    async with audit_mutation(
+        AuditAction.CODE_FILE_UPLOAD,
+        resource_type=ResourceType.FILE,
+        resource_id=f"{session_id}/{file.filename or 'upload'}",
+        metadata={"size_bytes": len(content)},
+    ):
+        try:
+            result = await registry.code_interpreter.upload_file(
+                session_id=session_id,
+                filename=file.filename or "upload",
+                content=content,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
     return FileUploadResponse(**result)
 
 
 @router.get("/sessions/{session_id}/files/{filename}")
 async def download_file(session_id: str, filename: str) -> Response:
     await code_interpreter_session_owners.require_owner(session_id, require_principal())
-    try:
-        content = await registry.code_interpreter.download_file(session_id=session_id, filename=filename)
-    except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e)) from e
+    async with audit_mutation(
+        AuditAction.CODE_FILE_DOWNLOAD,
+        resource_type=ResourceType.FILE,
+        resource_id=f"{session_id}/{filename}",
+    ) as audit:
+        try:
+            content = await registry.code_interpreter.download_file(session_id=session_id, filename=filename)
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        audit.metadata["size_bytes"] = len(content)
     return Response(
         content=content,
         media_type="application/octet-stream",

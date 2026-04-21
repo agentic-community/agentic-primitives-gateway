@@ -36,17 +36,40 @@ See [Audit API Reference](../api/audit.md) for the `AuditEvent` schema and the f
 
 ## Signals at a Glance
 
+Every primitive emits structured audit events for its mutations.
+Read-only operations are covered by the universal `provider.call` emit
+from `MetricsProxy`.  Subsystems (auth, policy, credentials) emit at the
+middleware layer.
+
+**Cross-cutting:**
+
 | Layer | Signal | Where it fires |
 |---|---|---|
 | HTTP | `http.request` | `AuditMiddleware` wraps every non-exempt request |
-| Auth | `auth.success` / `auth.failure` | `AuthenticationMiddleware` |
-| Policy | `policy.allow` / `policy.deny` | `PolicyEnforcementMiddleware` (Cedar) |
-| Credentials | `credential.resolve` / `credential.write` / `credential.delete` | `CredentialResolutionMiddleware` + `routes/credentials.py` |
+| Auth | `auth.success` / `auth.failure` / `auth.logout` | `AuthenticationMiddleware` |
+| Policy | `policy.allow` / `policy.deny` / `policy.load` | `PolicyEnforcementMiddleware` + `CedarPolicyEnforcer.load_policies()` |
+| Credentials | `credential.resolve` / `credential.read` / `credential.write` / `credential.delete` | `CredentialResolutionMiddleware` + `routes/{credentials,identity}.py` |
 | Ownership | `resource.access.denied` | `auth/access.py::require_access` / `require_owner_or_admin` |
-| CRUD | `agent.create/update/delete`, `team.*`, `policy.*` | Mutation routes |
-| Lifecycle | `agent.run.{start,complete,failed,cancelled}`, `team.run.*` | `AgentRunner`, `TeamRunner` |
-| Invocation | `tool.call` (per tool), `llm.generate` (with tokens) | `execute_tool`, `LLMProvider` ABC |
-| Primitive | `provider.call` | `MetricsProxy` — every wrapped primitive method |
+| Network | `network.access.denied` | gateway egress guards (URL-shaped credential rejection) |
+| Primitive (universal) | `provider.call` | `MetricsProxy` — every wrapped primitive method (coroutine + async generator) |
+
+**Per-primitive CRUD + lifecycle:**
+
+| Primitive | Resource type(s) | Actions | Where it fires |
+|---|---|---|---|
+| Agents | `agent` | `agent.{create,update,delete}`, `agent.run.{start,complete,failed,cancelled}`, `agent.delegate`, `agent.version.{create,propose,approve,reject,deploy}`, `agent.fork` | `routes/agents.py`, `AgentRunner`, `agents/tools/delegation.py` |
+| Teams | `team` | `team.{create,update,delete}`, `team.run.{start,complete,failed,cancelled}`, `team.version.{create,propose,approve,reject,deploy}`, `team.fork` | `routes/teams.py`, `TeamRunner` |
+| Policy | `policy`, `policy_engine` | `policy.{create,update,delete}`, `policy.load` | `routes/policy.py`, `CedarPolicyEnforcer` |
+| Credentials | `credential`, `user` | `credential.{resolve,read,write,delete}` | `credentials/middleware.py`, `routes/credentials.py`, `routes/identity.py` |
+| Identity | `identity` | `identity.credential_provider.{create,update,delete}`, `identity.workload.{create,update,delete}` | `routes/identity.py` |
+| Memory | `memory` | `memory.resource.{create,delete}`, `memory.strategy.{create,delete}`, `memory.branch.create`, `memory.event.{append,delete}`, `memory.record.{write,delete}` | `routes/memory.py` |
+| Tools | `tool` | `tool.{register,delete}`, `tool.server.register`, `tool.call` (per execution) | `routes/tools.py`, `agents/tools/catalog.execute_tool` |
+| LLM | `llm` | `llm.generate` (with input/output tokens) | `LLMProvider.__init_subclass__` (automatic on every backend) |
+| Evaluations | `evaluator` | `evaluator.{create,update,delete}`, `evaluator.score.{create,delete}`, `evaluator.online_config.{create,delete}` | `routes/evaluations.py` |
+| Observability | `trace` | `observability.trace.{ingest,update}`, `observability.trace.generation.log`, `observability.trace.score.create`, `observability.log.ingest`, `observability.flush` | `routes/observability.py` |
+| Browser | `session`, `page` | `session.{create,terminate}` (with `metadata.primitive=browser`), `browser.{navigate,click,type,evaluate}` | `routes/browser.py` |
+| Code-interpreter | `session`, `code_execution`, `file` | `session.{create,terminate}` (with `metadata.primitive=code_interpreter`), `code_interpreter.execute`, `code_interpreter.file.{upload,download}` | `routes/code_interpreter.py` |
+| Tasks | `task` | `task.{create,claim,update,note}` | `agents/tools/handlers.py` (when invoked via agent tool calls) |
 
 ## Correlation IDs
 
@@ -99,6 +122,25 @@ All metrics are exposed at `GET /metrics`. Cardinality is intentionally bounded:
 | `gateway_audit_sink_events_total` | `sink`, `outcome` | Per-sink worker |
 | `gateway_audit_sink_queue_depth` | `sink` | Per-sink gauge |
 | `gateway_audit_events_dropped_total` | `sink`, `reason` | Router backpressure |
+
+## Wire Everything, Filter At Config
+
+APG's default is **emit-everything** — every mutation, every primitive
+call, every session lifecycle event — so the audit stream is the
+authoritative record of *what happened*, not just *what somebody
+remembered to audit*.  High-volume deployments tame the stream at the
+router with `audit.filter`:
+
+- `exclude_actions`: exact action drops (`provider.call`).
+- `exclude_action_categories`: category prefix drops (`memory` → every `memory.*`).
+- `sample_rates`: per-action keep fraction in `[0.0, 1.0]`.
+
+Filtered events increment
+`gateway_audit_events_dropped_total{sink="__router__",reason="filtered"}`
+so operators can see how aggressive the filter is.  Keep the
+compliance-relevant events unfiltered — auth, policy, ownership,
+version/fork, and credential events.  See the [Observability
+Guide](../guides/observability.md#taming-audit-volume) for recipes.
 
 ## Choosing Sinks
 

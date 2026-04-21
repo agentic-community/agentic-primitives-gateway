@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import logging
 from typing import Any
 
 import cedarpy
 
+from agentic_primitives_gateway.audit.emit import emit_audit_event
+from agentic_primitives_gateway.audit.models import AuditAction, AuditOutcome, ResourceType
 from agentic_primitives_gateway.enforcement.base import PolicyEnforcer
 from agentic_primitives_gateway.primitives._sync import SyncRunnerMixin
 from agentic_primitives_gateway.registry import registry
@@ -55,6 +58,7 @@ class CedarPolicyEnforcer(SyncRunnerMixin, PolicyEnforcer):
         self._refresh_interval = policy_refresh_interval
         self._engine_id = engine_id
         self._policies: list[str] = []
+        self._policy_fingerprint: str | None = None
         self._refresh_task: asyncio.Task[None] | None = None
         logger.info(
             "CedarPolicyEnforcer initialized (refresh=%ds, engine_id=%s)",
@@ -164,6 +168,23 @@ class CedarPolicyEnforcer(SyncRunnerMixin, PolicyEnforcer):
                 if isinstance(definition, str) and definition.strip():
                     new_policies.append(definition)
 
+            # Only emit the audit event when the policy set *actually changed*;
+            # the background refresh runs every 30s by default and re-emitting
+            # on every tick would drown compliance dashboards.
+            fingerprint = hashlib.sha256("\n\n".join(sorted(new_policies)).encode("utf-8")).hexdigest()
+            if fingerprint != self._policy_fingerprint:
+                emit_audit_event(
+                    action=AuditAction.POLICY_LOAD,
+                    outcome=AuditOutcome.SUCCESS,
+                    resource_type=ResourceType.POLICY_ENGINE,
+                    resource_id=self._engine_id,
+                    metadata={
+                        "policy_count": len(new_policies),
+                        "previous_count": len(self._policies),
+                    },
+                )
+                self._policy_fingerprint = fingerprint
+
             self._policies = new_policies
             logger.info(
                 "CedarPolicyEnforcer loaded %d policies from engine %s",
@@ -171,7 +192,14 @@ class CedarPolicyEnforcer(SyncRunnerMixin, PolicyEnforcer):
                 self._engine_id,
             )
 
-        except Exception:
+        except Exception as e:
+            emit_audit_event(
+                action=AuditAction.POLICY_LOAD,
+                outcome=AuditOutcome.FAILURE,
+                resource_type=ResourceType.POLICY_ENGINE,
+                resource_id=self._engine_id,
+                metadata={"error_type": type(e).__name__},
+            )
             logger.exception("Failed to refresh Cedar policies; keeping existing set")
 
     def start_refresh(self) -> None:

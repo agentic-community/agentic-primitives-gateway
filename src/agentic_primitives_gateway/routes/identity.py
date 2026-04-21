@@ -2,6 +2,8 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 from starlette.responses import Response
 
+from agentic_primitives_gateway.audit.emit import audit_mutation, emit_audit_event
+from agentic_primitives_gateway.audit.models import AuditAction, AuditOutcome, ResourceType
 from agentic_primitives_gateway.models.enums import Primitive
 from agentic_primitives_gateway.models.identity import (
     ApiKeyRequest,
@@ -35,25 +37,59 @@ router = APIRouter(
 
 @router.post("/token", response_model=TokenResponse)
 async def get_token(request: TokenRequest) -> TokenResponse:
-    result = await registry.identity.get_token(
-        credential_provider=request.credential_provider,
-        workload_token=request.workload_token,
-        auth_flow=request.auth_flow,
-        scopes=request.scopes or None,
-        callback_url=request.callback_url,
-        force_auth=request.force_auth,
-        session_uri=request.session_uri,
-        custom_state=request.custom_state,
-        custom_parameters=request.custom_parameters,
+    try:
+        result = await registry.identity.get_token(
+            credential_provider=request.credential_provider,
+            workload_token=request.workload_token,
+            auth_flow=request.auth_flow,
+            scopes=request.scopes or None,
+            callback_url=request.callback_url,
+            force_auth=request.force_auth,
+            session_uri=request.session_uri,
+            custom_state=request.custom_state,
+            custom_parameters=request.custom_parameters,
+        )
+    except Exception as exc:
+        emit_audit_event(
+            action=AuditAction.CREDENTIAL_READ,
+            outcome=AuditOutcome.FAILURE,
+            resource_type=ResourceType.CREDENTIAL,
+            resource_id=request.credential_provider,
+            metadata={"kind": "token", "error_type": type(exc).__name__},
+        )
+        raise
+    emit_audit_event(
+        action=AuditAction.CREDENTIAL_READ,
+        outcome=AuditOutcome.SUCCESS,
+        resource_type=ResourceType.CREDENTIAL,
+        resource_id=request.credential_provider,
+        metadata={"kind": "token", "auth_flow": request.auth_flow},
     )
     return TokenResponse(**result)
 
 
 @router.post("/api-key", response_model=ApiKeyResponse)
 async def get_api_key(request: ApiKeyRequest) -> ApiKeyResponse:
-    result = await registry.identity.get_api_key(
-        credential_provider=request.credential_provider,
-        workload_token=request.workload_token,
+    try:
+        result = await registry.identity.get_api_key(
+            credential_provider=request.credential_provider,
+            workload_token=request.workload_token,
+        )
+    except Exception as exc:
+        emit_audit_event(
+            action=AuditAction.CREDENTIAL_READ,
+            outcome=AuditOutcome.FAILURE,
+            resource_type=ResourceType.CREDENTIAL,
+            resource_id=request.credential_provider,
+            metadata={"kind": "api_key", "error_type": type(exc).__name__},
+        )
+        raise
+    emit_audit_event(
+        action=AuditAction.CREDENTIAL_READ,
+        outcome=AuditOutcome.SUCCESS,
+        resource_type=ResourceType.CREDENTIAL,
+        resource_id=request.credential_provider,
+        metadata={"kind": "api_key"},
     )
     return ApiKeyResponse(**result)
 
@@ -93,16 +129,22 @@ async def list_credential_providers() -> ListCredentialProvidersResponse:
 @router.post("/credential-providers", response_model=CredentialProviderInfo, status_code=201)
 async def create_credential_provider(request: CreateCredentialProviderRequest) -> JSONResponse:
     require_admin()
-    try:
-        result = await registry.identity.create_credential_provider(
-            name=request.name,
-            provider_type=request.provider_type,
-            config=request.config,
-        )
-    except NotImplementedError:
-        return JSONResponse(
-            status_code=501, content={"detail": "create_credential_provider not supported by this provider"}
-        )
+    async with audit_mutation(
+        AuditAction.IDENTITY_CREDENTIAL_PROVIDER_CREATE,
+        resource_type=ResourceType.IDENTITY,
+        resource_id=request.name,
+        metadata={"provider_type": request.provider_type},
+    ):
+        try:
+            result = await registry.identity.create_credential_provider(
+                name=request.name,
+                provider_type=request.provider_type,
+                config=request.config,
+            )
+        except NotImplementedError:
+            return JSONResponse(
+                status_code=501, content={"detail": "create_credential_provider not supported by this provider"}
+            )
     return JSONResponse(status_code=201, content=CredentialProviderInfo(**result).model_dump(mode="json"))
 
 
@@ -116,27 +158,37 @@ async def get_credential_provider(name: str) -> JSONResponse:
 @router.put("/credential-providers/{name}", response_model=CredentialProviderInfo)
 async def update_credential_provider(name: str, request: UpdateCredentialProviderRequest) -> JSONResponse:
     require_admin()
-    try:
-        result = await registry.identity.update_credential_provider(
-            name=name,
-            config=request.config,
-        )
-    except NotImplementedError:
-        return JSONResponse(
-            status_code=501, content={"detail": "update_credential_provider not supported by this provider"}
-        )
+    async with audit_mutation(
+        AuditAction.IDENTITY_CREDENTIAL_PROVIDER_UPDATE,
+        resource_type=ResourceType.IDENTITY,
+        resource_id=name,
+    ):
+        try:
+            result = await registry.identity.update_credential_provider(
+                name=name,
+                config=request.config,
+            )
+        except NotImplementedError:
+            return JSONResponse(
+                status_code=501, content={"detail": "update_credential_provider not supported by this provider"}
+            )
     return JSONResponse(content=CredentialProviderInfo(**result).model_dump(mode="json"))
 
 
 @router.delete("/credential-providers/{name}", status_code=204)
 async def delete_credential_provider(name: str) -> Response:
     require_admin()
-    try:
-        await registry.identity.delete_credential_provider(name)
-    except NotImplementedError:
-        return JSONResponse(
-            status_code=501, content={"detail": "delete_credential_provider not supported by this provider"}
-        )
+    async with audit_mutation(
+        AuditAction.IDENTITY_CREDENTIAL_PROVIDER_DELETE,
+        resource_type=ResourceType.IDENTITY,
+        resource_id=name,
+    ):
+        try:
+            await registry.identity.delete_credential_provider(name)
+        except NotImplementedError:
+            return JSONResponse(
+                status_code=501, content={"detail": "delete_credential_provider not supported by this provider"}
+            )
     return Response(status_code=204)
 
 
@@ -157,15 +209,20 @@ async def list_workload_identities() -> JSONResponse:
 @router.post("/workload-identities", response_model=WorkloadIdentityInfo, status_code=201)
 async def create_workload_identity(request: CreateWorkloadIdentityRequest) -> JSONResponse:
     require_admin()
-    try:
-        result = await registry.identity.create_workload_identity(
-            name=request.name,
-            allowed_return_urls=request.allowed_return_urls or None,
-        )
-    except NotImplementedError:
-        return JSONResponse(
-            status_code=501, content={"detail": "create_workload_identity not supported by this provider"}
-        )
+    async with audit_mutation(
+        AuditAction.IDENTITY_WORKLOAD_CREATE,
+        resource_type=ResourceType.IDENTITY,
+        resource_id=request.name,
+    ):
+        try:
+            result = await registry.identity.create_workload_identity(
+                name=request.name,
+                allowed_return_urls=request.allowed_return_urls or None,
+            )
+        except NotImplementedError:
+            return JSONResponse(
+                status_code=501, content={"detail": "create_workload_identity not supported by this provider"}
+            )
     return JSONResponse(status_code=201, content=WorkloadIdentityInfo(**result).model_dump(mode="json"))
 
 
@@ -179,25 +236,35 @@ async def get_workload_identity(name: str) -> JSONResponse:
 @router.put("/workload-identities/{name}", response_model=WorkloadIdentityInfo)
 async def update_workload_identity(name: str, request: UpdateWorkloadIdentityRequest) -> JSONResponse:
     require_admin()
-    try:
-        result = await registry.identity.update_workload_identity(
-            name=name,
-            allowed_return_urls=request.allowed_return_urls or None,
-        )
-    except NotImplementedError:
-        return JSONResponse(
-            status_code=501, content={"detail": "update_workload_identity not supported by this provider"}
-        )
+    async with audit_mutation(
+        AuditAction.IDENTITY_WORKLOAD_UPDATE,
+        resource_type=ResourceType.IDENTITY,
+        resource_id=name,
+    ):
+        try:
+            result = await registry.identity.update_workload_identity(
+                name=name,
+                allowed_return_urls=request.allowed_return_urls or None,
+            )
+        except NotImplementedError:
+            return JSONResponse(
+                status_code=501, content={"detail": "update_workload_identity not supported by this provider"}
+            )
     return JSONResponse(content=WorkloadIdentityInfo(**result).model_dump(mode="json"))
 
 
 @router.delete("/workload-identities/{name}", status_code=204)
 async def delete_workload_identity(name: str) -> Response:
     require_admin()
-    try:
-        await registry.identity.delete_workload_identity(name)
-    except NotImplementedError:
-        return JSONResponse(
-            status_code=501, content={"detail": "delete_workload_identity not supported by this provider"}
-        )
+    async with audit_mutation(
+        AuditAction.IDENTITY_WORKLOAD_DELETE,
+        resource_type=ResourceType.IDENTITY,
+        resource_id=name,
+    ):
+        try:
+            await registry.identity.delete_workload_identity(name)
+        except NotImplementedError:
+            return JSONResponse(
+                status_code=501, content={"detail": "delete_workload_identity not supported by this provider"}
+            )
     return Response(status_code=204)
