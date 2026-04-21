@@ -340,6 +340,32 @@ class AuditSinkConfig(BaseModel):
     config: dict[str, Any] = Field(default_factory=dict)
 
 
+class AuditFilterConfig(BaseModel):
+    """Router-level filters that drop events before fan-out.
+
+    Events matched by a filter never reach any sink and are counted as
+    ``gateway_audit_events_dropped_total{reason="filtered"}``.  Filters
+    compose: an event survives if it passes *every* rule.
+
+    Use this to tame the firehose in production — ``provider.call`` is
+    the biggest source of volume by design (every primitive RPC emits
+    one), and ``memory.record.*`` / ``tool.call`` follow.  Keep the
+    compliance-relevant events (auth / policy / version / fork) unfiltered.
+    """
+
+    exclude_actions: list[str] = Field(default_factory=list)
+    """Exact action names to drop (e.g. ``"provider.call"``)."""
+
+    exclude_action_categories: list[str] = Field(default_factory=list)
+    """Category prefixes to drop (e.g. ``"memory"`` drops every
+    ``memory.*`` action).  The category is the first ``.``-segment."""
+
+    sample_rates: dict[str, float] = Field(default_factory=dict)
+    """Per-action fractional keep rates in ``[0.0, 1.0]``.  Use for
+    high-volume events you still want visibility into — e.g.
+    ``{"provider.call": 0.01}`` keeps 1%."""
+
+
 class AuditConfig(BaseModel):
     """Configuration for the audit subsystem.
 
@@ -351,6 +377,7 @@ class AuditConfig(BaseModel):
     enabled: bool = True
     stdout_json: bool = True
     sinks: list[AuditSinkConfig] = Field(default_factory=list)
+    filter: AuditFilterConfig = AuditFilterConfig()
     redact_keys: list[str] = Field(default_factory=list)
     redact_principal_id: bool = False
     queue_size: int = 2048

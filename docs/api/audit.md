@@ -119,9 +119,91 @@ Credential events **never** log values — only attribute names.
 | Action | Outcome | Emitted by | Key metadata |
 |---|---|---|---|
 | `tool.call` | `success`/`failure` | `agents/tools/catalog.execute_tool` | `tool_name`, `primitive`, `duration_ms`, `error_type` |
+| `tool.register` | `success`/`failure` | `POST /api/v1/tools` | `duration_ms` |
+| `tool.delete` | `success`/`failure` | `DELETE /api/v1/tools/{name}` | `duration_ms` |
+| `tool.server.register` | `success`/`failure` | `POST /api/v1/tools/servers` | `duration_ms` |
 | `llm.generate` | `success`/`error` | `LLMProvider` ABC (automatic) | `model`, `input_tokens`, `output_tokens`, `error_type` |
 
 Tool events **never** log tool input (the LLM may pass credentials through tool arguments).
+
+### Memory
+
+| Action | Outcome | Emitted by | Key metadata |
+|---|---|---|---|
+| `memory.resource.create` | `success`/`failure` | `POST /api/v1/memory/resources` | `name`, `memory_id` |
+| `memory.resource.delete` | `success`/`failure` | `DELETE /api/v1/memory/resources/{memory_id}` | `memory_id` |
+| `memory.strategy.create` | `success`/`failure` | `POST /api/v1/memory/resources/{memory_id}/strategies` | `strategy_id` |
+| `memory.strategy.delete` | `success`/`failure` | `DELETE /api/v1/memory/resources/{memory_id}/strategies/{strategy_id}` | `strategy_id` |
+| `memory.event.append` | `success`/`failure` | `POST /api/v1/memory/sessions/{actor}/{session}/events` | `event_id`, `message_count` |
+| `memory.event.delete` | `success`/`failure` | `DELETE /api/v1/memory/sessions/{actor}/{session}/events/{event_id}` | |
+| `memory.branch.create` | `success`/`failure` | `POST /api/v1/memory/sessions/{actor}/{session}/branches` | `branch_name`, `root_event_id` |
+| `memory.record.write` | `success`/`failure` | `POST /api/v1/memory/{namespace}` | |
+| `memory.record.delete` | `success`/`failure` | `DELETE /api/v1/memory/{namespace}/{key}` | |
+
+### Evaluators
+
+| Action | Outcome | Emitted by | Key metadata |
+|---|---|---|---|
+| `evaluator.create` | `success`/`failure` | `POST /api/v1/evaluations/evaluators` | `name`, `evaluator_type`, `evaluator_id` |
+| `evaluator.update` | `success`/`failure` | `PUT /api/v1/evaluations/evaluators/{id}` | |
+| `evaluator.delete` | `success`/`failure` | `DELETE /api/v1/evaluations/evaluators/{id}` | |
+| `evaluator.score.create` | `success`/`failure` | `POST /api/v1/evaluations/scores` | `name`, `trace_id`, `score_id` |
+| `evaluator.score.delete` | `success`/`failure` | `DELETE /api/v1/evaluations/scores/{id}` | |
+| `evaluator.online_config.create` | `success`/`failure` | `POST /api/v1/evaluations/online-configs` | `name`, `config_id` |
+| `evaluator.online_config.delete` | `success`/`failure` | `DELETE /api/v1/evaluations/online-configs/{id}` | |
+
+### Identity
+
+| Action | Outcome | Emitted by | Key metadata |
+|---|---|---|---|
+| `credential.read` | `success`/`failure` | `POST /api/v1/identity/{token,api-key}` | `kind`, `credential_provider` |
+| `identity.credential_provider.create` | `success`/`failure` | `POST /api/v1/identity/credential-providers` | `provider_type` |
+| `identity.credential_provider.update` | `success`/`failure` | `PUT /api/v1/identity/credential-providers/{name}` | |
+| `identity.credential_provider.delete` | `success`/`failure` | `DELETE /api/v1/identity/credential-providers/{name}` | |
+| `identity.workload.create` | `success`/`failure` | `POST /api/v1/identity/workload-identities` | |
+| `identity.workload.update` | `success`/`failure` | `PUT /api/v1/identity/workload-identities/{name}` | |
+| `identity.workload.delete` | `success`/`failure` | `DELETE /api/v1/identity/workload-identities/{name}` | |
+
+### Observability
+
+| Action | Outcome | Emitted by | Key metadata |
+|---|---|---|---|
+| `observability.trace.ingest` | `success`/`failure` | `POST /api/v1/observability/traces` | |
+| `observability.trace.update` | `success`/`failure` | `PUT /api/v1/observability/traces/{id}` | |
+| `observability.trace.generation.log` | `success`/`failure` | `POST /api/v1/observability/traces/{id}/generations` | `name`, `model` |
+| `observability.trace.score.create` | `success`/`failure` | `POST /api/v1/observability/traces/{id}/scores` | `name` |
+| `observability.log.ingest` | `success`/`failure` | `POST /api/v1/observability/logs` | |
+| `observability.flush` | `success`/`failure` | `POST /api/v1/observability/flush` | |
+
+### Browser
+
+| Action | Outcome | Emitted by | Key metadata |
+|---|---|---|---|
+| `browser.navigate` | `success`/`failure` | `POST /api/v1/browser/sessions/{id}/navigate` | `url` |
+| `browser.click` | `success`/`failure` | `POST /api/v1/browser/sessions/{id}/click` | `selector` |
+| `browser.type` | `success`/`failure` | `POST /api/v1/browser/sessions/{id}/type` | `selector`, `text_length` (never `text` itself) |
+| `browser.evaluate` | `success`/`failure` | `POST /api/v1/browser/sessions/{id}/evaluate` | `expression_length` (never the expression itself) |
+
+### Code Interpreter
+
+| Action | Outcome | Emitted by | Key metadata |
+|---|---|---|---|
+| `code_interpreter.execute` | `success`/`failure` | `POST /api/v1/code-interpreter/sessions/{id}/execute` | `language`, `code_length` (never the code itself) |
+| `code_interpreter.file.upload` | `success`/`failure` | `POST /api/v1/code-interpreter/sessions/{id}/files` | `size_bytes` |
+| `code_interpreter.file.download` | `success`/`failure` | `GET /api/v1/code-interpreter/sessions/{id}/files/{name}` | `size_bytes` |
+
+### Tasks (team-run task board)
+
+Emitted when an agent invokes the task tool inside a team run.  Direct
+`registry.tasks.*` calls from `TeamRunner` are covered by
+`provider.call`.
+
+| Action | Outcome | Emitted by | Key metadata |
+|---|---|---|---|
+| `task.create` | `success` | `agents/tools/handlers.py::task_create` | `created_by`, `depends_on`, `priority`, `suggested_worker` |
+| `task.claim` | `success`/`failure` | `agents/tools/handlers.py::task_claim` | `claimed_by` |
+| `task.update` | `success`/`failure` | `agents/tools/handlers.py::task_update` | `status`, `has_result` |
+| `task.note` | `success`/`failure` | `agents/tools/handlers.py::task_add_note` | `author` |
 
 ### Resource Access
 
@@ -135,17 +217,21 @@ Tool events **never** log tool input (the LLM may pass credentials through tool 
 |---|---|---|---|
 | `http.request` | `success`/`failure` | `AuditMiddleware` | method, path, status, duration, source_ip, user_agent |
 | `provider.call` | `success`/`failure` | `MetricsProxy` (every wrapped primitive method) | `primitive`, `provider`, `method`, `duration_ms` |
-| `session.create/terminate` | `success` | Reserved | |
+| `session.create` | `success`/`failure` | `POST /api/v1/{browser,code-interpreter}/sessions` | `primitive`, `language` |
+| `session.terminate` | `success`/`failure` | `DELETE /api/v1/{browser,code-interpreter}/sessions/{id}` | `primitive` |
+| `agent.delegate` | `success`/`failure` | `agents/tools/delegation.py` (agent-as-tool) | `parent_owner_id`, `depth`, `error_type` |
+| `policy.load` | `success`/`failure` | `CedarPolicyEnforcer.load_policies()` (only when policy set changes) | `policy_count`, `previous_count` |
 
 ## Outcome Values
 
 ```python
 class AuditOutcome(StrEnum):
-    ALLOW   = "allow"
-    DENY    = "deny"
-    SUCCESS = "success"
-    FAILURE = "failure"
-    ERROR   = "error"
+    ALLOW           = "allow"
+    DENY            = "deny"
+    SUCCESS         = "success"
+    FAILURE         = "failure"
+    ERROR           = "error"
+    NOT_IMPLEMENTED = "not_implemented"
 ```
 
 | Value | Use for |
@@ -155,6 +241,7 @@ class AuditOutcome(StrEnum):
 | `success` | Successful mutation or HTTP 2xx |
 | `failure` | Expected failure (auth rejected, 4xx, validation) |
 | `error` | Unexpected failure (exception, 5xx) |
+| `not_implemented` | Provider deliberately doesn't implement the requested operation — emitted by `MetricsProxy` so compliance dashboards don't count optional-method absence as a real failure |
 
 ## Resource Types
 
@@ -171,7 +258,19 @@ class ResourceType(StrEnum):
     MEMORY        = "memory"
     USER          = "user"
     LLM           = "llm"
+    EVALUATOR     = "evaluator"
+    IDENTITY      = "identity"
+    TASK          = "task"
+    TRACE         = "trace"
+    CODE_EXECUTION = "code_execution"
+    FILE          = "file"
+    PAGE          = "page"
 ```
+
+The `user` type is reserved for future emits that target a specific user
+record (today, credential operations use `credential` since the operation
+is on the credential, not the user).  Every other type is emitted by at
+least one action above.
 
 ## Redaction
 
@@ -215,11 +314,36 @@ audit:
   redact_principal_id: false # hash actor_id before emit
   queue_size: 2048           # per-sink queue bound
   sink_timeout_seconds: 2.0  # per-emit timeout per sink
+  filter:                    # drop noisy events before fan-out
+    exclude_actions: []        # exact action drops (e.g. "provider.call")
+    exclude_action_categories: []  # prefix drops (e.g. "memory")
+    sample_rates: {}           # per-action keep rate in [0.0, 1.0]
 
 logging:
   format: json              # text | json
   sanitize: true            # install LogSanitizationFilter
 ```
+
+### Filtering Noisy Events
+
+The router drops events that match any `filter` rule before fan-out, so
+filtered events never hit a sink queue.  Each rule is independent and
+compose logically with **AND**: an event must pass *every* rule to
+survive.
+
+- `exclude_actions`: exact action string match (drop every `provider.call`).
+- `exclude_action_categories`: first `.`-segment match (drop every `memory.*`).
+- `sample_rates`: per-action keep fraction in `[0.0, 1.0]`.  `0.0` drops
+  every event, `1.0` keeps every event.  Sampling is independent per-event.
+
+Dropped events increment
+`gateway_audit_events_dropped_total{sink="__router__",reason="filtered"}`.
+
+Keep compliance-relevant events unfiltered — auth, policy, resource
+access, credential, version, and fork events are emitted at low volume
+but carry high audit value.  Filter the high-volume ones:
+`provider.call` (one per primitive RPC), `tool.call`, and the
+`memory.record.*` family.
 
 ### Built-in Sink Aliases
 

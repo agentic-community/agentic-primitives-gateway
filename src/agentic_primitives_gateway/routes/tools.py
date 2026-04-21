@@ -2,6 +2,8 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 
+from agentic_primitives_gateway.audit.emit import audit_mutation
+from agentic_primitives_gateway.audit.models import AuditAction, ResourceType
 from agentic_primitives_gateway.models.enums import Primitive
 from agentic_primitives_gateway.models.tools import (
     InvokeToolRequest,
@@ -28,7 +30,12 @@ router = APIRouter(
 
 @router.post("", response_model=ToolInfo, status_code=201)
 async def register_tool(request: RegisterToolRequest) -> ToolInfo:
-    await registry.tools.register_tool(request.model_dump())
+    async with audit_mutation(
+        AuditAction.TOOL_REGISTER,
+        resource_type=ResourceType.TOOL,
+        resource_id=request.name,
+    ):
+        await registry.tools.register_tool(request.model_dump())
     return ToolInfo(**request.model_dump())
 
 
@@ -59,10 +66,15 @@ async def list_servers() -> Any:
 
 @router.post("/servers", status_code=201)
 async def register_server(request: RegisterServerRequest) -> Any:
-    try:
-        return await registry.tools.register_server(request.model_dump())
-    except NotImplementedError:
-        raise HTTPException(status_code=501, detail="Server registration not supported by this provider") from None
+    async with audit_mutation(
+        AuditAction.TOOL_SERVER_REGISTER,
+        resource_type=ResourceType.TOOL,
+        resource_id=request.name,
+    ):
+        try:
+            return await registry.tools.register_server(request.model_dump())
+        except NotImplementedError:
+            raise HTTPException(status_code=501, detail="Server registration not supported by this provider") from None
 
 
 @router.get("/servers/{server_name}")
@@ -98,5 +110,10 @@ async def get_tool(name: str) -> Any:
 @router.delete("/{name:path}")
 @handle_provider_errors("delete_tool not supported by this provider", not_found="Tool not found")
 async def delete_tool(name: str) -> Response:
-    await registry.tools.delete_tool(name)
+    async with audit_mutation(
+        AuditAction.TOOL_DELETE,
+        resource_type=ResourceType.TOOL,
+        resource_id=name,
+    ):
+        await registry.tools.delete_tool(name)
     return Response(status_code=204)

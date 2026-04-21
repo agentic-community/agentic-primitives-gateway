@@ -10,6 +10,8 @@ import json
 import logging
 from typing import Any
 
+from agentic_primitives_gateway.audit.emit import emit_audit_event
+from agentic_primitives_gateway.audit.models import AuditAction, AuditOutcome, ResourceType
 from agentic_primitives_gateway.models.agents import AgentSpec, PrimitiveConfig
 from agentic_primitives_gateway.models.tasks import TaskNote
 from agentic_primitives_gateway.registry import registry
@@ -222,6 +224,18 @@ async def task_create(
         priority=priority,
         suggested_worker=assigned_to or None,
     )
+    emit_audit_event(
+        action=AuditAction.TASK_CREATE,
+        outcome=AuditOutcome.SUCCESS,
+        resource_type=ResourceType.TASK,
+        resource_id=f"{team_run_id}/{task.id}",
+        metadata={
+            "created_by": agent_name,
+            "depends_on": deps,
+            "priority": priority,
+            "suggested_worker": assigned_to or None,
+        },
+    )
     return json.dumps(
         {"id": task.id, "title": task.title, "status": task.status, "assigned_to": task.suggested_worker}, default=str
     )
@@ -256,6 +270,13 @@ async def task_claim(team_run_id: str, task_id: str, agent_name: str) -> str:
         task_id=task_id,
         agent_name=agent_name,
     )
+    emit_audit_event(
+        action=AuditAction.TASK_CLAIM,
+        outcome=AuditOutcome.SUCCESS if task is not None else AuditOutcome.FAILURE,
+        resource_type=ResourceType.TASK,
+        resource_id=f"{team_run_id}/{task_id}",
+        metadata={"claimed_by": agent_name},
+    )
     if task is None:
         return f"Could not claim task '{task_id}' — already claimed, not found, or dependencies not met."
     return f"Claimed task '{task_id}': {task.title}"
@@ -273,6 +294,13 @@ async def task_update(
         status=status or None,
         result=result or None,
     )
+    emit_audit_event(
+        action=AuditAction.TASK_UPDATE,
+        outcome=AuditOutcome.SUCCESS if task is not None else AuditOutcome.FAILURE,
+        resource_type=ResourceType.TASK,
+        resource_id=f"{team_run_id}/{task_id}",
+        metadata={"status": status or None, "has_result": bool(result)},
+    )
     if task is None:
         return f"Task '{task_id}' not found."
     return f"Updated task '{task_id}' — status={task.status}"
@@ -281,6 +309,13 @@ async def task_update(
 async def task_add_note(team_run_id: str, task_id: str, agent_name: str, content: str) -> str:
     note = TaskNote(agent=agent_name, content=content)
     task = await registry.tasks.add_note(team_run_id=team_run_id, task_id=task_id, note=note)
+    emit_audit_event(
+        action=AuditAction.TASK_NOTE,
+        outcome=AuditOutcome.SUCCESS if task is not None else AuditOutcome.FAILURE,
+        resource_type=ResourceType.TASK,
+        resource_id=f"{team_run_id}/{task_id}",
+        metadata={"author": agent_name},
+    )
     if task is None:
         return f"Task '{task_id}' not found."
     return f"Added note to task '{task_id}'."

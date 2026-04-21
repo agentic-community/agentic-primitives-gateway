@@ -2,6 +2,8 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 
+from agentic_primitives_gateway.audit.emit import audit_mutation
+from agentic_primitives_gateway.audit.models import AuditAction, ResourceType
 from agentic_primitives_gateway.models.enums import Primitive
 from agentic_primitives_gateway.models.evaluations import (
     CreateEvaluatorRequest,
@@ -25,12 +27,20 @@ router = APIRouter(
 
 @router.post("/evaluators", status_code=201)
 async def create_evaluator(request: CreateEvaluatorRequest) -> Any:
-    return await registry.evaluations.create_evaluator(
-        name=request.name,
-        evaluator_type=request.evaluator_type,
-        config=request.config or None,
-        description=request.description,
-    )
+    async with audit_mutation(
+        AuditAction.EVALUATOR_CREATE,
+        resource_type=ResourceType.EVALUATOR,
+        metadata={"name": request.name, "evaluator_type": request.evaluator_type},
+    ) as audit:
+        result = await registry.evaluations.create_evaluator(
+            name=request.name,
+            evaluator_type=request.evaluator_type,
+            config=request.config or None,
+            description=request.description,
+        )
+        if isinstance(result, dict) and "evaluator_id" in result:
+            audit.resource_id = result["evaluator_id"]
+        return result
 
 
 @router.get("/evaluators")
@@ -51,16 +61,26 @@ async def get_evaluator(evaluator_id: str) -> Any:
 
 @router.put("/evaluators/{evaluator_id}")
 async def update_evaluator(evaluator_id: str, request: UpdateEvaluatorRequest) -> Any:
-    return await registry.evaluations.update_evaluator(
-        evaluator_id=evaluator_id,
-        config=request.config,
-        description=request.description,
-    )
+    async with audit_mutation(
+        AuditAction.EVALUATOR_UPDATE,
+        resource_type=ResourceType.EVALUATOR,
+        resource_id=evaluator_id,
+    ):
+        return await registry.evaluations.update_evaluator(
+            evaluator_id=evaluator_id,
+            config=request.config,
+            description=request.description,
+        )
 
 
 @router.delete("/evaluators/{evaluator_id}")
 async def delete_evaluator(evaluator_id: str) -> Response:
-    await registry.evaluations.delete_evaluator(evaluator_id=evaluator_id)
+    async with audit_mutation(
+        AuditAction.EVALUATOR_DELETE,
+        resource_type=ResourceType.EVALUATOR,
+        resource_id=evaluator_id,
+    ):
+        await registry.evaluations.delete_evaluator(evaluator_id=evaluator_id)
     return Response(status_code=204)
 
 
@@ -84,19 +104,27 @@ async def evaluate(request: EvaluateRequest) -> Any:
 
 @router.post("/scores", status_code=201)
 async def create_score(request: CreateScoreRequest) -> Any:
-    try:
-        return await registry.evaluations.create_score(
-            name=request.name,
-            value=request.value,
-            trace_id=request.trace_id,
-            observation_id=request.observation_id,
-            comment=request.comment,
-            data_type=request.data_type,
-            config_id=request.config_id,
-            metadata=request.metadata or None,
-        )
-    except NotImplementedError:
-        raise HTTPException(status_code=501, detail="Score recording not supported by this provider") from None
+    async with audit_mutation(
+        AuditAction.SCORE_CREATE,
+        resource_type=ResourceType.EVALUATOR,
+        metadata={"name": request.name, "trace_id": request.trace_id},
+    ) as audit:
+        try:
+            result = await registry.evaluations.create_score(
+                name=request.name,
+                value=request.value,
+                trace_id=request.trace_id,
+                observation_id=request.observation_id,
+                comment=request.comment,
+                data_type=request.data_type,
+                config_id=request.config_id,
+                metadata=request.metadata or None,
+            )
+        except NotImplementedError:
+            raise HTTPException(status_code=501, detail="Score recording not supported by this provider") from None
+        if isinstance(result, dict) and "score_id" in result:
+            audit.resource_id = result["score_id"]
+        return result
 
 
 @router.get("/scores")
@@ -127,10 +155,15 @@ async def get_score(score_id: str) -> Any:
 
 @router.delete("/scores/{score_id}")
 async def delete_score(score_id: str) -> Response:
-    try:
-        await registry.evaluations.delete_score(score_id)
-    except NotImplementedError:
-        raise HTTPException(status_code=501, detail="Score deletion not supported by this provider") from None
+    async with audit_mutation(
+        AuditAction.SCORE_DELETE,
+        resource_type=ResourceType.EVALUATOR,
+        resource_id=score_id,
+    ):
+        try:
+            await registry.evaluations.delete_score(score_id)
+        except NotImplementedError:
+            raise HTTPException(status_code=501, detail="Score deletion not supported by this provider") from None
     return Response(status_code=204)
 
 
@@ -139,16 +172,24 @@ async def delete_score(score_id: str) -> Response:
 
 @router.post("/online-configs", status_code=201)
 async def create_online_evaluation_config(request: CreateOnlineEvalConfigRequest) -> Any:
-    try:
-        return await registry.evaluations.create_online_evaluation_config(
-            name=request.name,
-            evaluator_ids=request.evaluator_ids,
-            config=request.config or None,
-        )
-    except NotImplementedError:
-        raise HTTPException(
-            status_code=501, detail="Online evaluation configs not supported by this provider"
-        ) from None
+    async with audit_mutation(
+        AuditAction.ONLINE_CONFIG_CREATE,
+        resource_type=ResourceType.EVALUATOR,
+        metadata={"name": request.name, "evaluator_count": len(request.evaluator_ids or [])},
+    ) as audit:
+        try:
+            result = await registry.evaluations.create_online_evaluation_config(
+                name=request.name,
+                evaluator_ids=request.evaluator_ids,
+                config=request.config or None,
+            )
+        except NotImplementedError:
+            raise HTTPException(
+                status_code=501, detail="Online evaluation configs not supported by this provider"
+            ) from None
+        if isinstance(result, dict) and "config_id" in result:
+            audit.resource_id = result["config_id"]
+        return result
 
 
 @router.get("/online-configs")
@@ -171,10 +212,15 @@ async def get_online_evaluation_config(config_id: str) -> Any:
 
 @router.delete("/online-configs/{config_id}")
 async def delete_online_evaluation_config(config_id: str) -> Response:
-    try:
-        await registry.evaluations.delete_online_evaluation_config(config_id=config_id)
-    except NotImplementedError:
-        raise HTTPException(
-            status_code=501, detail="Online evaluation configs not supported by this provider"
-        ) from None
+    async with audit_mutation(
+        AuditAction.ONLINE_CONFIG_DELETE,
+        resource_type=ResourceType.EVALUATOR,
+        resource_id=config_id,
+    ):
+        try:
+            await registry.evaluations.delete_online_evaluation_config(config_id=config_id)
+        except NotImplementedError:
+            raise HTTPException(
+                status_code=501, detail="Online evaluation configs not supported by this provider"
+            ) from None
     return Response(status_code=204)

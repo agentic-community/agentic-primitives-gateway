@@ -2,6 +2,8 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 
+from agentic_primitives_gateway.audit.emit import audit_mutation
+from agentic_primitives_gateway.audit.models import AuditAction, ResourceType
 from agentic_primitives_gateway.models.browser import (
     BrowserSessionInfo,
     ClickRequest,
@@ -31,20 +33,32 @@ async def start_session(
     config = dict(request.config)
     if request.viewport:
         config["viewport"] = request.viewport
-    result = await registry.browser.start_session(
-        session_id=request.session_id,
-        config=config,
-    )
-    info = BrowserSessionInfo(**result)
-    await browser_session_owners.set_owner(info.session_id, principal.id)
+    async with audit_mutation(
+        AuditAction.SESSION_CREATE,
+        resource_type=ResourceType.SESSION,
+        metadata={"primitive": "browser"},
+    ) as audit:
+        result = await registry.browser.start_session(
+            session_id=request.session_id,
+            config=config,
+        )
+        info = BrowserSessionInfo(**result)
+        await browser_session_owners.set_owner(info.session_id, principal.id)
+        audit.resource_id = info.session_id
     return info
 
 
 @router.delete("/sessions/{session_id}")
 async def stop_session(session_id: str) -> Response:
     await browser_session_owners.require_owner(session_id, require_principal())
-    await registry.browser.stop_session(session_id)
-    await browser_session_owners.delete(session_id)
+    async with audit_mutation(
+        AuditAction.SESSION_TERMINATE,
+        resource_type=ResourceType.SESSION,
+        resource_id=session_id,
+        metadata={"primitive": "browser"},
+    ):
+        await registry.browser.stop_session(session_id)
+        await browser_session_owners.delete(session_id)
     return Response(status_code=204)
 
 
@@ -90,10 +104,16 @@ async def get_live_view_url(
 @router.post("/sessions/{session_id}/navigate")
 async def navigate(session_id: str, request: NavigateRequest) -> dict[str, Any]:
     await browser_session_owners.require_owner(session_id, require_principal())
-    try:
-        return await registry.browser.navigate(session_id, request.url)
-    except (ValueError, NotImplementedError) as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
+    async with audit_mutation(
+        AuditAction.BROWSER_NAVIGATE,
+        resource_type=ResourceType.PAGE,
+        resource_id=session_id,
+        metadata={"url": request.url},
+    ):
+        try:
+            return await registry.browser.navigate(session_id, request.url)
+        except (ValueError, NotImplementedError) as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @router.get("/sessions/{session_id}/screenshot")
@@ -119,31 +139,51 @@ async def get_page_content(session_id: str) -> dict[str, str]:
 @router.post("/sessions/{session_id}/click")
 async def click(session_id: str, request: ClickRequest) -> dict[str, Any]:
     await browser_session_owners.require_owner(session_id, require_principal())
-    try:
-        return await registry.browser.click(session_id, request.selector)
-    except (ValueError, NotImplementedError) as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
+    async with audit_mutation(
+        AuditAction.BROWSER_CLICK,
+        resource_type=ResourceType.PAGE,
+        resource_id=session_id,
+        metadata={"selector": request.selector},
+    ):
+        try:
+            return await registry.browser.click(session_id, request.selector)
+        except (ValueError, NotImplementedError) as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @router.post("/sessions/{session_id}/type")
 async def type_text(session_id: str, request: TypeRequest) -> dict[str, Any]:
     await browser_session_owners.require_owner(session_id, require_principal())
-    try:
-        return await registry.browser.type_text(session_id, request.selector, request.text)
-    except (ValueError, NotImplementedError) as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
+    # Note: do NOT log `text` — may contain credentials the user is typing.
+    async with audit_mutation(
+        AuditAction.BROWSER_TYPE,
+        resource_type=ResourceType.PAGE,
+        resource_id=session_id,
+        metadata={"selector": request.selector, "text_length": len(request.text)},
+    ):
+        try:
+            return await registry.browser.type_text(session_id, request.selector, request.text)
+        except (ValueError, NotImplementedError) as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @router.post("/sessions/{session_id}/evaluate")
 async def evaluate(session_id: str, request: EvaluateRequest) -> dict[str, Any]:
     await browser_session_owners.require_owner(session_id, require_principal())
-    try:
-        result = await registry.browser.evaluate(session_id, request.expression)
-        return {"result": result}
-    except (ValueError, NotImplementedError) as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
-    except Exception as e:
-        # Catch Playwright errors, Selenium errors, etc.
-        if "Error" in type(e).__name__ or "Exception" in type(e).__name__:
+    # Note: the JS expression can be arbitrary — don't log it verbatim.
+    async with audit_mutation(
+        AuditAction.BROWSER_EVALUATE,
+        resource_type=ResourceType.PAGE,
+        resource_id=session_id,
+        metadata={"expression_length": len(request.expression)},
+    ):
+        try:
+            result = await registry.browser.evaluate(session_id, request.expression)
+            return {"result": result}
+        except (ValueError, NotImplementedError) as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
-        raise
+        except Exception as e:
+            # Catch Playwright errors, Selenium errors, etc.
+            if "Error" in type(e).__name__ or "Exception" in type(e).__name__:
+                raise HTTPException(status_code=400, detail=str(e)) from e
+            raise

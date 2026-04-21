@@ -7,6 +7,8 @@ import logging
 from typing import Any
 
 from agentic_primitives_gateway.agents.tools.catalog import ToolDefinition
+from agentic_primitives_gateway.audit.emit import emit_audit_event
+from agentic_primitives_gateway.audit.models import AuditAction, AuditOutcome, ResourceType
 from agentic_primitives_gateway.models.agents import PrimitiveConfig
 
 logger = logging.getLogger(__name__)
@@ -67,9 +69,31 @@ def _build_agent_tools(
         ) -> str:
             spec = await _resolve_sub_agent(store, _name, _parent_owner)
             if spec is None:
+                emit_audit_event(
+                    action=AuditAction.AGENT_DELEGATE,
+                    outcome=AuditOutcome.FAILURE,
+                    resource_type=ResourceType.AGENT,
+                    resource_id=_name,
+                    metadata={
+                        "parent_owner_id": _parent_owner,
+                        "depth": depth + 1,
+                        "error_type": "AgentNotFound",
+                    },
+                )
                 return f"Agent '{_name}' not found."
+            target_id = f"{spec.owner_id}:{spec.name}" if hasattr(spec, "owner_id") else _name
             try:
                 response = await runner.run(spec, message=message, _depth=depth + 1)
+                emit_audit_event(
+                    action=AuditAction.AGENT_DELEGATE,
+                    outcome=AuditOutcome.SUCCESS,
+                    resource_type=ResourceType.AGENT,
+                    resource_id=target_id,
+                    metadata={
+                        "parent_owner_id": _parent_owner,
+                        "depth": depth + 1,
+                    },
+                )
                 parts = [response.response]
                 if response.artifacts:
                     parts.append("\n\n--- Tool Artifacts ---")
@@ -83,6 +107,17 @@ def _build_agent_tools(
                             parts.append(f"Output: {artifact.output}")
                 return "\n".join(parts)
             except Exception as e:
+                emit_audit_event(
+                    action=AuditAction.AGENT_DELEGATE,
+                    outcome=AuditOutcome.FAILURE,
+                    resource_type=ResourceType.AGENT,
+                    resource_id=target_id,
+                    metadata={
+                        "parent_owner_id": _parent_owner,
+                        "depth": depth + 1,
+                        "error_type": type(e).__name__,
+                    },
+                )
                 return f"Agent '{_name}' failed: {type(e).__name__}: {e}"
 
         # The tool name strips any qualifier — ``alice:analyst`` becomes
