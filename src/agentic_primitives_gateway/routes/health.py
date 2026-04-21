@@ -1,9 +1,12 @@
 import asyncio
 import logging
+from typing import Any
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 
+from agentic_primitives_gateway.audit.emit import emit_audit_event
+from agentic_primitives_gateway.audit.models import AuditAction, AuditOutcome
 from agentic_primitives_gateway.config import settings
 from agentic_primitives_gateway.metrics import PROVIDER_HEALTH
 from agentic_primitives_gateway.models.enums import HealthStatus
@@ -65,6 +68,37 @@ async def whoami() -> dict:
     }
 
 
+def _emit_healthcheck_event(
+    primitive: str,
+    provider_name: str,
+    status: str,
+    *,
+    exc: BaseException | None = None,
+) -> None:
+    """Emit a ``provider.healthcheck`` audit event.
+
+    ``status`` ∈ ``{"ok", "reachable", "down", "timeout"}``.  When ``exc``
+    is set (i.e. the provider raised), ``error_type`` and a truncated
+    ``error_message`` land in metadata so operators can see *why* the
+    backend is unreachable without digging through server logs.
+    """
+    healthy = status in {"ok", "reachable"}
+    metadata: dict[str, Any] = {
+        "primitive": primitive,
+        "provider": provider_name,
+        "status": status,
+    }
+    if exc is not None:
+        metadata["error_type"] = type(exc).__name__
+        metadata["error_message"] = str(exc)[:512]
+    emit_audit_event(
+        action=AuditAction.PROVIDER_HEALTHCHECK,
+        outcome=AuditOutcome.SUCCESS if healthy else AuditOutcome.FAILURE,
+        resource_id=f"{primitive}/{provider_name}",
+        metadata=metadata,
+    )
+
+
 async def _check_provider(primitive: str, provider_name: str) -> tuple[str, str, str, str]:
     """Run a single provider healthcheck with a timeout.
 
@@ -83,19 +117,22 @@ async def _check_provider(primitive: str, provider_name: str) -> tuple[str, str,
     loop = asyncio.get_running_loop()
     task = asyncio.ensure_future(loop.run_in_executor(None, lambda: asyncio.run(provider.healthcheck())))
 
+    exc: BaseException | None = None
     done, _ = await asyncio.wait({task}, timeout=_HEALTHCHECK_TIMEOUT)
     if done:
         try:
             result = task.result()
             # Providers can return bool or str ("ok"/"reachable")
             status = result if isinstance(result, str) else "ok" if result else "down"
-        except Exception:
+        except Exception as e:
             logger.debug("Healthcheck failed: %s", key, exc_info=True)
             status = "down"
+            exc = e
     else:
         logger.debug("Healthcheck timed out: %s", key)
-        status = "down"
+        status = "timeout"
 
+    _emit_healthcheck_event(primitive, provider_name, status, exc=exc)
     return primitive, provider_name, key, status
 
 
@@ -162,15 +199,18 @@ async def _check_provider_authenticated(primitive: str, provider_name: str) -> t
     provider = registry.get_primitive(primitive).get(provider_name)
     key = f"{primitive}/{provider_name}"
 
+    exc: BaseException | None = None
     try:
         result = await asyncio.wait_for(provider.healthcheck(), timeout=_HEALTHCHECK_TIMEOUT)
         status = result if isinstance(result, str) else "ok" if result else "down"
     except TimeoutError:
-        status = "down"
-    except Exception:
+        status = "timeout"
+    except Exception as e:
         logger.debug("Authenticated healthcheck failed: %s", key, exc_info=True)
         status = "down"
+        exc = e
 
+    _emit_healthcheck_event(primitive, provider_name, status, exc=exc)
     return primitive, provider_name, key, status
 
 
