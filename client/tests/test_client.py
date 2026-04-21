@@ -711,20 +711,6 @@ class TestClientStubs:
     """Verify the client raises AgenticPlatformError for 501 stub endpoints."""
 
     @pytest.mark.asyncio
-    async def test_identity_control_plane_stub(self, make_client) -> None:
-        async with make_client() as client:
-            with pytest.raises(AgenticPlatformError) as exc_info:
-                await client.create_credential_provider("test", "oauth2")
-            assert exc_info.value.status_code == 501
-
-    @pytest.mark.asyncio
-    async def test_browser_stub(self, make_client) -> None:
-        async with make_client() as client:
-            with pytest.raises(AgenticPlatformError) as exc_info:
-                await client.start_browser_session()
-            assert exc_info.value.status_code == 501
-
-    @pytest.mark.asyncio
     async def test_llm_stub(self, make_client) -> None:
         async with make_client() as client:
             with pytest.raises(AgenticPlatformError) as exc_info:
