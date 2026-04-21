@@ -495,6 +495,16 @@ class AgenticPlatformClient:
         self._raise_for_status(resp)
         return self._json_dict(resp)
 
+    async def get_provider_status(self) -> dict[str, Any]:
+        """Per-user provider healthcheck.
+
+        Runs behind auth + credential resolution, so each provider's
+        ``healthcheck()`` sees the authenticated user's resolved credentials.
+        """
+        resp = await self._get("/api/v1/providers/status")
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
     async def get_auth_config(self) -> dict[str, Any]:
         """Get auth configuration (OIDC settings for UI). Auth-exempt."""
         resp = await self._get("/auth/config")
@@ -552,6 +562,65 @@ class AgenticPlatformClient:
             if value is not None:
                 params[key] = value
         resp = await self._get("/api/v1/audit/events", params=params)
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def stream_audit_events(
+        self,
+        *,
+        action: str | None = None,
+        action_category: str | None = None,
+        outcome: str | None = None,
+        actor_id: str | None = None,
+        resource_type: str | None = None,
+        resource_id: str | None = None,
+        correlation_id: str | None = None,
+    ) -> httpx.Response:
+        """Live-tail audit events over SSE (admin-only).
+
+        Returns the raw ``httpx.Response`` so the caller can iterate
+        ``response.aiter_lines()`` and parse ``data: {...}`` frames.
+        Keepalive ticks arrive as ``: keepalive`` comment lines.
+        """
+        params: dict[str, Any] = {}
+        for key, value in (
+            ("action", action),
+            ("action_category", action_category),
+            ("outcome", outcome),
+            ("actor_id", actor_id),
+            ("resource_type", resource_type),
+            ("resource_id", resource_id),
+            ("correlation_id", correlation_id),
+        ):
+            if value is not None:
+                params[key] = value
+        resp = await self._get("/api/v1/audit/events/stream", params=params)
+        self._raise_for_status(resp)
+        return resp
+
+    # ── Credentials ─────────────────────────────────────────────────────
+
+    async def read_credentials(self) -> dict[str, Any]:
+        """Read the authenticated user's credentials (values masked)."""
+        resp = await self._get("/api/v1/credentials")
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def write_credentials(self, attributes: dict[str, str]) -> dict[str, Any]:
+        """Write/update credentials on the OIDC provider for the current user."""
+        resp = await self._request("PUT", "/api/v1/credentials", json={"attributes": attributes})
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def delete_credential(self, key: str) -> dict[str, Any]:
+        """Delete a single credential attribute for the current user."""
+        resp = await self._delete(f"/api/v1/credentials/{key}")
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def credential_status(self) -> dict[str, Any]:
+        """Describe where the current user's credentials are coming from."""
+        resp = await self._get("/api/v1/credentials/status")
         self._raise_for_status(resp)
         return self._json_dict(resp)
 
@@ -1826,6 +1895,12 @@ class AgenticPlatformClient:
         self._raise_for_status(resp)
         return self._json_dict(resp)
 
+    async def export_agent(self, name: str) -> str:
+        """Export a deployed agent spec as a runnable Python script."""
+        resp = await self._get(f"/api/v1/agents/{name}/export")
+        self._raise_for_status(resp)
+        return resp.text
+
     async def chat_with_agent(
         self,
         name: str,
@@ -2027,6 +2102,20 @@ class AgenticPlatformClient:
         resp = await self._get("/api/v1/admin/teams/proposals")
         self._raise_for_status(resp)
         return self._json_dict(resp)
+
+    async def export_team(self, name: str) -> str:
+        """Export a deployed team spec (plus referenced agents) as a runnable Python script."""
+        resp = await self._get(f"/api/v1/teams/{name}/export")
+        self._raise_for_status(resp)
+        return resp.text
+
+    async def retry_team_task(self, name: str, team_run_id: str, task_id: str) -> httpx.Response:
+        """Retry a failed task on a team run.  Returns the raw SSE response."""
+        resp = await self._post(
+            f"/api/v1/teams/{name}/runs/{team_run_id}/tasks/{task_id}/retry",
+        )
+        self._raise_for_status(resp)
+        return resp
 
     async def run_team(self, name: str, message: str) -> dict[str, Any]:
         """Run a team (non-streaming).

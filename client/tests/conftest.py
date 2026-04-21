@@ -135,11 +135,25 @@ def _mock_handler(request: httpx.Request) -> httpx.Response:
     if path.startswith("/api/v1/evaluations"):
         return _handle_evaluations(method, path, request)
 
+    # Browser endpoints
+    if path.startswith("/api/v1/browser"):
+        return _handle_browser(method, path, request)
+
+    # Credentials endpoints
+    if path == "/api/v1/credentials" or path.startswith("/api/v1/credentials/"):
+        return _handle_credentials(method, path, request)
+
+    # Audit stream (SSE)
+    if path == "/api/v1/audit/events/stream":
+        sse = 'data: {"action":"auth.success","outcome":"success"}\n\n'
+        return httpx.Response(200, content=sse.encode(), headers={"content-type": "text/event-stream"})
+
+    # Providers status
+    if path == "/api/v1/providers/status" and method == "GET":
+        return httpx.Response(200, json={"checks": {"memory/default": "ok"}})
+
     # Stub endpoints → 501
-    for prefix in (
-        "/api/v1/llm",
-        "/api/v1/browser",
-    ):
+    for prefix in ("/api/v1/llm",):
         if path.startswith(prefix):
             return httpx.Response(501, json={"detail": "Not implemented"})
 
@@ -321,6 +335,17 @@ def _handle_agents(method: str, path: str, request: httpx.Request) -> httpx.Resp
     # GET /tool-catalog
     if rest == "/tool-catalog" and method == "GET":
         return httpx.Response(200, json={"primitives": {"memory": [{"name": "remember", "description": "store"}]}})
+
+    # GET /{name}/export
+    if rest.endswith("/export") and method == "GET":
+        name = rest.removeprefix("/").removesuffix("/export")
+        if name not in _agents_store:
+            return httpx.Response(404, json={"detail": f"Agent '{name}' not found"})
+        return httpx.Response(
+            200,
+            content=f"# Exported agent: {name}\n".encode(),
+            headers={"content-type": "text/x-python"},
+        )
 
     # POST "" (create agent)
     if rest == "" and method == "POST":
@@ -579,6 +604,40 @@ def _handle_agents(method: str, path: str, request: httpx.Request) -> httpx.Resp
     return httpx.Response(404, json={"detail": "Not found"})
 
 
+def _make_team_version(
+    name: str,
+    spec: dict,
+    *,
+    version_number: int,
+    status: str = "deployed",
+    parent_version_id: str | None = None,
+    forked_from: dict | None = None,
+    commit_message: str | None = None,
+) -> dict:
+    """Build a minimal team-version record matching the server schema."""
+    import uuid as _uuid
+    from datetime import UTC as _UTC
+    from datetime import datetime as _dt
+
+    now = _dt.now(_UTC).isoformat()
+    return {
+        "version_id": _uuid.uuid4().hex,
+        "team_name": name,
+        "owner_id": spec.get("owner_id", "noop"),
+        "version_number": version_number,
+        "spec": spec,
+        "created_at": now,
+        "created_by": spec.get("owner_id", "noop"),
+        "parent_version_id": parent_version_id,
+        "forked_from": forked_from,
+        "status": status,
+        "approved_by": None,
+        "approved_at": None,
+        "deployed_at": now if status == "deployed" else None,
+        "commit_message": commit_message,
+    }
+
+
 def _handle_teams(method: str, path: str, request: httpx.Request) -> httpx.Response:
     """Mock handler for team CRUD and run endpoints."""
     rest = path.removeprefix("/api/v1/teams")
@@ -595,10 +654,14 @@ def _handle_teams(method: str, path: str, request: httpx.Request) -> httpx.Respo
             "max_concurrent": body.get("max_concurrent"),
             "global_max_turns": body.get("global_max_turns", 100),
             "global_timeout_seconds": body.get("global_timeout_seconds", 300),
+            "owner_id": body.get("owner_id", "noop"),
         }
         if team["name"] in _teams_store:
             return httpx.Response(409, json={"detail": f"Team '{team['name']}' already exists"})
         _teams_store[team["name"]] = team
+        _team_versions[team["name"]] = [
+            _make_team_version(team["name"], team, version_number=1, commit_message="initial version")
+        ]
         return httpx.Response(201, json=team)
 
     # GET "" (list teams)
@@ -665,7 +728,137 @@ def _handle_teams(method: str, path: str, request: httpx.Request) -> httpx.Respo
                 if name not in _teams_store:
                     return httpx.Response(404, json={"detail": f"Team '{name}' not found"})
                 del _teams_store[name]
+                _team_versions.pop(name, None)
                 return httpx.Response(200, json={"status": "deleted"})
+
+        # GET /{name}/export
+        if len(parts) == 2 and parts[1] == "export" and method == "GET":
+            if name not in _teams_store:
+                return httpx.Response(404, json={"detail": f"Team '{name}' not found"})
+            return httpx.Response(
+                200,
+                content=f"# Exported team: {name}\n".encode(),
+                headers={"content-type": "text/x-python"},
+            )
+
+        # GET /{name}/versions
+        if len(parts) == 2 and parts[1] == "versions" and method == "GET":
+            versions = _team_versions.get(name, [])
+            return httpx.Response(200, json={"versions": versions})
+
+        # POST /{name}/versions
+        if len(parts) == 2 and parts[1] == "versions" and method == "POST":
+            team = _teams_store.get(name)
+            if team is None:
+                return httpx.Response(404, json={"detail": f"Team '{name}' not found"})
+            body = json.loads(request.content)
+            new_spec = {
+                **team,
+                **{k: v for k, v in body.items() if v is not None and k not in {"commit_message", "parent_version_id"}},
+            }
+            vlist = _team_versions.setdefault(name, [])
+            parent = body.get("parent_version_id") or (vlist[-1]["version_id"] if vlist else None)
+            version = _make_team_version(
+                name,
+                new_spec,
+                version_number=len(vlist) + 1,
+                parent_version_id=parent,
+                commit_message=body.get("commit_message"),
+            )
+            vlist.append(version)
+            _teams_store[name] = new_spec
+            return httpx.Response(201, json=version)
+
+        # GET /{name}/versions/{version_id}
+        if len(parts) == 3 and parts[1] == "versions" and method == "GET":
+            vlist = _team_versions.get(name, [])
+            for v in vlist:
+                if v["version_id"] == parts[2]:
+                    return httpx.Response(200, json=v)
+            return httpx.Response(404, json={"detail": "Version not found"})
+
+        # POST /{name}/versions/{version_id}/{action}
+        if len(parts) == 4 and parts[1] == "versions" and method == "POST":
+            version_id = parts[2]
+            action = parts[3]
+            vlist = _team_versions.get(name, [])
+            target = next((v for v in vlist if v["version_id"] == version_id), None)
+            if target is None:
+                return httpx.Response(404, json={"detail": "Version not found"})
+            if action == "propose":
+                target["status"] = "proposed"
+                if version_id not in _team_proposals:
+                    _team_proposals.append(version_id)
+                return httpx.Response(200, json=target)
+            if action == "approve":
+                target["approved_by"] = "admin"
+                return httpx.Response(200, json=target)
+            if action == "reject":
+                target["status"] = "rejected"
+                if version_id in _team_proposals:
+                    _team_proposals.remove(version_id)
+                return httpx.Response(200, json=target)
+            if action == "deploy":
+                for v in vlist:
+                    if v["status"] == "deployed" and v["version_id"] != version_id:
+                        v["status"] = "archived"
+                target["status"] = "deployed"
+                from datetime import UTC as _UTC
+                from datetime import datetime as _dt
+
+                target["deployed_at"] = _dt.now(_UTC).isoformat()
+                _teams_store[name] = target["spec"]
+                if version_id in _team_proposals:
+                    _team_proposals.remove(version_id)
+                return httpx.Response(200, json=target)
+
+        # POST /{name}/fork
+        if len(parts) == 2 and parts[1] == "fork" and method == "POST":
+            source = _teams_store.get(name)
+            if source is None:
+                return httpx.Response(404, json={"detail": f"Team '{name}' not found"})
+            body = json.loads(request.content)
+            target_name = body.get("target_name") or name
+            if target_name in _teams_store:
+                return httpx.Response(409, json={"detail": f"Team '{target_name}' already exists"})
+            source_version = _team_versions.get(name, [{}])[-1]
+            forked_spec = {**source, "name": target_name, "owner_id": "noop"}
+            _teams_store[target_name] = forked_spec
+            version = _make_team_version(
+                target_name,
+                forked_spec,
+                version_number=1,
+                forked_from={
+                    "name": name,
+                    "owner_id": source.get("owner_id", "noop"),
+                    "version_id": source_version.get("version_id", ""),
+                },
+                commit_message=body.get("commit_message"),
+            )
+            _team_versions[target_name] = [version]
+            return httpx.Response(201, json=version)
+
+        # GET /{name}/lineage
+        if len(parts) == 2 and parts[1] == "lineage" and method == "GET":
+            vlist = _team_versions.get(name, [])
+            owner = vlist[0].get("owner_id") if vlist else "noop"
+            nodes = [{"version": v, "children_ids": [], "forks_out": []} for v in vlist]
+            deployed = next((v["version_id"] for v in vlist if v["status"] == "deployed"), None)
+            deployed_map = {f"{owner}:{name}": deployed} if deployed else {}
+            return httpx.Response(
+                200,
+                json={
+                    "root_identity": {"owner_id": owner, "name": name},
+                    "nodes": nodes,
+                    "deployed": deployed_map,
+                },
+            )
+
+        # POST /{name}/runs/{team_run_id}/tasks/{task_id}/retry
+        if len(parts) == 6 and parts[1] == "runs" and parts[3] == "tasks" and parts[5] == "retry" and method == "POST":
+            return httpx.Response(
+                200, content=b'data: {"type":"done"}\n\n', headers={"content-type": "text/event-stream"}
+            )
 
     return httpx.Response(404, json={"detail": "Not found"})
 
@@ -823,9 +1016,26 @@ def _handle_policy(method: str, path: str, request: httpx.Request) -> httpx.Resp
             _policies.get(engine_id, {}).pop(policy_id, None)
             return httpx.Response(204)
 
-        # Generations endpoints → 501
-        if len(parts) >= 2 and parts[1] == "generations":
-            return httpx.Response(501, json={"detail": "Not implemented"})
+        # ── Generations ────────────────────────────────────────────────
+        if len(parts) == 2 and parts[1] == "generations":
+            if method == "POST":
+                gid = f"gen-{len(_policy_generations) + 1}"
+                generation = {"generation_id": gid, "policy_engine_id": engine_id, "status": "STARTED"}
+                _policy_generations[gid] = generation
+                return httpx.Response(201, json=generation)
+            if method == "GET":
+                return httpx.Response(200, json={"generations": list(_policy_generations.values())})
+
+        if len(parts) == 3 and parts[1] == "generations":
+            gid = parts[2]
+            if method == "GET":
+                gen = _policy_generations.get(gid)
+                if gen is None:
+                    return httpx.Response(404, json={"detail": "Generation not found"})
+                return httpx.Response(200, json=gen)
+
+        if len(parts) == 4 and parts[1] == "generations" and parts[3] == "assets":
+            return httpx.Response(200, json={"assets": []})
 
     return httpx.Response(404, json={"detail": "Not found"})
 
@@ -891,9 +1101,45 @@ def _handle_evaluations(method: str, path: str, request: httpx.Request) -> httpx
             _evaluators.pop(evaluator_id, None)
             return httpx.Response(204)
 
-    # Online eval configs → 501
-    if rest.startswith("/online-configs"):
-        return httpx.Response(501, json={"detail": "Not implemented"})
+    # ── Scores ──────────────────────────────────────────────────────────
+    if rest == "/scores" and method == "POST":
+        body = json.loads(request.content)
+        sid = f"score-{len(_eval_scores) + 1}"
+        score = {"score_id": sid, "name": body["name"], "value": body["value"], "trace_id": body.get("trace_id")}
+        _eval_scores[sid] = score
+        return httpx.Response(201, json=score)
+    if rest == "/scores" and method == "GET":
+        return httpx.Response(200, json={"scores": list(_eval_scores.values())})
+    if rest.startswith("/scores/"):
+        sid = rest.removeprefix("/scores/")
+        if method == "GET":
+            score = _eval_scores.get(sid)
+            if score is None:
+                return httpx.Response(404, json={"detail": "Score not found"})
+            return httpx.Response(200, json=score)
+        if method == "DELETE":
+            _eval_scores.pop(sid, None)
+            return httpx.Response(204)
+
+    # ── Online eval configs ─────────────────────────────────────────────
+    if rest == "/online-configs" and method == "POST":
+        body = json.loads(request.content)
+        cid = f"online-{len(_online_configs) + 1}"
+        config = {"config_id": cid, "name": body["name"], "evaluator_ids": body["evaluator_ids"]}
+        _online_configs[cid] = config
+        return httpx.Response(201, json=config)
+    if rest == "/online-configs" and method == "GET":
+        return httpx.Response(200, json={"configs": list(_online_configs.values())})
+    if rest.startswith("/online-configs/"):
+        cid = rest.removeprefix("/online-configs/")
+        if method == "GET":
+            config = _online_configs.get(cid)
+            if config is None:
+                return httpx.Response(404, json={"detail": "Config not found"})
+            return httpx.Response(200, json=config)
+        if method == "DELETE":
+            _online_configs.pop(cid, None)
+            return httpx.Response(204)
 
     return httpx.Response(404, json={"detail": "Not found"})
 
@@ -1072,15 +1318,152 @@ def _handle_identity(method: str, path: str, request: httpx.Request) -> httpx.Re
             },
         )
 
-    if method == "GET" and path == "/api/v1/identity/credential-providers":
-        return httpx.Response(200, json={"credential_providers": []})
+    # ── Credential providers CRUD ─────────────────────────────────────
+    if path == "/api/v1/identity/credential-providers" and method == "GET":
+        return httpx.Response(200, json={"credential_providers": list(_credential_providers.values())})
 
-    # Control plane and other identity endpoints → 501
+    if path == "/api/v1/identity/credential-providers" and method == "POST":
+        body = json.loads(request.content)
+        provider = {"name": body["name"], "provider_type": body["provider_type"], "config": body.get("config", {})}
+        _credential_providers[body["name"]] = provider
+        return httpx.Response(201, json=provider)
+
+    if path.startswith("/api/v1/identity/credential-providers/"):
+        name = path.removeprefix("/api/v1/identity/credential-providers/")
+        if method == "GET":
+            provider = _credential_providers.get(name)
+            if provider is None:
+                return httpx.Response(404, json={"detail": "Not found"})
+            return httpx.Response(200, json=provider)
+        if method == "PUT":
+            provider = _credential_providers.get(name)
+            if provider is None:
+                return httpx.Response(404, json={"detail": "Not found"})
+            body = json.loads(request.content)
+            provider["config"] = body.get("config", provider.get("config", {}))
+            return httpx.Response(200, json=provider)
+        if method == "DELETE":
+            _credential_providers.pop(name, None)
+            return httpx.Response(204)
+
+    # ── Workload identities CRUD ──────────────────────────────────────
+    if path == "/api/v1/identity/workload-identities" and method == "GET":
+        return httpx.Response(200, json={"workload_identities": list(_workload_identities.values())})
+
+    if path == "/api/v1/identity/workload-identities" and method == "POST":
+        body = json.loads(request.content)
+        wi = {"name": body["name"], "allowed_return_urls": body.get("allowed_return_urls", [])}
+        _workload_identities[body["name"]] = wi
+        return httpx.Response(201, json=wi)
+
+    if path.startswith("/api/v1/identity/workload-identities/"):
+        name = path.removeprefix("/api/v1/identity/workload-identities/")
+        if method == "GET":
+            wi = _workload_identities.get(name)
+            if wi is None:
+                return httpx.Response(404, json={"detail": "Not found"})
+            return httpx.Response(200, json=wi)
+        if method == "PUT":
+            wi = _workload_identities.get(name)
+            if wi is None:
+                return httpx.Response(404, json={"detail": "Not found"})
+            body = json.loads(request.content)
+            wi["allowed_return_urls"] = body.get("allowed_return_urls", wi.get("allowed_return_urls", []))
+            return httpx.Response(200, json=wi)
+        if method == "DELETE":
+            _workload_identities.pop(name, None)
+            return httpx.Response(204)
+
+    if method == "POST" and path == "/api/v1/identity/auth/complete":
+        return httpx.Response(204)
+
+    # Other identity endpoints → 501
     return httpx.Response(501, json={"detail": "Not implemented"})
 
 
+_browser_sessions: dict[str, dict] = {}
+_credentials_store: dict[str, str] = {}
+_credential_providers: dict[str, dict] = {}
+_workload_identities: dict[str, dict] = {}
+_eval_scores: dict[str, dict] = {}
+_online_configs: dict[str, dict] = {}
+_policy_generations: dict[str, dict] = {}
+
 _events: dict[str, dict[str, list[dict]]] = {}
 _event_counter = 0
+
+
+def _handle_browser(method: str, path: str, request: httpx.Request) -> httpx.Response:
+    """Mock handler for browser endpoints."""
+    rest = path.removeprefix("/api/v1/browser")
+
+    if rest == "/sessions" and method == "POST":
+        body = json.loads(request.content)
+        sid = body.get("session_id") or "browser-mock"
+        session = {
+            "session_id": sid,
+            "status": "active",
+            "viewport": body.get("viewport", {"width": 1280, "height": 720}),
+        }
+        _browser_sessions[sid] = session
+        return httpx.Response(201, json=session)
+
+    if rest == "/sessions" and method == "GET":
+        return httpx.Response(200, json={"sessions": list(_browser_sessions.values())})
+
+    if rest.startswith("/sessions/"):
+        parts = rest.removeprefix("/sessions/").split("/")
+        session_id = parts[0]
+
+        if len(parts) == 1 and method == "DELETE":
+            _browser_sessions.pop(session_id, None)
+            return httpx.Response(204)
+        if len(parts) == 1 and method == "GET":
+            session = _browser_sessions.get(session_id)
+            if session is None:
+                return httpx.Response(404, json={"detail": "Session not found"})
+            return httpx.Response(200, json=session)
+
+        if len(parts) == 2:
+            action = parts[1]
+            if action == "live-view" and method == "GET":
+                return httpx.Response(200, json={"url": "http://live/session", "expires_in": 300})
+            if action == "screenshot" and method == "GET":
+                return httpx.Response(200, json={"format": "png", "data": "AAAA"})
+            if action == "content" and method == "GET":
+                return httpx.Response(200, json={"content": "<html></html>"})
+            if action == "navigate" and method == "POST":
+                return httpx.Response(200, json={"url": json.loads(request.content)["url"], "status": "ok"})
+            if action == "click" and method == "POST":
+                return httpx.Response(200, json={"clicked": True})
+            if action == "type" and method == "POST":
+                return httpx.Response(200, json={"typed": True})
+            if action == "evaluate" and method == "POST":
+                return httpx.Response(200, json={"result": 42})
+
+    return httpx.Response(404, json={"detail": "Not found"})
+
+
+def _handle_credentials(method: str, path: str, request: httpx.Request) -> httpx.Response:
+    """Mock handler for credentials endpoints."""
+    if path == "/api/v1/credentials" and method == "GET":
+        masked = {k: "***" for k in _credentials_store}
+        return httpx.Response(200, json={"attributes": masked})
+
+    if path == "/api/v1/credentials" and method == "PUT":
+        body = json.loads(request.content)
+        _credentials_store.update(body.get("attributes") or {})
+        return httpx.Response(200, json={"status": "updated"})
+
+    if path == "/api/v1/credentials/status" and method == "GET":
+        return httpx.Response(200, json={"source": "noop", "attributes": list(_credentials_store.keys())})
+
+    if path.startswith("/api/v1/credentials/") and method == "DELETE":
+        key = path.removeprefix("/api/v1/credentials/")
+        _credentials_store.pop(key, None)
+        return httpx.Response(200, json={"status": "deleted"})
+
+    return httpx.Response(404, json={"detail": "Not found"})
 
 
 def _handle_memory(method: str, path: str, request: httpx.Request) -> httpx.Response:
@@ -1266,6 +1649,13 @@ def _clear_store():
     _policy_engines.clear()
     _policies.clear()
     _evaluators.clear()
+    _browser_sessions.clear()
+    _credentials_store.clear()
+    _credential_providers.clear()
+    _workload_identities.clear()
+    _eval_scores.clear()
+    _online_configs.clear()
+    _policy_generations.clear()
     _event_counter = 0
     _policy_engine_counter = 0
     _policy_counter = 0
@@ -1285,6 +1675,13 @@ def _clear_store():
     _policy_engines.clear()
     _policies.clear()
     _evaluators.clear()
+    _browser_sessions.clear()
+    _credentials_store.clear()
+    _credential_providers.clear()
+    _workload_identities.clear()
+    _eval_scores.clear()
+    _online_configs.clear()
+    _policy_generations.clear()
     _event_counter = 0
     _policy_engine_counter = 0
     _policy_counter = 0

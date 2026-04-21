@@ -235,3 +235,199 @@ class TestOpenAICompatibleProvider:
         assert len(models) == 2
         assert models[0]["name"] == "qwen3-4b"
         assert models[0]["provider"] == "openai_compatible"
+
+
+class TestStreaming:
+    """Cover the SSE streaming path — content deltas, tool-call deltas,
+    finish reasons, usage metadata."""
+
+    @pytest.mark.asyncio
+    async def test_stream_content_deltas(self):
+        provider = OpenAICompatibleProvider(default_model="qwen3")
+
+        sse_lines = [
+            'data: {"choices":[{"delta":{"content":"Hel"},"finish_reason":null}]}',
+            'data: {"choices":[{"delta":{"content":"lo"},"finish_reason":"stop"}],"model":"qwen3"}',
+            "data: [DONE]",
+        ]
+
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.iter_lines = MagicMock(return_value=iter(sse_lines))
+
+        with patch(f"{_PATCH_PREFIX}.httpx") as mock_httpx:
+            mock_client = MagicMock()
+            mock_client.__enter__ = MagicMock(return_value=mock_client)
+            mock_client.__exit__ = MagicMock(return_value=False)
+
+            stream_ctx = MagicMock()
+            stream_ctx.__enter__ = MagicMock(return_value=mock_resp)
+            stream_ctx.__exit__ = MagicMock(return_value=False)
+            mock_client.stream.return_value = stream_ctx
+
+            mock_httpx.Client.return_value = mock_client
+
+            chunks = []
+            async for chunk in provider.route_request_stream({"messages": [{"role": "user", "content": "Hi"}]}):
+                chunks.append(chunk)
+
+        types = [c["type"] for c in chunks]
+        assert "content_delta" in types
+        assert "message_stop" in types
+
+    @pytest.mark.asyncio
+    async def test_stream_tool_calls(self):
+        provider = OpenAICompatibleProvider()
+
+        sse_lines = [
+            'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"t1","function":{"name":"recall"}}]},"finish_reason":null}]}',
+            'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\\"q\\":\\"x\\"}"}}]},"finish_reason":null}]}',
+            'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}],"model":"qwen3"}',
+            "data: [DONE]",
+        ]
+
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.iter_lines = MagicMock(return_value=iter(sse_lines))
+
+        with patch(f"{_PATCH_PREFIX}.httpx") as mock_httpx:
+            mock_client = MagicMock()
+            mock_client.__enter__ = MagicMock(return_value=mock_client)
+            mock_client.__exit__ = MagicMock(return_value=False)
+
+            stream_ctx = MagicMock()
+            stream_ctx.__enter__ = MagicMock(return_value=mock_resp)
+            stream_ctx.__exit__ = MagicMock(return_value=False)
+            mock_client.stream.return_value = stream_ctx
+
+            mock_httpx.Client.return_value = mock_client
+
+            chunks = []
+            async for chunk in provider.route_request_stream({"messages": [{"role": "user", "content": "Hi"}]}):
+                chunks.append(chunk)
+
+        types = [c["type"] for c in chunks]
+        assert "tool_use_start" in types
+        assert "tool_use_delta" in types
+        assert "tool_use_complete" in types
+        # tool_calls finish reason maps to tool_use
+        stops = [c for c in chunks if c["type"] == "message_stop"]
+        assert stops and stops[0]["stop_reason"] == "tool_use"
+
+    @pytest.mark.asyncio
+    async def test_stream_ignores_malformed_json(self):
+        provider = OpenAICompatibleProvider()
+        sse_lines = [
+            "data: not-json-at-all",
+            'data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}',
+            "data: [DONE]",
+        ]
+
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.iter_lines = MagicMock(return_value=iter(sse_lines))
+
+        with patch(f"{_PATCH_PREFIX}.httpx") as mock_httpx:
+            mock_client = MagicMock()
+            mock_client.__enter__ = MagicMock(return_value=mock_client)
+            mock_client.__exit__ = MagicMock(return_value=False)
+
+            stream_ctx = MagicMock()
+            stream_ctx.__enter__ = MagicMock(return_value=mock_resp)
+            stream_ctx.__exit__ = MagicMock(return_value=False)
+            mock_client.stream.return_value = stream_ctx
+
+            mock_httpx.Client.return_value = mock_client
+
+            chunks = []
+            async for chunk in provider.route_request_stream({"messages": [{"role": "user", "content": "Hi"}]}):
+                chunks.append(chunk)
+
+        # Still get a content_delta for the valid line + a stop
+        assert any(c["type"] == "content_delta" for c in chunks)
+        assert any(c["type"] == "message_stop" for c in chunks)
+
+    @pytest.mark.asyncio
+    async def test_stream_emits_usage_metadata(self):
+        provider = OpenAICompatibleProvider()
+        sse_lines = [
+            'data: {"choices":[{"delta":{"content":"hi"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":1}}',
+            "data: [DONE]",
+        ]
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.iter_lines = MagicMock(return_value=iter(sse_lines))
+
+        with patch(f"{_PATCH_PREFIX}.httpx") as mock_httpx:
+            mock_client = MagicMock()
+            mock_client.__enter__ = MagicMock(return_value=mock_client)
+            mock_client.__exit__ = MagicMock(return_value=False)
+            stream_ctx = MagicMock()
+            stream_ctx.__enter__ = MagicMock(return_value=mock_resp)
+            stream_ctx.__exit__ = MagicMock(return_value=False)
+            mock_client.stream.return_value = stream_ctx
+            mock_httpx.Client.return_value = mock_client
+
+            chunks = [c async for c in provider.route_request_stream({"messages": [{"role": "user", "content": "h"}]})]
+
+        metadata = [c for c in chunks if c["type"] == "metadata"]
+        assert metadata and metadata[0]["usage"]["input_tokens"] == 3
+
+
+class TestHealthcheck:
+    @pytest.mark.asyncio
+    async def test_healthcheck_returns_true_when_models_ok(self):
+        provider = OpenAICompatibleProvider()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        with patch(f"{_PATCH_PREFIX}.httpx") as mock_httpx:
+            mock_client = MagicMock()
+            mock_client.__enter__ = MagicMock(return_value=mock_client)
+            mock_client.__exit__ = MagicMock(return_value=False)
+            mock_client.get.return_value = mock_resp
+            mock_httpx.Client.return_value = mock_client
+
+            assert await provider.healthcheck() is True
+
+    @pytest.mark.asyncio
+    async def test_healthcheck_returns_false_on_exception(self):
+        provider = OpenAICompatibleProvider()
+        with patch(f"{_PATCH_PREFIX}.httpx") as mock_httpx:
+            mock_client = MagicMock()
+            mock_client.__enter__ = MagicMock(return_value=mock_client)
+            mock_client.__exit__ = MagicMock(return_value=False)
+            mock_client.get.side_effect = RuntimeError("down")
+            mock_httpx.Client.return_value = mock_client
+
+            assert await provider.healthcheck() is False
+
+
+class TestEdgeCases:
+    def test_tool_choice_dict_passthrough(self):
+        choice = {"type": "function", "function": {"name": "specific"}}
+        assert _to_openai_tool_choice(choice) == choice
+
+    def test_tool_choice_named_tool_string(self):
+        assert _to_openai_tool_choice("my_tool") == {"type": "function", "function": {"name": "my_tool"}}
+
+    def test_from_openai_response_malformed_tool_args(self):
+        """When a tool-call's arguments aren't valid JSON, they surface as
+        ``{"raw": <string>}`` instead of raising."""
+        data = {
+            "model": "m",
+            "choices": [
+                {
+                    "message": {
+                        "content": "",
+                        "tool_calls": [{"id": "t1", "function": {"name": "f", "arguments": "not-json"}}],
+                    }
+                }
+            ],
+        }
+        result = _from_openai_response(data)
+        assert result["tool_calls"][0]["input"] == {"raw": "not-json"}
+
+    def test_init_with_api_key_adds_auth_header(self):
+        provider = OpenAICompatibleProvider(api_key="sk-test")
+        headers = provider._headers()
+        assert headers["Authorization"] == "Bearer sk-test"
