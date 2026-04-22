@@ -66,7 +66,12 @@ class RedisSpecStore:
         return state
 
     async def _save_state(self, state: _StoreState) -> None:
-        pipe = self._redis.pipeline()
+        # transaction=True wraps the pipeline in MULTI/EXEC so Redis
+        # applies all commands or none.  Without this, a network drop
+        # mid-pipeline could leave ``versions`` deleted but
+        # ``identities`` untouched — a half-written state that
+        # corrupts the store.
+        pipe = self._redis.pipeline(transaction=True)
         pipe.delete(f"{self._namespace_prefix}:versions")
         if state.versions:
             pipe.hset(
