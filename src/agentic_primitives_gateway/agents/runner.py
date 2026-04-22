@@ -672,10 +672,6 @@ class AgentRunner:
             raise RuntimeError("Cannot checkpoint without an authenticated principal")
         data: dict[str, Any] = {
             "spec_name": ctx.spec.name,
-            # New in Phase 2: checkpoint the agent identity's owner so
-            # resume can ``resolve_qualified(owner, name)``.  Old
-            # checkpoints without this field default to ``"system"``
-            # below (matches the behavior before owner-scoped identities).
             "spec_owner": ctx.spec.owner_id,
             "session_id": ctx.session_id,
             "actor_id": ctx.actor_id,
