@@ -81,7 +81,12 @@ class JsonLogFormatter(logging.Formatter):
         if extra:
             payload["extra"] = extra
 
-        if record.exc_info:
+        # Prefer ``exc_text`` if present — LogSanitizationFilter
+        # pre-renders and scrubs the traceback into this field so
+        # secrets in exception messages don't leak.
+        if record.exc_text:
+            payload["exception"] = record.exc_text
+        elif record.exc_info:
             payload["exception"] = self.formatException(record.exc_info)
 
         return json.dumps(payload, default=str)
@@ -93,6 +98,13 @@ class LogSanitizationFilter(logging.Filter):
     Runs before the formatter sees the record.  Mutates ``record.msg``
     (and resolves any ``record.args`` by rendering first) so that by the
     time the formatter serializes, no secret substring remains.
+
+    Exception info is also sanitized: when a record carries an exception,
+    the default formatter renders the full traceback (which includes the
+    exception's own message, raw values caught in the stack, etc.).  We
+    pre-render the traceback into ``record.exc_text``, scrub it, and
+    clear ``record.exc_info`` so the formatter uses our scrubbed string
+    instead of re-rendering from the original exception.
     """
 
     def filter(self, record: logging.LogRecord) -> bool:
@@ -106,4 +118,15 @@ class LogSanitizationFilter(logging.Filter):
         if sanitized != message:
             record.msg = sanitized
             record.args = None
+
+        # Sanitize exception traceback too — exceptions often carry
+        # credentials in their str() (wrapped HTTP errors, etc.).
+        if record.exc_info:
+            formatter = logging.Formatter()
+            rendered = formatter.formatException(record.exc_info)
+            sanitized_exc = scrub_secrets(rendered)
+            record.exc_text = sanitized_exc
+            # Clearing exc_info tells the default formatter to use
+            # our pre-rendered ``exc_text`` instead of re-rendering.
+            record.exc_info = None
         return True
