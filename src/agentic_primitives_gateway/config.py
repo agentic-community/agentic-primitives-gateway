@@ -12,10 +12,14 @@ def _expand_vars(text: str) -> str:
     """Expand shell-style variables in text.
 
     Supports:
-        ${VAR}            — replaced with env value, or empty string
+        ${VAR}            — replaced with env value, or left as literal ``${VAR}`` if unset
         ${VAR:=default}   — replaced with env value, or 'default' if unset
         ${VAR:-default}   — same as :=
-        $VAR              — simple form
+        $VAR              — simple form, left as literal ``$VAR`` if unset
+
+    The plain ``${VAR}`` / ``$VAR`` forms use Python's ``os.path.expandvars``
+    which preserves unset names verbatim.  Use ``${VAR:=default}`` when you
+    need a fallback.
     """
 
     def _replace(match: re.Match) -> str:
