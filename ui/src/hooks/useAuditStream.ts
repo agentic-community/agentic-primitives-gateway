@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
-import type { AuditEvent, AuditFilters } from "../api/types";
+import type { AuditEvent } from "../api/types";
 import { parseSSE } from "../lib/sse";
 
 export type AuditStreamStatus =
@@ -33,13 +33,14 @@ const DEFAULT_BUFFER = 1000;
  *
  * Connects to ``GET /api/v1/audit/events/stream`` (XREAD ``$`` under the
  * hood) and keeps the most recent N events in memory, newest-first.
- * Re-runs the connection when filters change.
+ * The tail is always broad (no server-side filter) — consumers filter
+ * client-side so adjusting filters is instant and doesn't drop events
+ * from the buffer.  Only ``paused`` changes restart the connection.
  *
  * Keepalive comment frames (``: keepalive``) from the server are ignored
  * by ``parseSSE`` since they have no ``data:`` prefix.
  */
 export function useAuditStream(
-  filters: AuditFilters,
   options: UseAuditStreamOptions = {},
 ): UseAuditStreamResult {
   const { paused = false, bufferSize = DEFAULT_BUFFER } = options;
@@ -48,9 +49,6 @@ export function useAuditStream(
   const [status, setStatus] = useState<AuditStreamStatus>("idle");
   const [dropped, setDropped] = useState(0);
   const [error, setError] = useState<string | null>(null);
-
-  // Reconnect when filters change; also on pause toggle.
-  const filterKey = JSON.stringify(filters);
 
   const clear = useCallback(() => {
     setEvents([]);
@@ -68,14 +66,6 @@ export function useAuditStream(
       return;
     }
 
-    // Filter changed (or first connect): start with a fresh buffer so the
-    // user only sees events matching the new filter.  The server also
-    // applies the filter on its side, but leftover events from the old
-    // filter would linger in the buffer until the 1000-cap pushed them
-    // out — visually indistinguishable from "the filter didn't work".
-    setEvents([]);
-    setDropped(0);
-
     const controller = new AbortController();
     let cancelled = false;
     setStatus("connecting");
@@ -83,7 +73,7 @@ export function useAuditStream(
 
     (async () => {
       try {
-        const stream = api.streamAuditEvents(filters, controller.signal);
+        const stream = api.streamAuditEvents(controller.signal);
         const reader = stream.getReader();
         let buffer = "";
         setStatus("open");
@@ -123,8 +113,7 @@ export function useAuditStream(
       cancelled = true;
       controller.abort();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filterKey, paused, bufferSize]);
+  }, [paused, bufferSize]);
 
   return { events, status, dropped, clear, error };
 }

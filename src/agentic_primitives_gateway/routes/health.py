@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 
 from agentic_primitives_gateway.audit.emit import emit_audit_event
-from agentic_primitives_gateway.audit.models import AuditAction, AuditOutcome
+from agentic_primitives_gateway.audit.models import PRIMITIVE_RESOURCE_TYPE, AuditAction, AuditOutcome
 from agentic_primitives_gateway.config import settings
 from agentic_primitives_gateway.metrics import PROVIDER_HEALTH
 from agentic_primitives_gateway.models.enums import HealthStatus
@@ -94,6 +94,7 @@ def _emit_healthcheck_event(
     emit_audit_event(
         action=AuditAction.PROVIDER_HEALTHCHECK,
         outcome=AuditOutcome.SUCCESS if healthy else AuditOutcome.FAILURE,
+        resource_type=PRIMITIVE_RESOURCE_TYPE.get(primitive),
         resource_id=f"{primitive}/{provider_name}",
         metadata=metadata,
     )

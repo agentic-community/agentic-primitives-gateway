@@ -10,7 +10,7 @@ from starlette.routing import Route
 
 from agentic_primitives_gateway import metrics
 from agentic_primitives_gateway.audit.emit import emit_audit_event
-from agentic_primitives_gateway.audit.models import AuditAction, AuditOutcome
+from agentic_primitives_gateway.audit.models import AuditAction, AuditOutcome, ResourceType
 from agentic_primitives_gateway.context import get_authenticated_principal
 from agentic_primitives_gateway.enforcement.base import PolicyEnforcer
 
@@ -210,6 +210,7 @@ class PolicyEnforcementMiddleware(BaseHTTPMiddleware):
             emit_audit_event(
                 action=AuditAction.POLICY_DENY,
                 outcome=AuditOutcome.DENY,
+                resource_type=ResourceType.HTTP,
                 resource_id=resource,
                 reason="cedar_deny",
                 http_method=request.method,
@@ -225,6 +226,7 @@ class PolicyEnforcementMiddleware(BaseHTTPMiddleware):
         emit_audit_event(
             action=AuditAction.POLICY_ALLOW,
             outcome=AuditOutcome.ALLOW,
+            resource_type=ResourceType.HTTP,
             resource_id=resource,
             http_method=request.method,
             http_path=path,
