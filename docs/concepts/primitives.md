@@ -38,13 +38,13 @@ class MemoryProvider(ABC):
 
 ## Shared Memory
 
-The memory primitive supports shared namespaces for inter-agent knowledge sharing:
+The memory primitive supports shared namespaces for cross-agent collaboration. Both shared levels are **cross-user by design** — the whole point of a shared pool is that two callers hit the same data:
 
-- **Level 1: Team-scoped shared memory:** Teams set `shared_memory_namespace` on the `TeamSpec`. All workers in the team receive `share_finding`, `read_shared`, `search_shared`, and `list_shared` tools that operate on a single team-wide namespace. This enables workers to share findings during a team run.
+- **Level 1: Team-scoped shared memory:** Teams set `shared_memory_namespace` on the `TeamSpec`. All workers in the team receive `share_finding`, `read_shared`, `search_shared`, and `list_shared` tools that operate on a single team-wide namespace. Enables workers to share findings during a team run.
 
-- **Level 2: Agent-level shared pools:** Individual agents set `shared_namespaces` on their `PrimitiveConfig.memory`. Each pool name resolves to a separate user-scoped namespace. Agents receive `share_to`, `read_from_pool`, `search_pool`, and `list_pool` tools that accept a `pool` parameter. This enables cross-agent knowledge sharing outside of a team context.
+- **Level 2: Agent-level shared pools:** Individual agents set `shared_namespaces` on their `PrimitiveConfig.memory`. Each declared pool resolves to its own cross-user namespace. Agents receive `share_to`, `read_from_pool`, `search_pool`, and `list_pool` tools that accept a `pool` parameter. Enables cross-agent sharing outside of a team context.
 
-Both levels use the same underlying memory provider and are user-scoped (`{namespace}:u:{user_id}`).
+Private memory (every agent's default `remember`/`recall`/`search_memory` tools) remains user-scoped with a trailing `:u:{user_id}` — two users on the same agent never see each other's private facts. Shared namespaces deliberately drop the `:u:` suffix; if you want per-user isolation, use private memory instead of a pool.
 
 ## Healthcheck
 

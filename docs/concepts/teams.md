@@ -309,7 +309,7 @@ Teams support shared memory for inter-agent communication during a run. When `sh
 | `search_shared(query)` | Search shared findings by semantic similarity |
 | `list_shared()` | List all findings in the shared namespace |
 
-The `{team_name}` placeholder in the namespace is expanded at runtime. Shared memory is scoped per user (`{namespace}:u:{user_id}`).
+The `{team_name}` placeholder in the namespace is expanded at runtime. Team shared memory is **cross-user by design** — the whole point is that workers (and the humans who run the team) collaborate on the same findings. If you need per-user isolation, use each worker's private memory (`remember`/`recall`/`search_memory`) instead of the shared pool.
 
 This is **Level 1** shared memory (team-scoped, single namespace). For **Level 2** (agent-level pools via `shared_namespaces`), see [Agents](agents.md#shared-memory-pools).
 

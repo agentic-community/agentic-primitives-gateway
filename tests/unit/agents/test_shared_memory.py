@@ -162,9 +162,7 @@ class TestTeamRunnerSharedNamespace:
 
     def test_resolve_shared_namespace(self):
         from agentic_primitives_gateway.agents.team_runner import TeamRunner
-        from agentic_primitives_gateway.context import set_authenticated_principal
 
-        set_authenticated_principal(_ALICE)
         runner = TeamRunner()
         spec = TeamSpec(
             name="research-team",
@@ -174,7 +172,9 @@ class TestTeamRunnerSharedNamespace:
             shared_memory_namespace="team:{team_name}",
         )
         ns = runner._resolve_shared_namespace(spec)
-        assert ns == "team:research-team:u:alice"
+        # Team shared namespace is cross-user (no ``:u:`` suffix); the whole
+        # point of team shared memory is that workers collaborate.
+        assert ns == "team:research-team"
 
     def test_resolve_shared_namespace_none(self):
         from agentic_primitives_gateway.agents.team_runner import TeamRunner
@@ -288,16 +288,17 @@ class TestResolveSharedPools:
                 ),
             },
         )
-        pools = resolve_shared_pools(spec, _ALICE)
+        pools = resolve_shared_pools(spec)
         assert pools is not None
-        assert pools["project:alpha"] == "project:alpha:u:alice"
-        assert pools["team:research"] == "team:research:u:alice"
+        # Pools are cross-user by design — no ``:u:`` suffix.
+        assert pools["project:alpha"] == "project:alpha"
+        assert pools["team:research"] == "team:research"
 
     def test_resolve_pools_none_without_config(self):
         from agentic_primitives_gateway.agents.namespace import resolve_shared_pools
 
         spec = AgentSpec(name="agent", model="m")
-        assert resolve_shared_pools(spec, _ALICE) is None
+        assert resolve_shared_pools(spec) is None
 
     def test_resolve_pools_with_agent_name_placeholder(self):
         from agentic_primitives_gateway.agents.namespace import resolve_shared_pools
@@ -312,9 +313,10 @@ class TestResolveSharedPools:
                 ),
             },
         )
-        pools = resolve_shared_pools(spec, _ALICE)
+        pools = resolve_shared_pools(spec)
         assert pools is not None
-        assert pools["project:{agent_name}:shared"] == "project:researcher:shared:u:alice"
+        # Pools are cross-user; ``:u:`` suffix no longer applied.
+        assert pools["project:{agent_name}:shared"] == "project:researcher:shared"
 
 
 class TestPoolMemoryHandlers:
@@ -333,14 +335,14 @@ class TestPoolMemoryHandlers:
             set_memory_pools,
         )
 
-        token = set_memory_pools({"project:alpha": "project:alpha:u:alice"})
+        token = set_memory_pools({"project:alpha": "project:alpha"})
         try:
             mock_mem = AsyncMock()
             with patch("agentic_primitives_gateway.agents.tools.handlers.registry") as mock_reg:
                 mock_reg.memory = mock_mem
                 result = await pool_memory_store("project:alpha", "docs", "API docs")
             mock_mem.store.assert_called_once_with(
-                namespace="project:alpha:u:alice", key="docs", content="API docs", metadata={}
+                namespace="project:alpha", key="docs", content="API docs", metadata={}
             )
             assert "project:alpha" in result
         finally:
@@ -354,7 +356,7 @@ class TestPoolMemoryHandlers:
             set_memory_pools,
         )
 
-        token = set_memory_pools({"project:alpha": "project:alpha:u:alice"})
+        token = set_memory_pools({"project:alpha": "project:alpha"})
         try:
             with pytest.raises(ValueError, match="Unknown pool"):
                 await pool_memory_store("nonexistent", "key", "content")
@@ -369,7 +371,7 @@ class TestPoolMemoryHandlers:
             set_memory_pools,
         )
 
-        token = set_memory_pools({"project:alpha": "project:alpha:u:alice"})
+        token = set_memory_pools({"project:alpha": "project:alpha"})
         try:
             mock_result = AsyncMock()
             mock_result.score = 0.9

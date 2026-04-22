@@ -17,6 +17,10 @@ Memory and conversation-history keys are scoped on three axes:
 3. **Session** (``session_id``) — applied separately via
    :func:`resolve_actor_id`.
 
+Shared memory pools (``PrimitiveConfig.memory.shared_namespaces``) are
+a deliberate exception to user-scoping: pools are cross-user by
+design, so ``resolve_shared_pools`` does **not** append ``:u:``.
+
 Templates accept ``{agent_owner}`` and ``{agent_name}`` placeholders.
 """
 
@@ -62,18 +66,23 @@ def resolve_memory_namespace_for_identity(
     return f"{base}:u:{principal.id}"
 
 
-def resolve_shared_pools(spec: AgentSpec, principal: AuthenticatedPrincipal) -> dict[str, str] | None:
+def resolve_shared_pools(spec: AgentSpec) -> dict[str, str] | None:
     """Resolve shared memory pools from the agent's memory primitive config.
 
-    Shared pool templates honour ``{agent_owner}`` and ``{agent_name}``.
+    Pool namespaces are **cross-user** — no ``:u:`` suffix.  The whole
+    point of a shared pool is that Alice and Bob hit the same data;
+    previously this function appended ``:u:{principal.id}`` which made
+    each pool silently per-user, masking the feature.
+
+    Returns a dict mapping the pool's declared name (as the LLM refers
+    to it) to the resolved namespace the memory provider should use.
     """
     mem_config = spec.primitives.get("memory")
     if not mem_config or not mem_config.shared_namespaces:
         return None
     pools: dict[str, str] = {}
     for ns in mem_config.shared_namespaces:
-        base = _substitute(ns, agent_owner=spec.owner_id, agent_name=spec.name)
-        pools[ns] = f"{base}:u:{principal.id}"
+        pools[ns] = _substitute(ns, agent_owner=spec.owner_id, agent_name=spec.name)
     return pools
 
 

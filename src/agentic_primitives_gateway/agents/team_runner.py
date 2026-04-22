@@ -1449,19 +1449,19 @@ class TeamRunner:
 
     @staticmethod
     def _resolve_shared_namespace(team_spec: TeamSpec) -> str | None:
-        """Resolve the user-scoped shared memory namespace for a team.
+        """Resolve the team shared memory namespace.
 
-        Returns None if shared memory is not configured. The namespace
-        includes ``:u:{user_id}`` for multi-tenant isolation.
+        Team shared memory is **cross-user by design** — the whole
+        point is that workers collaborate.  Previously this appended
+        ``:u:{principal.id}`` which made the pool silently per-user and
+        defeated the feature (same bug as ``resolve_shared_pools``).
+        If you need per-user isolation of a shared resource, use
+        per-user memory instead.
         """
         if not team_spec.shared_memory_namespace:
             return None
-        principal = get_authenticated_principal()
-        if principal is None:
-            return None
         ns = team_spec.shared_memory_namespace
-        ns = ns.replace("{team_name}", team_spec.name)
-        return f"{ns}:u:{principal.id}"
+        return ns.replace("{team_name}", team_spec.name)
 
     @staticmethod
     async def _gather_upstream_context(team_run_id: str, task_id: str) -> str:

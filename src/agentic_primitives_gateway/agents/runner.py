@@ -369,7 +369,7 @@ class AgentRunner:
             raise RuntimeError("Cannot run agent without an authenticated principal")
         memory_ns = resolve_memory_namespace(spec, principal)
         actor_id = resolve_actor_id(spec, principal)
-        pool_map = resolve_shared_pools(spec, principal)
+        pool_map = resolve_shared_pools(spec)
 
         # Install contextvars before building the tool list so any early
         # reads inside handlers (unusual but possible) see the correct
