@@ -20,7 +20,8 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any
+from collections.abc import Awaitable
+from typing import Any, cast
 
 from agentic_primitives_gateway.agents.base_store import _StoreState
 
@@ -82,6 +83,33 @@ class RedisSpecStore:
         if state.proposals:
             pipe.rpush(f"{self._namespace_prefix}:proposals", *state.proposals)
         await pipe.execute()
+
+    async def _try_claim_identity(self, ident: str) -> bool:
+        """Atomically claim an identity slot in Redis.
+
+        Uses a dedicated claim-sentinel hash (``{prefix}:claims``) rather
+        than the ``identities`` hash because ``_save_state`` rewrites
+        ``identities`` wholesale on every write — a claim written there
+        could be clobbered between replicas.  The claim hash is never
+        touched by ``_save_state``, so once ``HSETNX`` grants the slot,
+        no racing caller can take it until it's explicitly released.
+        """
+        result = await cast(
+            "Awaitable[int]",
+            self._redis.hsetnx(
+                f"{self._namespace_prefix}:claims",
+                ident,
+                "1",
+            ),
+        )
+        return bool(result)
+
+    async def _release_identity_claim(self, ident: str) -> None:
+        """Remove the claim sentinel so a retry can take the slot."""
+        await cast(
+            "Awaitable[int]",
+            self._redis.hdel(f"{self._namespace_prefix}:claims", ident),
+        )
 
     def create_background_run_manager(self, **kwargs: Any) -> Any:
         from agentic_primitives_gateway.routes._background import (

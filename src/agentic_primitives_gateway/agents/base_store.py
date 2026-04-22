@@ -705,20 +705,61 @@ class SpecStore(ABC, Generic[SpecT, VersionT]):
         name = getattr(spec, "name", None)
         if name is None:
             raise ValueError("spec has no name")
-        existing = await self.get_deployed(name, owner)
-        if existing is not None:
+
+        # Atomically claim the identity slot.  The Redis variant
+        # overrides ``_try_claim_identity`` with ``HSETNX`` so two
+        # replicas racing on the same name get exactly one winner — the
+        # loser sees ``False`` and raises without mutating any state.
+        # The file store (single process) is a no-op that always
+        # returns True; the subsequent ``get_deployed`` check covers
+        # same-process duplicates.
+        ident = _identity_key(owner, name)
+        claimed = await self._try_claim_identity(ident)
+        if not claimed:
             raise KeyError(f"{self._entity_label.capitalize()} already exists: {owner}:{name}")
-        version = await self.create_version(
-            name=name,
-            owner_id=owner,
-            spec=spec,
-            created_by=owner,
-            parent_version_id=None,
-            commit_message="phase-1 compat: create via old AgentStore.create()",
-            auto_deploy=True,
-            bypass_approval=True,
-        )
+
+        try:
+            existing = await self.get_deployed(name, owner)
+            if existing is not None:
+                raise KeyError(f"{self._entity_label.capitalize()} already exists: {owner}:{name}")
+            version = await self.create_version(
+                name=name,
+                owner_id=owner,
+                spec=spec,
+                created_by=owner,
+                parent_version_id=None,
+                commit_message="phase-1 compat: create via old AgentStore.create()",
+                auto_deploy=True,
+                bypass_approval=True,
+            )
+        except Exception:
+            # Release the claim so a retry or a different caller can
+            # take the slot.  ``_release_identity_claim`` is a no-op
+            # for the file store.
+            await self._release_identity_claim(ident)
+            raise
         return cast("SpecT", version.spec)  # type: ignore[attr-defined]
+
+    async def _try_claim_identity(self, ident: str) -> bool:
+        """Atomically reserve an identity slot.
+
+        Returns ``True`` if the caller won the race, ``False`` if
+        another caller already holds it.  Default implementation is a
+        no-op (``True``) since the file store runs in a single process
+        — the subsequent ``get_deployed`` check catches duplicates
+        cheaply.  The Redis variant overrides with ``HSETNX`` so two
+        replicas get exactly one winner.
+        """
+        return True
+
+    async def _release_identity_claim(self, ident: str) -> None:
+        """Undo a claim from ``_try_claim_identity``.
+
+        Called only if ``create`` fails after claiming.  Default
+        implementation is a no-op; the Redis variant deletes the
+        sentinel so a retry can succeed.
+        """
+        return None
 
     async def _find_identity_by_name(self, name: str) -> tuple[str, str] | None:
         """Locate an identity by bare name, returning ``(owner_id, name)``.
@@ -768,6 +809,10 @@ class SpecStore(ABC, Generic[SpecT, VersionT]):
             return False
         owner_id, _ = found
         archived = await self.archive_identity(name, owner_id)
+        if archived > 0:
+            # Release the atomic-create claim so the name can be
+            # re-created later.  No-op for the file store.
+            await self._release_identity_claim(_identity_key(owner_id, name))
         return archived > 0
 
     # ── Bucketed listing ───────────────────────────────────────────────────
