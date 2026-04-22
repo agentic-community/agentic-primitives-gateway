@@ -1,4 +1,4 @@
-.PHONY: lint format typecheck check test test-client test-agentcore test-selfhosted install install-hooks pdf ui-install ui-dev ui-build ui-clean docs docs-serve
+.PHONY: lint format typecheck check test test-client test-agentcore test-selfhosted install install-hooks pdf ui-install ui-dev ui-build ui-test ui-clean docs docs-serve
 
 lint:
 	ruff check .
@@ -64,6 +64,9 @@ ui-dev:
 
 ui-build:
 	cd ui && npm run build
+
+ui-test:
+	cd ui && npm test
 
 ui-clean:
 	rm -rf src/agentic_primitives_gateway/static ui/node_modules
