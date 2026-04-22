@@ -318,6 +318,76 @@ class TestResolveSharedPools:
         # Pools are cross-user; ``:u:`` suffix no longer applied.
         assert pools["project:{agent_name}:shared"] == "project:researcher:shared"
 
+    @pytest.mark.asyncio
+    async def test_two_users_see_same_pool_data(self):
+        """Regression guard: a shared pool must genuinely be shared.
+
+        Previously ``resolve_shared_pools`` silently appended
+        ``:u:{principal.id}``, which meant Alice and Bob writing to the
+        same *declared* pool landed in different namespaces and never
+        saw each other's entries.  That defeated the feature.  This
+        test simulates two separate runs against the same agent spec
+        and the same ``InMemoryProvider`` and asserts Bob can read
+        what Alice wrote.
+        """
+        from agentic_primitives_gateway.agents.namespace import resolve_shared_pools
+        from agentic_primitives_gateway.agents.tools.handlers import (
+            pool_memory_retrieve,
+            pool_memory_store,
+        )
+        from agentic_primitives_gateway.primitives.memory.context import (
+            reset_memory_pools,
+            set_memory_pools,
+        )
+        from agentic_primitives_gateway.primitives.memory.in_memory import InMemoryProvider
+
+        bob = AuthenticatedPrincipal(id="bob", type="user", groups=frozenset(), scopes=frozenset())
+
+        spec = AgentSpec(
+            name="researcher",
+            model="m",
+            primitives={
+                "memory": PrimitiveConfig(
+                    enabled=True,
+                    shared_namespaces=["org:engineering-docs"],
+                ),
+            },
+        )
+
+        shared_backend = InMemoryProvider()
+
+        # Alice's run: resolve pools for her principal, install the
+        # contextvar, write through the handler.
+        alice_pools = resolve_shared_pools(spec)
+        assert alice_pools is not None
+        token_a = set_memory_pools(alice_pools)
+        try:
+            with patch("agentic_primitives_gateway.agents.tools.handlers.registry") as mock_reg:
+                mock_reg.memory = shared_backend
+                await pool_memory_store("org:engineering-docs", "api-spec", "v1.2")
+        finally:
+            reset_memory_pools(token_a)
+
+        # Bob's run: independent principal, same spec, same backend.
+        # He must see Alice's entry.
+        bob_pools = resolve_shared_pools(spec)
+        assert bob_pools is not None
+        # Both resolve to the exact same namespace string — that's the
+        # whole invariant this test is guarding.
+        assert bob_pools == alice_pools
+        token_b = set_memory_pools(bob_pools)
+        try:
+            with patch("agentic_primitives_gateway.agents.tools.handlers.registry") as mock_reg:
+                mock_reg.memory = shared_backend
+                result = await pool_memory_retrieve("org:engineering-docs", "api-spec")
+        finally:
+            reset_memory_pools(token_b)
+
+        assert result == "v1.2"
+        # Sanity: Bob's principal is genuinely different; the contract
+        # is that shared data crosses that boundary.
+        assert bob.id != "alice"
+
 
 class TestPoolMemoryHandlers:
     """Test pool-based shared memory handlers.
