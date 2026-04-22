@@ -44,6 +44,26 @@ from agentic_primitives_gateway.context import get_authenticated_principal
 from agentic_primitives_gateway.models.agents import AgentSpec, PrimitiveConfig
 from agentic_primitives_gateway.models.tasks import TaskStatus
 from agentic_primitives_gateway.models.teams import TeamRunPhase, TeamRunResponse, TeamSpec
+from agentic_primitives_gateway.primitives.browser.context import (
+    reset_browser_session_id,
+    set_browser_session_id,
+)
+from agentic_primitives_gateway.primitives.code_interpreter.context import (
+    reset_code_interpreter_session_id,
+    set_code_interpreter_session_id,
+)
+from agentic_primitives_gateway.primitives.memory.context import (
+    reset_memory_namespace,
+    reset_shared_memory_namespace,
+    set_memory_namespace,
+    set_shared_memory_namespace,
+)
+from agentic_primitives_gateway.primitives.tasks.context import (
+    reset_agent_role,
+    reset_team_run_id,
+    set_agent_role,
+    set_team_run_id,
+)
 from agentic_primitives_gateway.registry import registry
 
 logger = logging.getLogger(__name__)
@@ -153,6 +173,46 @@ class TeamRunner:
     def set_checkpoint_store(self, store: Any, replica_id: str | None = None) -> None:
         self._checkpoint_store = store
         self._replica_id = replica_id
+
+    # ── Per-role contextvar context manager ──────────────────────────
+    #
+    # Each of the three team roles (planner / synthesizer / worker)
+    # needs a different slice of per-primitive context installed before
+    # its agent loop runs and reset on exit.  The runner threads the
+    # values in and this context manager does the install/reset.
+
+    @contextlib.asynccontextmanager
+    async def _team_role_context(
+        self,
+        *,
+        team_run_id: str,
+        agent_role: str,
+        memory_namespace: str,
+        shared_memory_namespace: str | None = None,
+    ) -> AsyncIterator[None]:
+        """Install per-role contextvars around a single agent-loop run.
+
+        Resets them on exit so the outer team-run phase is unaffected
+        and concurrent workers don't see each other's state.
+        """
+        team_run_token = set_team_run_id(team_run_id)
+        role_token = set_agent_role(agent_role)
+        mem_token = set_memory_namespace(memory_namespace)
+        shared_token = (
+            set_shared_memory_namespace(shared_memory_namespace) if shared_memory_namespace is not None else None
+        )
+        try:
+            yield
+        finally:
+            if shared_token is not None:
+                with contextlib.suppress(Exception):
+                    reset_shared_memory_namespace(shared_token)
+            with contextlib.suppress(Exception):
+                reset_memory_namespace(mem_token)
+            with contextlib.suppress(Exception):
+                reset_agent_role(role_token)
+            with contextlib.suppress(Exception):
+                reset_team_run_id(team_run_token)
 
     def _get_event_store(self) -> Any:
         """Best-effort: get the team background manager's event store for resume events."""
@@ -587,37 +647,63 @@ class TeamRunner:
 
     # ── Phase 1: Planning ────────────────────────────────────────────
 
+    def _planner_memory_ns(self, team_spec: TeamSpec, team_run_id: str, role: str) -> str:
+        """Deterministic per-role memory namespace for planner / synthesizer.
+
+        Keeps planner/synthesizer memory writes scoped to the team run
+        so they don't pollute user-level memory.  Workers use a
+        separate ``team:{name}:{run_id}`` namespace (set at the worker
+        callsites) so planner and worker don't share a namespace by
+        accident.
+        """
+        return f"team:{team_spec.name}:{team_run_id}:{role}"
+
     async def _run_planner(self, team_spec: TeamSpec, team_run_id: str, message: str) -> None:
         planner_spec = await self._get_agent(team_spec.planner, "Planner", team_spec.owner_id)
         prompt = await build_planner_prompt(team_spec, message, self._agent_store)  # type: ignore[arg-type]
-        tools = self._planner_tools(team_run_id, team_spec.planner)
-        await run_agent_with_tools(planner_spec, prompt, tools, max_turns=planner_spec.max_turns)
+        tools = self._planner_tools()
+        async with self._team_role_context(
+            team_run_id=team_run_id,
+            agent_role="planner",
+            memory_namespace=self._planner_memory_ns(team_spec, team_run_id, "planner"),
+        ):
+            await run_agent_with_tools(planner_spec, prompt, tools, max_turns=planner_spec.max_turns)
 
     async def _run_planner_stream(
         self, team_spec: TeamSpec, team_run_id: str, message: str, resume_hint: str | None = None
     ) -> AsyncIterator[dict[str, Any]]:
         planner_spec = await self._get_agent(team_spec.planner, "Planner", team_spec.owner_id)
         prompt = await build_planner_prompt(team_spec, message, self._agent_store)  # type: ignore[arg-type]
-        tools = self._planner_tools(team_run_id, team_spec.planner)
+        tools = self._planner_tools()
         logger.info("Planner prompt:\n%s", prompt)
         cancel_evt = self._cancel_events.get(team_run_id)
-        async for event in run_agent_with_tools_stream(
-            planner_spec,
-            prompt,
-            tools,
-            "planner",
-            max_turns=planner_spec.max_turns,
-            resume_hint=resume_hint,
-            cancel_event=cancel_evt,
-            checkpoint_store=self._checkpoint_store,
-            run_id=team_run_id,
+        async with self._team_role_context(
+            team_run_id=team_run_id,
+            agent_role="planner",
+            memory_namespace=self._planner_memory_ns(team_spec, team_run_id, "planner"),
         ):
-            yield event
+            async for event in run_agent_with_tools_stream(
+                planner_spec,
+                prompt,
+                tools,
+                "planner",
+                max_turns=planner_spec.max_turns,
+                resume_hint=resume_hint,
+                cancel_event=cancel_evt,
+                checkpoint_store=self._checkpoint_store,
+                run_id=team_run_id,
+            ):
+                yield event
 
-    def _planner_tools(self, team_run_id: str, planner_name: str) -> list[ToolDefinition]:
-        """Planner only gets create_task and list_tasks."""
+    def _planner_tools(self) -> list[ToolDefinition]:
+        """Planner only gets create_task and list_tasks.
+
+        The ``team_run_id`` + ``agent_role`` contextvars are installed by
+        ``_team_role_context`` around the actual run — this function
+        just produces the tool list itself.
+        """
         primitives = {"task_board": PrimitiveConfig(enabled=True, tools=["create_task", "list_tasks"])}
-        return build_tool_list(primitives, namespace="__planner__", team_run_id=team_run_id, agent_name=planner_name)
+        return build_tool_list(primitives)
 
     # ── Continuous re-planning ───────────────────────────────────────
 
@@ -631,8 +717,13 @@ class TeamRunner:
             return 0
 
         count_before = len(await registry.tasks.list_tasks(team_run_id))
-        tools = self._planner_tools(team_run_id, team_spec.planner)
-        await run_agent_with_tools(planner_spec, prompt, tools, max_turns=planner_spec.max_turns)
+        tools = self._planner_tools()
+        async with self._team_role_context(
+            team_run_id=team_run_id,
+            agent_role="planner",
+            memory_namespace=self._planner_memory_ns(team_spec, team_run_id, "planner"),
+        ):
+            await run_agent_with_tools(planner_spec, prompt, tools, max_turns=planner_spec.max_turns)
         count_after = len(await registry.tasks.list_tasks(team_run_id))
 
         new_count = count_after - count_before
@@ -658,37 +749,42 @@ class TeamRunner:
         tasks_before = await registry.tasks.list_tasks(team_run_id)
         count_before = len(tasks_before)
         seen_task_ids = {t.id for t in tasks_before}
-        tools = self._planner_tools(team_run_id, team_spec.planner)
+        tools = self._planner_tools()
 
         await event_queue.put({"type": "phase_change", "phase": "replanning"})
         cancel_evt = self._cancel_events.get(team_run_id)
-        async for event in run_agent_with_tools_stream(
-            planner_spec,
-            prompt,
-            tools,
-            "planner",
-            max_turns=planner_spec.max_turns,
-            cancel_event=cancel_evt,
-            checkpoint_store=self._checkpoint_store,
-            run_id=team_run_id,
+        async with self._team_role_context(
+            team_run_id=team_run_id,
+            agent_role="planner",
+            memory_namespace=self._planner_memory_ns(team_spec, team_run_id, "planner"),
         ):
-            await event_queue.put(event)
-            # Poll for newly created tasks during re-planning
-            current_tasks = await registry.tasks.list_tasks(team_run_id)
-            for t in current_tasks:
-                if t.id not in seen_task_ids:
-                    seen_task_ids.add(t.id)
-                    await event_queue.put(
-                        {
-                            "type": "task_created",
-                            "task": {
-                                "id": t.id,
-                                "title": t.title,
-                                "priority": t.priority,
-                                "suggested_worker": t.suggested_worker,
-                            },
-                        }
-                    )
+            async for event in run_agent_with_tools_stream(
+                planner_spec,
+                prompt,
+                tools,
+                "planner",
+                max_turns=planner_spec.max_turns,
+                cancel_event=cancel_evt,
+                checkpoint_store=self._checkpoint_store,
+                run_id=team_run_id,
+            ):
+                await event_queue.put(event)
+                # Poll for newly created tasks during re-planning
+                current_tasks = await registry.tasks.list_tasks(team_run_id)
+                for t in current_tasks:
+                    if t.id not in seen_task_ids:
+                        seen_task_ids.add(t.id)
+                        await event_queue.put(
+                            {
+                                "type": "task_created",
+                                "task": {
+                                    "id": t.id,
+                                    "title": t.title,
+                                    "priority": t.priority,
+                                    "suggested_worker": t.suggested_worker,
+                                },
+                            }
+                        )
 
         tasks_after = await registry.tasks.list_tasks(team_run_id)
         new_tasks = tasks_after[count_before:]
@@ -979,91 +1075,118 @@ class TeamRunner:
     ) -> str:
         """Like _execute_task but streams agent tokens/tools to event_queue."""
         prev_overrides = self._apply_overrides(worker_spec)
-        session_ctx = await self._start_sessions(worker_spec)
+        session_ids, cv_tokens = await self._start_sessions(worker_spec)
         try:
-            tools = self._build_worker_tools(worker_spec, team_spec, team_run_id, session_ctx)
+            tools = self._build_worker_tools(worker_spec, team_spec)
             upstream = await self._gather_upstream_context(team_run_id, task_id)
             message = build_task_message(title, description, upstream)
 
             logger.info("Task '%s' starting streaming execution for '%s'", task_id, title)
             content = ""
             cancel_evt = self._cancel_events.get(team_run_id)
-            async for event in run_agent_with_tools_stream(
-                worker_spec,
-                message,
-                tools,
-                worker_name,
-                max_turns=worker_spec.max_turns,
-                cancel_event=cancel_evt,
-                checkpoint_store=self._checkpoint_store,
-                run_id=team_run_id,
+            async with self._team_role_context(
+                team_run_id=team_run_id,
+                agent_role=worker_name,
+                memory_namespace=f"team:{team_spec.name}:{team_run_id}",
+                shared_memory_namespace=self._resolve_shared_namespace(team_spec),
             ):
-                evt_type = event.get("type")
-                if evt_type == "agent_token":
-                    content += event.get("content", "")
-                    await event_queue.put(
-                        {
-                            "type": "agent_token",
-                            "agent": worker_name,
-                            "task_id": task_id,
-                            "content": event.get("content", ""),
-                        }
-                    )
-                elif evt_type == "agent_tool":
-                    await event_queue.put(
-                        {"type": "agent_tool", "agent": worker_name, "task_id": task_id, "name": event.get("name", "")}
-                    )
+                async for event in run_agent_with_tools_stream(
+                    worker_spec,
+                    message,
+                    tools,
+                    worker_name,
+                    max_turns=worker_spec.max_turns,
+                    cancel_event=cancel_evt,
+                    checkpoint_store=self._checkpoint_store,
+                    run_id=team_run_id,
+                ):
+                    evt_type = event.get("type")
+                    if evt_type == "agent_token":
+                        content += event.get("content", "")
+                        await event_queue.put(
+                            {
+                                "type": "agent_token",
+                                "agent": worker_name,
+                                "task_id": task_id,
+                                "content": event.get("content", ""),
+                            }
+                        )
+                    elif evt_type == "agent_tool":
+                        await event_queue.put(
+                            {
+                                "type": "agent_tool",
+                                "agent": worker_name,
+                                "task_id": task_id,
+                                "name": event.get("name", ""),
+                            }
+                        )
             logger.info("Task '%s' streaming execution complete, content_len=%d", task_id, len(content))
             return content
         finally:
-            await self._stop_sessions(session_ctx)
+            await self._stop_sessions(session_ids, cv_tokens)
             self._restore_overrides(prev_overrides)
 
     async def _execute_task_core(
         self, worker_spec: AgentSpec, team_spec: TeamSpec, team_run_id: str, task_id: str, title: str, description: str
     ) -> str:
         """Inner task execution with provider overrides already applied."""
-        session_ctx = await self._start_sessions(worker_spec)
+        session_ids, cv_tokens = await self._start_sessions(worker_spec)
         try:
-            tools = self._build_worker_tools(worker_spec, team_spec, team_run_id, session_ctx)
+            tools = self._build_worker_tools(worker_spec, team_spec)
             upstream = await self._gather_upstream_context(team_run_id, task_id)
             message = build_task_message(title, description, upstream)
-            return await run_agent_with_tools(worker_spec, message, tools, max_turns=worker_spec.max_turns)
+            async with self._team_role_context(
+                team_run_id=team_run_id,
+                agent_role=worker_spec.name,
+                memory_namespace=f"team:{team_spec.name}:{team_run_id}",
+                shared_memory_namespace=self._resolve_shared_namespace(team_spec),
+            ):
+                return await run_agent_with_tools(worker_spec, message, tools, max_turns=worker_spec.max_turns)
         finally:
-            await self._stop_sessions(session_ctx)
+            await self._stop_sessions(session_ids, cv_tokens)
 
     # ── Phase 3: Synthesis ───────────────────────────────────────────
 
     async def _run_synthesizer(self, team_spec: TeamSpec, team_run_id: str, message: str) -> str:
         synth_spec = await self._get_agent(team_spec.synthesizer, "Synthesizer", team_spec.owner_id)
         prompt = await build_synthesis_prompt(team_run_id, message)
-        tools = self._synthesizer_tools(team_run_id, team_spec.synthesizer)
-        return await run_agent_with_tools(synth_spec, prompt, tools, max_turns=synth_spec.max_turns)
+        tools = self._synthesizer_tools()
+        async with self._team_role_context(
+            team_run_id=team_run_id,
+            agent_role="synthesizer",
+            memory_namespace=self._planner_memory_ns(team_spec, team_run_id, "synthesizer"),
+        ):
+            return await run_agent_with_tools(synth_spec, prompt, tools, max_turns=synth_spec.max_turns)
 
     async def _run_synthesizer_stream(
         self, team_spec: TeamSpec, team_run_id: str, message: str, resume_hint: str | None = None
     ) -> AsyncIterator[dict[str, Any]]:
         synth_spec = await self._get_agent(team_spec.synthesizer, "Synthesizer", team_spec.owner_id)
         prompt = await build_synthesis_prompt(team_run_id, message)
-        tools = self._synthesizer_tools(team_run_id, team_spec.synthesizer)
+        tools = self._synthesizer_tools()
         cancel_evt = self._cancel_events.get(team_run_id)
-        async for event in run_agent_with_tools_stream(
-            synth_spec,
-            prompt,
-            tools,
-            "synthesizer",
-            max_turns=synth_spec.max_turns,
-            resume_hint=resume_hint,
-            cancel_event=cancel_evt,
-            checkpoint_store=self._checkpoint_store,
-            run_id=team_run_id,
+        async with self._team_role_context(
+            team_run_id=team_run_id,
+            agent_role="synthesizer",
+            memory_namespace=self._planner_memory_ns(team_spec, team_run_id, "synthesizer"),
         ):
-            yield event
+            async for event in run_agent_with_tools_stream(
+                synth_spec,
+                prompt,
+                tools,
+                "synthesizer",
+                max_turns=synth_spec.max_turns,
+                resume_hint=resume_hint,
+                cancel_event=cancel_evt,
+                checkpoint_store=self._checkpoint_store,
+                run_id=team_run_id,
+            ):
+                yield event
 
-    def _synthesizer_tools(self, team_run_id: str, synth_name: str) -> list[ToolDefinition]:
+    def _synthesizer_tools(self) -> list[ToolDefinition]:
         """Synthesizer gets read-only task board access."""
         primitives = {"task_board": PrimitiveConfig(enabled=True, tools=["list_tasks", "get_task"])}
-        return build_tool_list(primitives, namespace="__synthesizer__", team_run_id=team_run_id, agent_name=synth_name)
+        return build_tool_list(primitives)
 
     # ── Helpers ──────────────────────────────────────────────────────
 
@@ -1108,41 +1231,47 @@ class TeamRunner:
 
         # Execute the task with resume context
         prev_overrides = self._apply_overrides(worker_spec)
-        session_ctx = await self._start_sessions(worker_spec)
+        session_ids, cv_tokens = await self._start_sessions(worker_spec)
         try:
-            tools = self._build_worker_tools(worker_spec, team_spec, team_run_id, session_ctx)
+            tools = self._build_worker_tools(worker_spec, team_spec)
             upstream = await self._gather_upstream_context(team_run_id, task_id)
             message = build_task_message(task.title, task.description, upstream)
 
             content = ""
             cancel_evt = self._cancel_events.get(team_run_id)
-            async for event in run_agent_with_tools_stream(
-                worker_spec,
-                message,
-                tools,
-                worker_name,
-                max_turns=worker_spec.max_turns,
-                resume_hint=resume_hint or None,
-                cancel_event=cancel_evt,
-                checkpoint_store=self._checkpoint_store,
-                run_id=team_run_id,
+            async with self._team_role_context(
+                team_run_id=team_run_id,
+                agent_role=worker_name,
+                memory_namespace=f"team:{team_spec.name}:{team_run_id}",
+                shared_memory_namespace=self._resolve_shared_namespace(team_spec),
             ):
-                evt_type = event.get("type")
-                if evt_type == "agent_token":
-                    content += event.get("content", "")
-                    yield {
-                        "type": "agent_token",
-                        "agent": worker_name,
-                        "task_id": task_id,
-                        "content": event.get("content", ""),
-                    }
-                elif evt_type == "agent_tool":
-                    yield {
-                        "type": "agent_tool",
-                        "agent": worker_name,
-                        "task_id": task_id,
-                        "name": event.get("name", ""),
-                    }
+                async for event in run_agent_with_tools_stream(
+                    worker_spec,
+                    message,
+                    tools,
+                    worker_name,
+                    max_turns=worker_spec.max_turns,
+                    resume_hint=resume_hint or None,
+                    cancel_event=cancel_evt,
+                    checkpoint_store=self._checkpoint_store,
+                    run_id=team_run_id,
+                ):
+                    evt_type = event.get("type")
+                    if evt_type == "agent_token":
+                        content += event.get("content", "")
+                        yield {
+                            "type": "agent_token",
+                            "agent": worker_name,
+                            "task_id": task_id,
+                            "content": event.get("content", ""),
+                        }
+                    elif evt_type == "agent_tool":
+                        yield {
+                            "type": "agent_tool",
+                            "agent": worker_name,
+                            "task_id": task_id,
+                            "name": event.get("name", ""),
+                        }
 
             await registry.tasks.update_task(team_run_id, task_id, status=TaskStatus.DONE, result=content)
             yield {"type": "task_completed", "agent": worker_name, "task_id": task_id, "result": content}
@@ -1153,7 +1282,7 @@ class TeamRunner:
                 await registry.tasks.update_task(team_run_id, task_id, status=TaskStatus.FAILED, result=str(e))
             yield {"type": "task_failed", "agent": worker_name, "task_id": task_id, "error": str(e)}
         finally:
-            await self._stop_sessions(session_ctx)
+            await self._stop_sessions(session_ids, cv_tokens)
             self._restore_overrides(prev_overrides)
 
         yield {"type": "retry_done", "task_id": task_id}
@@ -1236,36 +1365,54 @@ class TeamRunner:
     def _restore_overrides(prev: dict[str, str]) -> None:
         restore_provider_overrides(prev)
 
-    async def _start_sessions(self, worker_spec: AgentSpec) -> dict[str, str]:
-        """Start browser/code_interpreter sessions if the worker uses them."""
-        session_ctx: dict[str, str] = {}
+    async def _start_sessions(self, worker_spec: AgentSpec) -> tuple[dict[str, str], dict[str, Any]]:
+        """Start browser/code_interpreter sessions if the worker uses them.
+
+        Returns ``(session_ids, cv_tokens)``:
+
+        - ``session_ids`` — primitive → session-id dict used by
+          :py:meth:`_stop_sessions` for cleanup.
+        - ``cv_tokens`` — reset tokens for the per-primitive session
+          contextvars we just installed.  Handler code reads the
+          session ID from those contextvars; the runner never threads
+          it through as a param.
+        """
+        session_ids: dict[str, str] = {}
+        cv_tokens: dict[str, Any] = {}
         for prim_name, config in worker_spec.primitives.items():
             if not config.enabled:
                 continue
+            sid: str | None = None
             try:
                 if prim_name == "code_interpreter":
                     result = await registry.code_interpreter.start_session()
-                    session_ctx["code_interpreter"] = result.get("session_id", uuid.uuid4().hex[:16])
+                    sid = result.get("session_id", uuid.uuid4().hex[:16])
                 elif prim_name == "browser":
                     result = await registry.browser.start_session()
-                    session_ctx["browser"] = result.get("session_id", uuid.uuid4().hex[:16])
+                    sid = result.get("session_id", uuid.uuid4().hex[:16])
                 else:
                     continue
-                logger.info("Started %s session: %s", prim_name, session_ctx[prim_name])
+                logger.info("Started %s session: %s", prim_name, sid)
                 if self._session_registry:
                     principal = get_authenticated_principal()
                     if principal is None:
                         raise RuntimeError("Cannot register session without an authenticated principal")
-                    await self._session_registry.register(
-                        prim_name, session_ctx[prim_name], metadata={"user_id": principal.id}
-                    )
+                    await self._session_registry.register(prim_name, sid, metadata={"user_id": principal.id})
             except Exception:
                 logger.warning("Failed to start %s session", prim_name, exc_info=True)
-                session_ctx[prim_name] = uuid.uuid4().hex[:16]
-        return session_ctx
+                sid = uuid.uuid4().hex[:16]
 
-    async def _stop_sessions(self, session_ctx: dict[str, str]) -> None:
-        for prim_name, sid in session_ctx.items():
+            if sid is None:
+                continue
+            session_ids[prim_name] = sid
+            if prim_name == "browser":
+                cv_tokens["browser_session"] = set_browser_session_id(sid)
+            elif prim_name == "code_interpreter":
+                cv_tokens["code_interpreter_session"] = set_code_interpreter_session_id(sid)
+        return session_ids, cv_tokens
+
+    async def _stop_sessions(self, session_ids: dict[str, str], cv_tokens: dict[str, Any]) -> None:
+        for prim_name, sid in session_ids.items():
             with contextlib.suppress(Exception):
                 if prim_name == "browser":
                     await registry.browser.stop_session(session_id=sid)
@@ -1274,27 +1421,31 @@ class TeamRunner:
             if self._session_registry:
                 with contextlib.suppress(Exception):
                     await self._session_registry.unregister(prim_name, sid)
+        if "browser_session" in cv_tokens:
+            with contextlib.suppress(Exception):
+                reset_browser_session_id(cv_tokens["browser_session"])
+        if "code_interpreter_session" in cv_tokens:
+            with contextlib.suppress(Exception):
+                reset_code_interpreter_session_id(cv_tokens["code_interpreter_session"])
 
-    def _build_worker_tools(
-        self, worker_spec: AgentSpec, team_spec: TeamSpec, team_run_id: str, session_ctx: dict[str, str]
-    ) -> list[ToolDefinition]:
-        """Build the full tool list for a worker: its primitives + task board + shared memory."""
+    def _build_worker_tools(self, worker_spec: AgentSpec, team_spec: TeamSpec) -> list[ToolDefinition]:
+        """Build the full tool list for a worker: its primitives + task board + shared memory.
+
+        All request-scoped context (memory namespace, shared namespace,
+        session IDs, team_run_id, agent_role) is installed by
+        ``_team_role_context`` + ``_start_sessions`` before the agent
+        loop runs — this method only produces the tool list.
+        """
         worker_primitives = dict(worker_spec.primitives)
         worker_primitives["task_board"] = PrimitiveConfig(enabled=True, tools=_WORKER_BOARD_TOOLS)
 
-        # Add shared memory tools when the team has a shared namespace
-        shared_ns = self._resolve_shared_namespace(team_spec)
-        if shared_ns:
+        # Enable shared memory tools when the team has a shared namespace.
+        # The namespace itself is set via the ``shared_memory_namespace``
+        # contextvar by ``_team_role_context``.
+        if team_spec.shared_memory_namespace:
             worker_primitives["shared_memory"] = PrimitiveConfig(enabled=True)
 
-        return build_tool_list(
-            worker_primitives,
-            namespace=f"team:{team_spec.name}:{team_run_id}",
-            session_ctx=session_ctx,
-            team_run_id=team_run_id,
-            agent_name=worker_spec.name,
-            shared_namespace=shared_ns,
-        )
+        return build_tool_list(worker_primitives)
 
     @staticmethod
     def _resolve_shared_namespace(team_spec: TeamSpec) -> str | None:

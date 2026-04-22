@@ -267,44 +267,63 @@ class TestRunStream:
         assert "maximum number of turns" in done["response"].lower()
 
 
+def _minimal_ctx() -> _RunContext:
+    """Build a minimal _RunContext suitable for session-management tests.
+
+    The session tests only exercise ``ctx.session_ids`` + ``ctx._cv_tokens``
+    mutation, so the surrounding fields can all be placeholder values.
+    """
+    return _RunContext(
+        spec=_make_spec(),
+        session_id="s",
+        actor_id="a",
+        trace_id="t",
+        memory_ns="ns",
+        depth=0,
+        prev_overrides={},
+    )
+
+
 class TestSessionManagement:
     async def test_ensure_session_code_interpreter(self) -> None:
         runner = AgentRunner()
-        tool_def = MagicMock(name="code_execute", primitive="code_interpreter")
+        tool_def = MagicMock()
         tool_def.name = "code_execute"
-        session_ctx: dict[str, str] = {}
+        tool_def.primitive = "code_interpreter"
+        ctx = _minimal_ctx()
 
         with patch(f"{_RUNNER_MOD}.registry") as mock_reg:
             mock_reg.code_interpreter = AsyncMock()
             mock_reg.code_interpreter.start_session.return_value = {"session_id": "ci-123"}
-            await runner._ensure_session("code_execute", [tool_def], session_ctx)
+            await runner._ensure_session("code_execute", [tool_def], ctx)
 
-        assert session_ctx["code_interpreter"] == "ci-123"
+        assert ctx.session_ids["code_interpreter"] == "ci-123"
 
     async def test_ensure_session_browser(self) -> None:
         runner = AgentRunner()
         tool_def = MagicMock()
         tool_def.name = "browser_navigate"
         tool_def.primitive = "browser"
-        session_ctx: dict[str, str] = {}
+        ctx = _minimal_ctx()
 
         with patch(f"{_RUNNER_MOD}.registry") as mock_reg:
             mock_reg.browser = AsyncMock()
             mock_reg.browser.start_session.return_value = {"session_id": "br-123"}
-            await runner._ensure_session("browser_navigate", [tool_def], session_ctx)
+            await runner._ensure_session("browser_navigate", [tool_def], ctx)
 
-        assert session_ctx["browser"] == "br-123"
+        assert ctx.session_ids["browser"] == "br-123"
 
     async def test_ensure_session_skips_already_started(self) -> None:
         runner = AgentRunner()
         tool_def = MagicMock()
         tool_def.name = "code_execute"
         tool_def.primitive = "code_interpreter"
-        session_ctx = {"code_interpreter": "existing"}
+        ctx = _minimal_ctx()
+        ctx.session_ids["code_interpreter"] = "existing"
 
         with patch(f"{_RUNNER_MOD}.registry") as mock_reg:
             mock_reg.code_interpreter = AsyncMock()
-            await runner._ensure_session("code_execute", [tool_def], session_ctx)
+            await runner._ensure_session("code_execute", [tool_def], ctx)
 
         mock_reg.code_interpreter.start_session.assert_not_awaited()
 
@@ -313,36 +332,38 @@ class TestSessionManagement:
         tool_def = MagicMock()
         tool_def.name = "code_execute"
         tool_def.primitive = "code_interpreter"
-        session_ctx: dict[str, str] = {}
+        ctx = _minimal_ctx()
 
         with patch(f"{_RUNNER_MOD}.registry") as mock_reg:
             mock_reg.code_interpreter = AsyncMock()
             mock_reg.code_interpreter.start_session.side_effect = RuntimeError("fail")
-            await runner._ensure_session("code_execute", [tool_def], session_ctx)
+            await runner._ensure_session("code_execute", [tool_def], ctx)
 
         # Should still set a fallback session ID
-        assert "code_interpreter" in session_ctx
+        assert "code_interpreter" in ctx.session_ids
 
     async def test_cleanup_sessions(self) -> None:
         runner = AgentRunner()
-        session_ctx = {"browser": "br-1", "code_interpreter": "ci-1"}
+        ctx = _minimal_ctx()
+        ctx.session_ids = {"browser": "br-1", "code_interpreter": "ci-1"}
 
         with patch(f"{_RUNNER_MOD}.registry") as mock_reg:
             mock_reg.browser = AsyncMock()
             mock_reg.code_interpreter = AsyncMock()
-            await runner._cleanup_sessions(session_ctx)
+            await runner._cleanup_sessions(ctx)
 
         mock_reg.browser.stop_session.assert_awaited_once_with(session_id="br-1")
         mock_reg.code_interpreter.stop_session.assert_awaited_once_with(session_id="ci-1")
 
     async def test_cleanup_sessions_handles_failure(self) -> None:
         runner = AgentRunner()
-        session_ctx = {"browser": "br-1"}
+        ctx = _minimal_ctx()
+        ctx.session_ids = {"browser": "br-1"}
 
         with patch(f"{_RUNNER_MOD}.registry") as mock_reg:
             mock_reg.browser = AsyncMock()
             mock_reg.browser.stop_session.side_effect = RuntimeError("fail")
-            await runner._cleanup_sessions(session_ctx)
+            await runner._cleanup_sessions(ctx)
             # Should not raise
 
 
@@ -600,7 +621,7 @@ class TestExecToolsStreaming:
             session_id="sess",
             actor_id="test-agent",
             trace_id="trace",
-            knowledge_ns="ns",
+            memory_ns="ns",
             depth=0,
             prev_overrides={},
             tools=[
@@ -655,7 +676,7 @@ class TestInitContextMemoryInjection:
             session_id="s",
             actor_id="test-agent",
             trace_id="t",
-            knowledge_ns="ns",
+            memory_ns="ns",
             depth=0,
             prev_overrides={},
             llm_tools=[{"name": "tool1"}],

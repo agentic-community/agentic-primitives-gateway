@@ -247,7 +247,7 @@ See [Agent Delegation Guide](../guides/agent-delegation.md) for more details.
 
 ## Shared Memory Pools
 
-Agents can participate in shared memory pools via `PrimitiveConfig.shared_namespaces`. This enables knowledge sharing between agents without requiring a team:
+Agents can participate in shared memory pools via `PrimitiveConfig.shared_namespaces`. This enables memory sharing between agents without requiring a team:
 
 ```yaml
 researcher:

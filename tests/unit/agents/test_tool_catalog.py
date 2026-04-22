@@ -18,16 +18,12 @@ from agentic_primitives_gateway.models.agents import PrimitiveConfig
 
 class TestBuildToolList:
     def test_disabled_primitive_skipped(self) -> None:
-        tools = build_tool_list(
-            {"memory": PrimitiveConfig(enabled=False)},
-            namespace="ns",
-        )
+        tools = build_tool_list({"memory": PrimitiveConfig(enabled=False)})
         assert tools == []
 
     def test_agents_primitive_no_store(self) -> None:
         tools = build_tool_list(
             {"agents": PrimitiveConfig(enabled=True, tools=["researcher"])},
-            namespace="ns",
             agent_store=None,
             agent_runner=None,
         )
@@ -36,7 +32,6 @@ class TestBuildToolList:
     def test_agents_primitive_depth_exceeded(self) -> None:
         tools = build_tool_list(
             {"agents": PrimitiveConfig(enabled=True, tools=["researcher"])},
-            namespace="ns",
             agent_store=MagicMock(),
             agent_runner=MagicMock(),
             agent_depth=MAX_AGENT_DEPTH,
@@ -46,27 +41,20 @@ class TestBuildToolList:
     def test_agents_primitive_builds_tools(self) -> None:
         tools = build_tool_list(
             {"agents": PrimitiveConfig(enabled=True, tools=["researcher"])},
-            namespace="ns",
             agent_store=MagicMock(),
             agent_runner=MagicMock(),
             agent_depth=0,
         )
         assert any(t.name == "call_researcher" for t in tools)
 
-    def test_memory_tools_bound_with_namespace(self) -> None:
-        tools = build_tool_list(
-            {"memory": PrimitiveConfig(enabled=True)},
-            namespace="test-ns",
-        )
+    def test_memory_tools_built(self) -> None:
+        tools = build_tool_list({"memory": PrimitiveConfig(enabled=True)})
         assert len(tools) > 0
         for t in tools:
             assert t.primitive == "memory"
 
     def test_tool_filter_by_name(self) -> None:
-        tools = build_tool_list(
-            {"memory": PrimitiveConfig(enabled=True, tools=["remember"])},
-            namespace="ns",
-        )
+        tools = build_tool_list({"memory": PrimitiveConfig(enabled=True, tools=["remember"])})
         names = [t.name for t in tools]
         assert "remember" in names
         assert "search_memory" not in names

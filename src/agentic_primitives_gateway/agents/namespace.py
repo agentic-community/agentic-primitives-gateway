@@ -1,18 +1,23 @@
-"""Shared namespace resolution for agent memory.
+"""Shared namespace *templates* for agent memory and conversation history.
+
+This module is the pure-function layer for namespace resolution: it
+takes an agent spec + principal and returns a resolved namespace
+string.  It does not touch contextvars — that wiring lives in
+``primitives/memory/context.py`` and the runners set the contextvars
+using the values this module computes.
 
 Memory and conversation-history keys are scoped on three axes:
 
-1. Agent identity (``owner_id`` + ``name``) — so Alice's ``researcher`` and
-   Bob's forked ``researcher`` are fully isolated even though they share a
-   bare name.
-2. Caller identity (``principal.id``) — so two users on the same agent
-   never share memory.
-3. Session (``session_id``) — applied separately via ``resolve_actor_id``.
+1. **Agent identity** (``owner_id`` + ``name``) — Alice's ``researcher``
+   and Bob's forked ``researcher`` are fully isolated even though they
+   share a bare name.
+2. **Caller identity** (``principal.id``) — two users chatting with the
+   same agent never share memory.  Applied here via the trailing
+   ``:u:{principal.id}`` suffix.
+3. **Session** (``session_id``) — applied separately via
+   :func:`resolve_actor_id`.
 
-Templates accept ``{agent_owner}`` and ``{agent_name}`` placeholders.  Older
-templates that only use ``{agent_name}`` are still accepted; ``{agent_owner}``
-is prefixed automatically when the template starts with ``agent:`` so that
-legacy seeded configs continue to work.
+Templates accept ``{agent_owner}`` and ``{agent_name}`` placeholders.
 """
 
 from __future__ import annotations
@@ -30,13 +35,13 @@ def _substitute(template: str, *, agent_owner: str, agent_name: str) -> str:
     return ns.rstrip(":")
 
 
-def resolve_knowledge_namespace(spec: AgentSpec, principal: AuthenticatedPrincipal) -> str:
-    """Resolve the user-scoped knowledge namespace.
+def resolve_memory_namespace(spec: AgentSpec, principal: AuthenticatedPrincipal) -> str:
+    """Resolve the user-scoped memory namespace.
 
-    Memory tools (remember/recall/search) use this namespace so that stored
-    facts persist across sessions but are isolated per agent-owner *and*
-    per user.  The ``{session_id}`` placeholder is stripped — session
-    scoping is handled by :func:`resolve_actor_id`.
+    Memory tools (remember/recall/search) use this namespace so that
+    stored facts persist across sessions but are isolated per
+    agent-owner *and* per user.  The ``{session_id}`` placeholder is
+    stripped — session scoping is handled by :func:`resolve_actor_id`.
     """
     mem_config = spec.primitives.get("memory")
     template = mem_config.namespace if mem_config and mem_config.namespace else _DEFAULT_NS_TEMPLATE
@@ -44,14 +49,14 @@ def resolve_knowledge_namespace(spec: AgentSpec, principal: AuthenticatedPrincip
     return f"{base}:u:{principal.id}"
 
 
-def resolve_knowledge_namespace_for_identity(
+def resolve_memory_namespace_for_identity(
     *,
     name: str,
     owner_id: str,
     namespace_template: str | None,
     principal: AuthenticatedPrincipal,
 ) -> str:
-    """Identity-based variant used when the full spec isn't in scope."""
+    """Identity-based variant of :func:`resolve_memory_namespace`."""
     template = namespace_template or _DEFAULT_NS_TEMPLATE
     base = _substitute(template, agent_owner=owner_id, agent_name=name)
     return f"{base}:u:{principal.id}"

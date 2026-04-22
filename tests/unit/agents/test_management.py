@@ -156,7 +156,6 @@ class TestBuildToolListWithAgentManagement:
         primitives = {"agent_management": PrimitiveConfig(enabled=True)}
         tools = build_tool_list(
             primitives,
-            namespace="test",
             agent_store=store,
             agent_runner=runner,
         )
@@ -173,7 +172,6 @@ class TestBuildToolListWithAgentManagement:
         }
         tools = build_tool_list(
             primitives,
-            namespace="test",
             agent_store=store,
             agent_runner=runner,
         )

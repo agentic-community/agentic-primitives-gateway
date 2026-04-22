@@ -2,7 +2,17 @@
 
 The catalog maps primitive names to lists of ``ToolDefinition`` objects.
 ``build_tool_list`` constructs the final tool list for an agent run,
-binding context parameters and optionally including delegation tools.
+optionally including delegation tools for agent-as-tool.
+
+Per-primitive context (memory namespace, session IDs, team run ID, etc.)
+is **not** plumbed through this module — handlers read it directly from
+per-primitive contextvars (``primitives/<p>/context.py``).  This means:
+
+- ``_bind_handler`` only handles agent-as-tool delegation (which is
+  call-stack state, not request-scoped).
+- ``build_tool_list`` takes only the spec and delegation args.
+- Adding a new primitive requires zero changes here — the primitive
+  defines its own context module and its handlers read from it.
 """
 
 from __future__ import annotations
@@ -69,6 +79,17 @@ class ToolDefinition:
     primitive: str
     input_schema: dict[str, Any]
     handler: Callable[..., Awaitable[str]]
+
+
+# ── Task status binders (complete_task / fail_task share one handler) ─
+
+
+async def _task_complete(task_id: str, result: str) -> str:
+    return await task_update(task_id=task_id, status="done", result=result)
+
+
+async def _task_fail(task_id: str, result: str) -> str:
+    return await task_update(task_id=task_id, status="failed", result=result)
 
 
 # ── Static tool catalog ──────────────────────────────────────────────
@@ -415,7 +436,7 @@ _TOOL_CATALOG: dict[str, list[ToolDefinition]] = {
                 },
                 "required": ["task_id", "result"],
             },
-            handler=task_update,
+            handler=_task_complete,
         ),
         ToolDefinition(
             name="fail_task",
@@ -429,7 +450,7 @@ _TOOL_CATALOG: dict[str, list[ToolDefinition]] = {
                 },
                 "required": ["task_id", "result"],
             },
-            handler=task_update,
+            handler=_task_fail,
         ),
         ToolDefinition(
             name="add_task_note",
@@ -535,21 +556,25 @@ _TOOL_CATALOG: dict[str, list[ToolDefinition]] = {
 # ── Dynamic pool-based shared memory tools ───────────────────────────
 
 
-def _build_pool_memory_tools(pools: dict[str, str]) -> list[ToolDefinition]:
-    """Build shared memory tools with a ``pool`` parameter for multi-namespace agents.
+def _build_pool_memory_tools(pool_names: list[str]) -> list[ToolDefinition]:
+    """Build ``share_to`` / ``read_from_pool`` / ``search_pool`` / ``list_pool``.
 
-    Each tool's description lists the available pool names so the LLM knows
-    what to pass.  The ``pools`` dict is bound via ``functools.partial``.
+    These tools take a ``pool`` string argument; the *resolved* namespace
+    for each pool is read from the ``memory_pools`` contextvar inside
+    each handler.  This builder only inlines the pool-name list into the
+    tool descriptions so the LLM knows which values are legal — actual
+    resolution happens per-call via ``_resolve_pool`` in the handler,
+    reading the contextvar set by the runner.
     """
-    pool_names = ", ".join(sorted(pools.keys()))
+    pool_list = ", ".join(sorted(pool_names))
     pool_prop = {
         "type": "string",
-        "description": f"Name of the shared memory pool. Available: {pool_names}",
+        "description": f"Name of the shared memory pool. Available: {pool_list}",
     }
     return [
         ToolDefinition(
             name="share_to",
-            description=f"Store a finding in a shared memory pool. Available pools: {pool_names}",
+            description=f"Store a finding in a shared memory pool. Available pools: {pool_list}",
             primitive="shared_memory",
             input_schema={
                 "type": "object",
@@ -560,11 +585,11 @@ def _build_pool_memory_tools(pools: dict[str, str]) -> list[ToolDefinition]:
                 },
                 "required": ["pool", "key", "content"],
             },
-            handler=partial(pool_memory_store, pools),
+            handler=pool_memory_store,
         ),
         ToolDefinition(
             name="read_from_pool",
-            description=f"Read a specific finding from a shared memory pool. Available pools: {pool_names}",
+            description=f"Read a specific finding from a shared memory pool. Available pools: {pool_list}",
             primitive="shared_memory",
             input_schema={
                 "type": "object",
@@ -574,11 +599,11 @@ def _build_pool_memory_tools(pools: dict[str, str]) -> list[ToolDefinition]:
                 },
                 "required": ["pool", "key"],
             },
-            handler=partial(pool_memory_retrieve, pools),
+            handler=pool_memory_retrieve,
         ),
         ToolDefinition(
             name="search_pool",
-            description=f"Search a shared memory pool for relevant findings. Available pools: {pool_names}",
+            description=f"Search a shared memory pool for relevant findings. Available pools: {pool_list}",
             primitive="shared_memory",
             input_schema={
                 "type": "object",
@@ -589,11 +614,11 @@ def _build_pool_memory_tools(pools: dict[str, str]) -> list[ToolDefinition]:
                 },
                 "required": ["pool", "query"],
             },
-            handler=partial(pool_memory_search, pools),
+            handler=pool_memory_search,
         ),
         ToolDefinition(
             name="list_pool",
-            description=f"List all findings in a shared memory pool. Available pools: {pool_names}",
+            description=f"List all findings in a shared memory pool. Available pools: {pool_list}",
             primitive="shared_memory",
             input_schema={
                 "type": "object",
@@ -603,7 +628,7 @@ def _build_pool_memory_tools(pools: dict[str, str]) -> list[ToolDefinition]:
                 },
                 "required": ["pool"],
             },
-            handler=partial(pool_memory_list, pools),
+            handler=pool_memory_list,
         ),
     ]
 
@@ -614,73 +639,55 @@ def _build_pool_memory_tools(pools: dict[str, str]) -> list[ToolDefinition]:
 def _bind_handler(
     tool: ToolDefinition,
     primitive_name: str,
-    namespace: str,
-    session_ctx: dict[str, str],
     *,
     agent_store: Any | None = None,
     agent_runner: Any | None = None,
     agent_depth: int = 0,
-    team_run_id: str | None = None,
-    agent_name: str | None = None,
-    shared_namespace: str | None = None,
 ) -> Any:
-    """Bind context parameters to a tool handler via functools.partial."""
+    """Bind call-stack state into the handler via ``functools.partial``.
+
+    The only thing bound here is agent-as-tool delegation — every other
+    primitive reads request-scoped context (namespaces, session IDs,
+    team run ID, agent role) from its own contextvar module.
+    """
     handler = tool.handler
-    if primitive_name == "memory":
-        return partial(handler, namespace=namespace)
-    if primitive_name == "shared_memory" and shared_namespace:
-        return partial(handler, shared_namespace=shared_namespace)
-    if primitive_name in ("code_interpreter", "browser"):
-        sid = session_ctx.get(primitive_name, "")
-        return partial(handler, session_id=sid) if sid else handler
     if primitive_name == "agent_management" and agent_store is not None:
         if tool.name in ("create_agent", "list_agents", "delete_agent"):
             return partial(handler, agent_store=agent_store)
         if tool.name == "delegate_to" and agent_runner is not None:
             return partial(handler, agent_store=agent_store, agent_runner=agent_runner, depth=agent_depth)
-    if primitive_name == "task_board" and team_run_id:
-        handler = partial(handler, team_run_id=team_run_id)
-        if agent_name and tool.name in ("create_task", "claim_task", "add_task_note", "get_available_tasks"):
-            handler = partial(handler, agent_name=agent_name)
-        if tool.name == "complete_task":
-            handler = partial(handler, status="done")
-        elif tool.name == "fail_task":
-            handler = partial(handler, status="failed")
-        return handler
     return handler
 
 
 def build_tool_list(
     spec_primitives: dict[str, PrimitiveConfig],
-    namespace: str,
-    session_ctx: dict[str, str] | None = None,
     *,
     agent_store: Any | None = None,
     agent_runner: Any | None = None,
     agent_depth: int = 0,
-    team_run_id: str | None = None,
-    agent_name: str | None = None,
-    shared_namespace: str | None = None,
-    resolved_pools: dict[str, str] | None = None,
     parent_owner_id: str = "system",
+    pool_names: list[str] | None = None,
 ) -> list[ToolDefinition]:
     """Build the final tool list for an agent run from its primitive config.
 
-    Each enabled primitive contributes tools from _TOOL_CATALOG. Context
-    parameters are bound via functools.partial so the LLM doesn't need to
-    provide them:
-      - memory tools get ``namespace`` bound (agent-scoped, no session_id)
-      - browser/code_interpreter tools get ``session_id`` bound (if session started)
-      - agent delegation tools are built dynamically from the agent store
-      - pool-based shared memory tools are built when ``resolved_pools`` is set
+    Per-primitive context (memory namespace, session IDs, team run ID,
+    agent role) flows through contextvars set by the runner — this
+    function never sees them.  Only two cases need arg-threading:
 
-    The "agents" pseudo-primitive is special: its tools are not in the static
-    catalog but built at runtime from the agent store. The delegation import
-    is deferred to avoid circular imports (delegation → catalog → delegation).
+    - **Agent-as-tool delegation** (``agents`` / ``agent_management``) —
+      ``agent_store`` / ``agent_runner`` / ``agent_depth`` are
+      call-stack state, not per-request.
+    - **Pool memory tool descriptions** — ``pool_names`` lets the
+      dynamic builder inline the available pool names into the tool
+      descriptions so the LLM knows the legal values.  The *resolved*
+      pool → namespace map lives in the ``memory_pools`` contextvar.
+
+    The "agents" pseudo-primitive's tools are built at runtime from the
+    agent store; the delegation import is deferred to avoid a circular
+    import (delegation → catalog → delegation).
     """
     from agentic_primitives_gateway.agents.tools.delegation import MAX_AGENT_DEPTH, _build_agent_tools
 
-    session_ctx = session_ctx or {}
     tools: list[ToolDefinition] = []
 
     for primitive_name, config in spec_primitives.items():
@@ -712,14 +719,9 @@ def build_tool_list(
             bound_handler = _bind_handler(
                 tool,
                 primitive_name,
-                namespace,
-                session_ctx,
                 agent_store=agent_store,
                 agent_runner=agent_runner,
                 agent_depth=agent_depth,
-                team_run_id=team_run_id,
-                agent_name=agent_name,
-                shared_namespace=shared_namespace,
             )
             tools.append(
                 ToolDefinition(
@@ -731,10 +733,13 @@ def build_tool_list(
                 )
             )
 
-    # Inject pool-based shared memory tools when resolved_pools is provided
-    # (Level 2: agent-level shared namespaces from PrimitiveConfig.shared_namespaces)
-    if resolved_pools:
-        tools.extend(_build_pool_memory_tools(resolved_pools))
+    # Inject pool-based shared memory tools when pool names were provided
+    # (Level 2: agent-level shared namespaces from PrimitiveConfig.shared_namespaces).
+    # The resolved pool→namespace map is set into the ``memory_pools``
+    # contextvar by the runner; here we only inline the names into tool
+    # descriptions so the LLM knows which are legal.
+    if pool_names:
+        tools.extend(_build_pool_memory_tools(pool_names))
 
     return tools
 
@@ -747,13 +752,12 @@ def to_llm_tools(tools: list[ToolDefinition]) -> list[dict[str, Any]]:
 def _filter_to_schema(tool_input: dict[str, Any], input_schema: dict[str, Any]) -> dict[str, Any]:
     """Drop any tool_input keys not declared in the tool's input schema.
 
-    Tools are registered with ``functools.partial(handler, namespace=...,
-    session_id=...)`` binding trusted context.  If an LLM emits a
-    ``tool_input`` containing one of those bound kwargs, Python's
-    partial semantics let the caller override the bound value — which
-    would let an LLM read/write another user's memories or drive
-    another user's browser session.  Filter the input down to the
-    declared schema so only LLM-visible parameters reach the handler.
+    Historically tools bound trusted context via ``functools.partial``
+    (``namespace=...``, ``session_id=...``); filtering prevented an LLM
+    from overriding those values by emitting matching kwargs.  With
+    context moved to contextvars, partial-bound kwargs no longer exist
+    — but the filter still serves as a defensive layer that stops the
+    LLM from smuggling unrecognized kwargs into handlers.
     """
     properties = input_schema.get("properties", {}) if isinstance(input_schema, dict) else {}
     if not isinstance(properties, dict) or not properties:
@@ -779,9 +783,7 @@ async def execute_tool(
     credentials or secrets passed by the LLM.
 
     ``tool_input`` is filtered to the tool's declared ``input_schema``
-    before dispatch so an LLM-supplied kwarg cannot override trusted
-    context (``namespace``, ``session_id``, ...) bound via
-    ``functools.partial`` in ``_bind_handler``.
+    before dispatch so the LLM can't smuggle in unrecognized kwargs.
     """
     for tool in tools:
         if tool.name == tool_name:

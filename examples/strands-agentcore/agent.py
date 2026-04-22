@@ -1,7 +1,7 @@
 """Strands agent using AgentCore primitives via the Agentic Primitives Gateway.
 
 Demonstrates all AgentCore-backed primitives:
-  - Memory — store and search agent knowledge
+  - Memory — store and search agent memory
   - Identity — exchange tokens for third-party services
   - Code Interpreter — run code in a sandbox
   - Browser — automate web interactions

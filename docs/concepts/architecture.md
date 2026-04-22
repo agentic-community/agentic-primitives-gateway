@@ -123,7 +123,7 @@ AgentRunner.run(spec, message)
 Key design decisions:
 
 - **`_RunContext` dataclass** holds all mutable state, shared between `run()` and `run_stream()`
-- **Tool handlers** are bound with `functools.partial` to inject namespace/session_id
+- **Tool handlers** read per-primitive context (memory namespace, session IDs, team_run_id, agent_role, shared pools) from contextvars set by the runner at the start of each run and reset at the end. `functools.partial` is used only for agent-as-tool delegation (call-stack state like `agent_store` / `agent_runner` / `depth`).
 - **Agent-as-tool** delegation allows agents to call other agents (depth-limited)
 - **Provider overrides** are saved/restored around sub-agent calls
 - **Shared memory pools** (`PrimitiveConfig.shared_namespaces`) inject pool-based tools at build time
@@ -219,7 +219,7 @@ src/agentic_primitives_gateway/
 ├── watcher.py           # Config hot-reload
 ├── agents/
 │   ├── runner.py         # AgentRunner + _RunContext
-│   ├── namespace.py      # Knowledge namespace resolution
+│   ├── namespace.py      # Memory namespace resolution (per-user + shared pools)
 │   ├── export.py         # Export agents/teams as standalone Python scripts
 │   ├── store.py          # AgentStore ABC + FileAgentStore
 │   ├── base_store.py     # Generic store base classes

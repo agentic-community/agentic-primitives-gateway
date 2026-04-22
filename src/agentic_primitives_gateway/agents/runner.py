@@ -18,7 +18,7 @@ from agentic_primitives_gateway.agents.checkpoint_utils import (
 )
 from agentic_primitives_gateway.agents.namespace import (
     resolve_actor_id,
-    resolve_knowledge_namespace,
+    resolve_memory_namespace,
     resolve_shared_pools,
 )
 from agentic_primitives_gateway.agents.store import AgentStore
@@ -33,6 +33,20 @@ from agentic_primitives_gateway.audit.emit import emit_audit_event
 from agentic_primitives_gateway.audit.models import AuditAction, AuditOutcome, ResourceType
 from agentic_primitives_gateway.context import get_authenticated_principal
 from agentic_primitives_gateway.models.agents import AgentSpec, ChatResponse, ToolArtifact
+from agentic_primitives_gateway.primitives.browser.context import (
+    reset_browser_session_id,
+    set_browser_session_id,
+)
+from agentic_primitives_gateway.primitives.code_interpreter.context import (
+    reset_code_interpreter_session_id,
+    set_code_interpreter_session_id,
+)
+from agentic_primitives_gateway.primitives.memory.context import (
+    reset_memory_namespace,
+    reset_memory_pools,
+    set_memory_namespace,
+    set_memory_pools,
+)
 from agentic_primitives_gateway.registry import registry
 
 logger = logging.getLogger(__name__)
@@ -87,16 +101,33 @@ def _emit_run_event(
 
 @dataclass
 class _RunContext:
-    """Holds all mutable state shared between run phases."""
+    """Holds all mutable state shared between run phases.
+
+    Per-primitive context (memory namespace, shared pools, browser /
+    code-interpreter session IDs) flows through contextvars set by
+    ``_init_context`` — this dataclass only tracks what the *runner*
+    itself needs for cleanup and checkpoint serialization:
+
+    - ``memory_ns`` and ``memory_pool_map`` are captured on ``ctx`` so
+      they can be re-applied on checkpoint resume.
+    - ``session_ids`` tracks live primitive sessions so ``_cleanup``
+      can stop them and unregister from the session registry.
+    - ``_cv_tokens`` holds the ``ContextVar`` reset tokens from
+      ``_init_context`` so ``_finalize`` can restore the prior values
+      (important for sub-agent runs where the parent's contextvars must
+      come back after the child run completes).
+    """
 
     spec: AgentSpec
     session_id: str
     actor_id: str
     trace_id: str
-    knowledge_ns: str
+    memory_ns: str
     depth: int
     prev_overrides: dict[str, str]
-    session_ctx: dict[str, str] = field(default_factory=dict)
+    memory_pool_map: dict[str, str] | None = None
+    session_ids: dict[str, str] = field(default_factory=dict)
+    _cv_tokens: dict[str, Any] = field(default_factory=dict)
     tools: list[ToolDefinition] = field(default_factory=list)
     llm_tools: list[dict[str, Any]] | None = None
     messages: list[dict[str, Any]] = field(default_factory=list)
@@ -325,24 +356,36 @@ class AgentRunner:
     # ── Shared initialization ────────────────────────────────────────
 
     async def _init_context(self, spec: AgentSpec, message: str, session_id: str, depth: int) -> _RunContext:
-        """Set up everything needed before the tool-call loop."""
+        """Set up everything needed before the tool-call loop.
+
+        Sets per-primitive contextvars (memory namespace, shared pool
+        map) at run start and captures their reset tokens on ``ctx``.
+        The tool catalog no longer receives namespaces as params —
+        handlers read directly from contextvars inside each primitive.
+        """
         prev_overrides = self._apply_overrides(spec)
         principal = get_authenticated_principal()
         if principal is None:
             raise RuntimeError("Cannot run agent without an authenticated principal")
-        knowledge_ns = resolve_knowledge_namespace(spec, principal)
+        memory_ns = resolve_memory_namespace(spec, principal)
         actor_id = resolve_actor_id(spec, principal)
+        pool_map = resolve_shared_pools(spec, principal)
 
-        pools = resolve_shared_pools(spec, principal)
+        # Install contextvars before building the tool list so any early
+        # reads inside handlers (unusual but possible) see the correct
+        # values.  ``_finalize`` resets these via the captured tokens.
+        cv_tokens: dict[str, Any] = {
+            "memory_ns": set_memory_namespace(memory_ns),
+            "memory_pools": set_memory_pools(pool_map),
+        }
+
         tools = build_tool_list(
             spec.primitives,
-            namespace=knowledge_ns,
-            session_ctx={},
             agent_store=self._store,
             agent_runner=self,
             agent_depth=depth,
-            resolved_pools=pools,
             parent_owner_id=spec.owner_id,
+            pool_names=sorted(pool_map.keys()) if pool_map else None,
         )
 
         ctx = _RunContext(
@@ -350,9 +393,11 @@ class AgentRunner:
             session_id=session_id,
             actor_id=actor_id,
             trace_id=uuid.uuid4().hex,
-            knowledge_ns=knowledge_ns,
+            memory_ns=memory_ns,
             depth=depth,
             prev_overrides=prev_overrides,
+            memory_pool_map=pool_map,
+            _cv_tokens=cv_tokens,
             tools=tools,
             llm_tools=to_llm_tools(tools) if tools else None,
         )
@@ -363,7 +408,7 @@ class AgentRunner:
 
         # Inject stored memories as context on first message
         if not ctx.messages and "memory" in spec.primitives and spec.primitives["memory"].enabled:
-            memory_context = await self._load_memory_context(knowledge_ns)
+            memory_context = await self._load_memory_context(memory_ns)
             if memory_context:
                 ctx.messages.append({"role": "user", "content": memory_context})
                 ctx.messages.append(
@@ -396,27 +441,17 @@ class AgentRunner:
     # ── Session management ───────────────────────────────────────────
 
     async def _ensure_sessions_for_tools(self, ctx: _RunContext, tool_calls: list[dict[str, Any]]) -> None:
-        """Start browser/code_interpreter sessions lazily, rebuild tools if needed.
+        """Start browser/code_interpreter sessions lazily.
 
-        Sessions are started on first use because not all agents need them.
-        When a new session starts, the tool list must be rebuilt so that
-        handler functions get the session_id bound via functools.partial.
-        This must run sequentially (before parallel execution) because
-        session start has side effects on ctx.session_ctx.
+        Sessions are started on first use because not all agents need
+        them.  The session ID is written into a per-primitive contextvar
+        that handlers read directly — no tool-list rebuild required.
+        This must still run sequentially (before parallel execution)
+        because session start has a network cost we don't want to
+        duplicate across concurrent tool calls.
         """
         for tc in tool_calls:
-            prev_size = len(ctx.session_ctx)
-            await self._ensure_session(tc["name"], ctx.tools, ctx.session_ctx)
-            if len(ctx.session_ctx) > prev_size:
-                ctx.tools = build_tool_list(
-                    ctx.spec.primitives,
-                    namespace=ctx.knowledge_ns,
-                    session_ctx=ctx.session_ctx,
-                    agent_store=self._store,
-                    agent_runner=self,
-                    agent_depth=ctx.depth,
-                )
-                ctx.llm_tools = to_llm_tools(ctx.tools) if ctx.tools else None
+            await self._ensure_session(tc["name"], ctx.tools, ctx)
 
     # ── Non-streaming tool execution ─────────────────────────────────
 
@@ -617,8 +652,9 @@ class AgentRunner:
     # ── Shared finalization ──────────────────────────────────────────
 
     async def _finalize(self, ctx: _RunContext, user_message: str) -> None:
-        """Cleanup sessions, restore overrides, store turn, trace, delete checkpoint."""
-        await self._cleanup_sessions(ctx.session_ctx)
+        """Cleanup sessions, restore contextvars/overrides, store turn, trace, delete checkpoint."""
+        await self._cleanup_sessions(ctx)
+        self._reset_contextvars(ctx)
         self._restore_overrides(ctx.prev_overrides)
 
         if ctx.spec.hooks.auto_memory:
@@ -635,6 +671,27 @@ class AgentRunner:
             )
 
         await self._delete_checkpoint(ctx)
+
+    @staticmethod
+    def _reset_contextvars(ctx: _RunContext) -> None:
+        """Reset per-primitive contextvars back to what they were before ``_init_context``.
+
+        Critical for sub-agent runs: when a parent agent delegates to a
+        child agent, the child's ``_init_context`` overrides the parent's
+        memory namespace + pool map contextvars.  Resetting here
+        restores the parent's values so the parent's next turn sees
+        *its* namespace, not the child's.
+        """
+        tokens = ctx._cv_tokens
+        if "memory_ns" in tokens:
+            with contextlib.suppress(Exception):
+                reset_memory_namespace(tokens["memory_ns"])
+        if "memory_pools" in tokens:
+            with contextlib.suppress(Exception):
+                reset_memory_pools(tokens["memory_pools"])
+        # Session contextvars are reset inside ``_cleanup_sessions``
+        # so the reset happens atomically with the provider-side
+        # ``stop_session`` call.
 
     @staticmethod
     def _serialize_artifacts(artifacts: list[ToolArtifact]) -> list[dict[str, Any]]:
@@ -679,11 +736,12 @@ class AgentRunner:
             "spec_owner": ctx.spec.owner_id,
             "session_id": ctx.session_id,
             "actor_id": ctx.actor_id,
-            "knowledge_ns": ctx.knowledge_ns,
+            "memory_ns": ctx.memory_ns,
+            "memory_pool_map": ctx.memory_pool_map,
             "trace_id": ctx.trace_id,
             "depth": ctx.depth,
             "prev_overrides": ctx.prev_overrides,
-            "session_ctx": ctx.session_ctx,
+            "session_ids": ctx.session_ids,
             "messages": ctx.messages,
             "turns_used": ctx.turns_used,
             "tools_called": ctx.tools_called,
@@ -751,17 +809,36 @@ class AgentRunner:
             logger.warning("Agent '%s:%s' not found during resume — skipping", spec_owner, spec_name)
             return
 
-        # Rebuild tools (handlers can't be serialized)
+        # Rebuild tools (handlers can't be serialized) and reinstall
+        # the per-primitive contextvars so handlers see the same
+        # namespace / session state as before the crash.
         prev_overrides = self._apply_overrides(spec)
-        resume_pools = resolve_shared_pools(spec, principal) if principal else None
+        resumed_memory_ns = data["memory_ns"]
+        resumed_pool_map = data.get("memory_pool_map")
+        resumed_session_ids = data.get("session_ids") or {}
+
+        cv_tokens: dict[str, Any] = {
+            "memory_ns": set_memory_namespace(resumed_memory_ns),
+            "memory_pools": set_memory_pools(resumed_pool_map),
+        }
+        # Reinstall session contextvars for any sessions the crashed
+        # replica had already started.  If the session is dead on the
+        # provider side, the next tool call will fail and the loop will
+        # recover on the next turn.
+        if "browser" in resumed_session_ids:
+            cv_tokens["browser_session"] = set_browser_session_id(resumed_session_ids["browser"])
+        if "code_interpreter" in resumed_session_ids:
+            cv_tokens["code_interpreter_session"] = set_code_interpreter_session_id(
+                resumed_session_ids["code_interpreter"]
+            )
+
         tools = build_tool_list(
             spec.primitives,
-            namespace=data.get("knowledge_ns", ""),
-            session_ctx=data.get("session_ctx", {}),
             agent_store=self._store,
             agent_runner=self,
             agent_depth=data.get("depth", 0),
-            resolved_pools=resume_pools,
+            parent_owner_id=spec.owner_id,
+            pool_names=sorted(resumed_pool_map.keys()) if resumed_pool_map else None,
         )
 
         ctx = _RunContext(
@@ -769,10 +846,12 @@ class AgentRunner:
             session_id=data["session_id"],
             actor_id=data["actor_id"],
             trace_id=data.get("trace_id", uuid.uuid4().hex),
-            knowledge_ns=data.get("knowledge_ns", ""),
+            memory_ns=resumed_memory_ns,
             depth=data.get("depth", 0),
             prev_overrides=prev_overrides,
-            session_ctx=data.get("session_ctx", {}),
+            memory_pool_map=resumed_pool_map,
+            session_ids=resumed_session_ids,
+            _cv_tokens=cv_tokens,
             tools=tools,
             llm_tools=to_llm_tools(tools) if tools else None,
             messages=data.get("messages", []),
@@ -924,9 +1003,9 @@ class AgentRunner:
         """Load stored memories and format as an LLM context preamble.
 
         Searches two places for memories:
-        1. The primary knowledge namespace (e.g. "agent:research-assistant")
+        1. The primary memory namespace (e.g. "agent:research-assistant")
         2. If empty, falls back to child namespaces (e.g. "agent:research-assistant:session123")
-           which may contain memories stored before the knowledge/session split.
+           which may contain memories stored before the memory/session split.
 
         The child namespace search uses "namespace:" as a prefix (with trailing colon)
         to prevent "agent:bot" from matching "agent:bot-2" (multi-tenancy safety).
@@ -940,7 +1019,7 @@ class AgentRunner:
             all_records.extend(records)
 
             # Fallback: search session-scoped child namespaces for memories
-            # stored before the knowledge/session namespace split was introduced
+            # stored before the memory/session namespace split was introduced
             if not all_records:
                 try:
                     child_prefix = namespace + ":"
@@ -1047,55 +1126,61 @@ class AgentRunner:
 
     # ── Session lifecycle ────────────────────────────────────────────
 
-    async def _ensure_session(self, tool_name: str, tools: list[Any], session_ctx: dict[str, str]) -> None:
+    async def _ensure_session(self, tool_name: str, tools: list[Any], ctx: _RunContext) -> None:
+        """Start a browser / code_interpreter session on first use.
+
+        The session ID is written into ``ctx.session_ids`` (for cleanup
+        tracking) and into the per-primitive session contextvar
+        (``set_browser_session_id`` / ``set_code_interpreter_session_id``)
+        so the corresponding tool handlers can read it directly.  The
+        contextvar reset token is captured on ``ctx._cv_tokens`` so
+        ``_cleanup_sessions`` can restore prior state.
+        """
         tool_def = next((t for t in tools if t.name == tool_name), None)
         if tool_def is None:
             return
         primitive = tool_def.primitive
-        if primitive not in ("code_interpreter", "browser") or primitive in session_ctx:
+        if primitive not in ("code_interpreter", "browser") or primitive in ctx.session_ids:
             return
 
-        # Try to reattach to an existing session from the registry (e.g. after resume)
-        existing_sid = session_ctx.get(primitive)
-        if (
-            existing_sid
-            and self._session_registry
-            and await self._session_registry.is_registered(primitive, existing_sid)
-        ):
-            logger.info("Reattaching to existing %s session: %s", primitive, existing_sid)
-            return
-
+        sid: str | None = None
         try:
             logger.info("Starting %s session...", primitive)
             if primitive == "code_interpreter":
                 result = await registry.code_interpreter.start_session()
-                session_ctx["code_interpreter"] = result.get("session_id", uuid.uuid4().hex[:16])
+                sid = result.get("session_id", uuid.uuid4().hex[:16])
             elif primitive == "browser":
                 result = await registry.browser.start_session()
-                session_ctx["browser"] = result.get("session_id", uuid.uuid4().hex[:16])
-            logger.info("Started %s session: %s", primitive, session_ctx[primitive])
+                sid = result.get("session_id", uuid.uuid4().hex[:16])
+            logger.info("Started %s session: %s", primitive, sid)
             principal = get_authenticated_principal()
             # Record session ownership so the HTTP routes' ``require_owner``
             # check can reject cross-user access via a leaked session ID.
-            # ``session_ownership_for`` resolves to the per-primitive store
-            # (browser_session_owners / code_interpreter_session_owners).
-            if principal is not None:
+            if principal is not None and sid is not None:
                 owner_store = _session_ownership_store(primitive)
                 if owner_store is not None:
                     with contextlib.suppress(Exception):
-                        await owner_store.set_owner(session_ctx[primitive], principal.id)
-            if self._session_registry:
+                        await owner_store.set_owner(sid, principal.id)
+            if self._session_registry and sid is not None:
                 if principal is None:
                     raise RuntimeError("Cannot register session without an authenticated principal")
-                await self._session_registry.register(
-                    primitive, session_ctx[primitive], metadata={"user_id": principal.id}
-                )
+                await self._session_registry.register(primitive, sid, metadata={"user_id": principal.id})
         except (NotImplementedError, Exception):
             logger.warning("Failed to start %s session", primitive, exc_info=True)
-            session_ctx[primitive] = uuid.uuid4().hex[:16]
+            sid = uuid.uuid4().hex[:16]
 
-    async def _cleanup_sessions(self, session_ctx: dict[str, str]) -> None:
-        for primitive, sid in session_ctx.items():
+        if sid is None:
+            return
+        ctx.session_ids[primitive] = sid
+        # Install the session contextvar so downstream handlers pick it up.
+        if primitive == "browser":
+            ctx._cv_tokens["browser_session"] = set_browser_session_id(sid)
+        else:
+            ctx._cv_tokens["code_interpreter_session"] = set_code_interpreter_session_id(sid)
+
+    async def _cleanup_sessions(self, ctx: _RunContext) -> None:
+        """Stop live sessions, unregister, and reset per-primitive contextvars."""
+        for primitive, sid in ctx.session_ids.items():
             try:
                 if primitive == "browser":
                     await registry.browser.stop_session(session_id=sid)
@@ -1106,3 +1191,10 @@ class AgentRunner:
             if self._session_registry:
                 with contextlib.suppress(Exception):
                     await self._session_registry.unregister(primitive, sid)
+        # Reset contextvars regardless of whether stop_session succeeded.
+        if "browser_session" in ctx._cv_tokens:
+            with contextlib.suppress(Exception):
+                reset_browser_session_id(ctx._cv_tokens["browser_session"])
+        if "code_interpreter_session" in ctx._cv_tokens:
+            with contextlib.suppress(Exception):
+                reset_code_interpreter_session_id(ctx._cv_tokens["code_interpreter_session"])

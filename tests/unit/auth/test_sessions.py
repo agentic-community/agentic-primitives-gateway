@@ -113,7 +113,7 @@ class TestRunnerUsesActorId:
             session_id="sess-1",
             actor_id="test-agent:u:alice",
             trace_id="t",
-            knowledge_ns="ns",
+            memory_ns="ns",
             depth=0,
             prev_overrides={},
             content="response text",

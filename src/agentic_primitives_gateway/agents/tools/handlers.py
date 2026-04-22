@@ -2,6 +2,12 @@
 
 Each handler wraps a registry method call and returns a string suitable
 for inclusion in an LLM conversation as a tool result.
+
+Handlers read request-scoped context (memory namespace, session ID,
+team run ID, etc.) from per-primitive contextvar modules
+(``primitives/<p>/context.py``) rather than receiving it as params.
+This keeps the tool-catalog dispatch free of per-primitive special
+cases and makes each primitive responsible for its own context shape.
 """
 
 from __future__ import annotations
@@ -14,40 +20,98 @@ from agentic_primitives_gateway.audit.emit import emit_audit_event
 from agentic_primitives_gateway.audit.models import AuditAction, AuditOutcome, ResourceType
 from agentic_primitives_gateway.models.agents import AgentSpec, PrimitiveConfig
 from agentic_primitives_gateway.models.tasks import TaskNote
+from agentic_primitives_gateway.primitives.browser.context import get_browser_session_id
+from agentic_primitives_gateway.primitives.code_interpreter.context import get_code_interpreter_session_id
+from agentic_primitives_gateway.primitives.memory.context import (
+    get_memory_namespace,
+    get_memory_pools,
+    get_shared_memory_namespace,
+)
+from agentic_primitives_gateway.primitives.tasks.context import get_agent_role, get_team_run_id
 from agentic_primitives_gateway.registry import registry
 
 logger = logging.getLogger(__name__)
 
 
+# ── Context accessors — consolidate "required" checks so handlers stay terse ──
+
+
+def _require_memory_namespace() -> str:
+    ns = get_memory_namespace()
+    if ns is None:
+        raise RuntimeError("memory tool called outside a run — no memory namespace bound in context")
+    return ns
+
+
+def _require_shared_memory_namespace() -> str:
+    ns = get_shared_memory_namespace()
+    if ns is None:
+        raise RuntimeError("shared_memory tool called without a team shared namespace bound")
+    return ns
+
+
+def _require_browser_session() -> str:
+    sid = get_browser_session_id()
+    if sid is None:
+        raise RuntimeError("browser tool called without an active session — session start failed or was skipped")
+    return sid
+
+
+def _require_code_interpreter_session() -> str:
+    sid = get_code_interpreter_session_id()
+    if sid is None:
+        raise RuntimeError("code_interpreter tool called without an active session")
+    return sid
+
+
+def _require_team_run_id() -> str:
+    rid = get_team_run_id()
+    if rid is None:
+        raise RuntimeError("task_board tool called outside a team run")
+    return rid
+
+
+def _require_agent_role() -> str:
+    role = get_agent_role()
+    if role is None:
+        raise RuntimeError("task_board tool requires agent_role in context (planner/synthesizer/worker name)")
+    return role
+
+
 # ── Memory ───────────────────────────────────────────────────────────
 
 
-async def memory_store(namespace: str, key: str, content: str, source: str = "") -> str:
+async def memory_store(key: str, content: str, source: str = "") -> str:
+    namespace = _require_memory_namespace()
     metadata = {"source": source} if source else {}
     await registry.memory.store(namespace=namespace, key=key, content=content, metadata=metadata)
     return f"Stored memory '{key}'."
 
 
-async def memory_retrieve(namespace: str, key: str) -> str:
+async def memory_retrieve(key: str) -> str:
+    namespace = _require_memory_namespace()
     record = await registry.memory.retrieve(namespace=namespace, key=key)
     if record is None:
         return f"No memory found for key '{key}'."
     return record.content
 
 
-async def memory_search(namespace: str, query: str, top_k: int = 5) -> str:
+async def memory_search(query: str, top_k: int = 5) -> str:
+    namespace = _require_memory_namespace()
     results = await registry.memory.search(namespace=namespace, query=query, top_k=top_k)
     if not results:
         return "No memories found."
     return "\n".join(f"- [{r.score:.2f}] {r.record.key}: {r.record.content}" for r in results)
 
 
-async def memory_delete(namespace: str, key: str) -> str:
+async def memory_delete(key: str) -> str:
+    namespace = _require_memory_namespace()
     deleted = await registry.memory.delete(namespace=namespace, key=key)
     return f"Deleted: {deleted}"
 
 
-async def memory_list(namespace: str, limit: int = 20) -> str:
+async def memory_list(limit: int = 20) -> str:
+    namespace = _require_memory_namespace()
     records = await registry.memory.list_memories(namespace=namespace, limit=limit)
     if not records:
         return "No memories found."
@@ -57,28 +121,32 @@ async def memory_list(namespace: str, limit: int = 20) -> str:
 # ── Shared memory (team-scoped) ────────────────────────────────────
 
 
-async def shared_memory_store(shared_namespace: str, key: str, content: str, source: str = "") -> str:
+async def shared_memory_store(key: str, content: str, source: str = "") -> str:
+    shared_ns = _require_shared_memory_namespace()
     metadata = {"source": source} if source else {}
-    await registry.memory.store(namespace=shared_namespace, key=key, content=content, metadata=metadata)
+    await registry.memory.store(namespace=shared_ns, key=key, content=content, metadata=metadata)
     return f"Shared finding '{key}' with the team."
 
 
-async def shared_memory_retrieve(shared_namespace: str, key: str) -> str:
-    record = await registry.memory.retrieve(namespace=shared_namespace, key=key)
+async def shared_memory_retrieve(key: str) -> str:
+    shared_ns = _require_shared_memory_namespace()
+    record = await registry.memory.retrieve(namespace=shared_ns, key=key)
     if record is None:
         return f"No shared finding found for key '{key}'."
     return record.content
 
 
-async def shared_memory_search(shared_namespace: str, query: str, top_k: int = 5) -> str:
-    results = await registry.memory.search(namespace=shared_namespace, query=query, top_k=top_k)
+async def shared_memory_search(query: str, top_k: int = 5) -> str:
+    shared_ns = _require_shared_memory_namespace()
+    results = await registry.memory.search(namespace=shared_ns, query=query, top_k=top_k)
     if not results:
         return "No shared findings found."
     return "\n".join(f"- [{r.score:.2f}] {r.record.key}: {r.record.content}" for r in results)
 
 
-async def shared_memory_list(shared_namespace: str, limit: int = 20) -> str:
-    records = await registry.memory.list_memories(namespace=shared_namespace, limit=limit)
+async def shared_memory_list(limit: int = 20) -> str:
+    shared_ns = _require_shared_memory_namespace()
+    records = await registry.memory.list_memories(namespace=shared_ns, limit=limit)
     if not records:
         return "No shared findings."
     return "\n".join(f"- {r.key}: {r.content[:100]}" for r in records)
@@ -87,39 +155,40 @@ async def shared_memory_list(shared_namespace: str, limit: int = 20) -> str:
 # ── Pool-based shared memory (agent-level, multiple namespaces) ─────
 
 
-def _resolve_pool(pools: dict[str, str], pool: str) -> str:
+def _resolve_pool(pool: str) -> str:
     """Resolve a pool name to its namespace. Raises ValueError if invalid."""
+    pools = get_memory_pools() or {}
     ns = pools.get(pool)
     if ns is None:
-        available = ", ".join(sorted(pools.keys()))
+        available = ", ".join(sorted(pools.keys())) or "(none configured)"
         raise ValueError(f"Unknown pool '{pool}'. Available pools: {available}")
     return ns
 
 
-async def pool_memory_store(pools: dict[str, str], pool: str, key: str, content: str) -> str:
-    ns = _resolve_pool(pools, pool)
+async def pool_memory_store(pool: str, key: str, content: str) -> str:
+    ns = _resolve_pool(pool)
     await registry.memory.store(namespace=ns, key=key, content=content, metadata={})
     return f"Stored '{key}' in pool '{pool}'."
 
 
-async def pool_memory_retrieve(pools: dict[str, str], pool: str, key: str) -> str:
-    ns = _resolve_pool(pools, pool)
+async def pool_memory_retrieve(pool: str, key: str) -> str:
+    ns = _resolve_pool(pool)
     record = await registry.memory.retrieve(namespace=ns, key=key)
     if record is None:
         return f"No finding for key '{key}' in pool '{pool}'."
     return record.content
 
 
-async def pool_memory_search(pools: dict[str, str], pool: str, query: str, top_k: int = 5) -> str:
-    ns = _resolve_pool(pools, pool)
+async def pool_memory_search(pool: str, query: str, top_k: int = 5) -> str:
+    ns = _resolve_pool(pool)
     results = await registry.memory.search(namespace=ns, query=query, top_k=top_k)
     if not results:
         return f"No findings in pool '{pool}'."
     return "\n".join(f"- [{r.score:.2f}] {r.record.key}: {r.record.content}" for r in results)
 
 
-async def pool_memory_list(pools: dict[str, str], pool: str, limit: int = 20) -> str:
-    ns = _resolve_pool(pools, pool)
+async def pool_memory_list(pool: str, limit: int = 20) -> str:
+    ns = _resolve_pool(pool)
     records = await registry.memory.list_memories(namespace=ns, limit=limit)
     if not records:
         return f"No findings in pool '{pool}'."
@@ -129,7 +198,8 @@ async def pool_memory_list(pools: dict[str, str], pool: str, limit: int = 20) ->
 # ── Code interpreter ────────────────────────────────────────────────
 
 
-async def code_execute(session_id: str, code: str, language: str = "python") -> str:
+async def code_execute(code: str, language: str = "python") -> str:
+    session_id = _require_code_interpreter_session()
     result = await registry.code_interpreter.execute(session_id=session_id, code=code, language=language)
     return json.dumps(result, default=str)
 
@@ -137,31 +207,37 @@ async def code_execute(session_id: str, code: str, language: str = "python") -> 
 # ── Browser ─────────────────────────────────────────────────────────
 
 
-async def browser_navigate(session_id: str, url: str) -> str:
+async def browser_navigate(url: str) -> str:
+    session_id = _require_browser_session()
     result = await registry.browser.navigate(session_id=session_id, url=url)
     return json.dumps(result, default=str)
 
 
-async def browser_read_page(session_id: str) -> str:
+async def browser_read_page() -> str:
+    session_id = _require_browser_session()
     return await registry.browser.get_page_content(session_id=session_id)
 
 
-async def browser_click(session_id: str, selector: str) -> str:
+async def browser_click(selector: str) -> str:
+    session_id = _require_browser_session()
     result = await registry.browser.click(session_id=session_id, selector=selector)
     return json.dumps(result, default=str)
 
 
-async def browser_type(session_id: str, selector: str, text: str) -> str:
+async def browser_type(selector: str, text: str) -> str:
+    session_id = _require_browser_session()
     result = await registry.browser.type_text(session_id=session_id, selector=selector, text=text)
     return json.dumps(result, default=str)
 
 
-async def browser_screenshot(session_id: str) -> str:
+async def browser_screenshot() -> str:
+    session_id = _require_browser_session()
     result = await registry.browser.screenshot(session_id=session_id)
     return f"Screenshot captured ({len(result)} bytes). Use read_page to see text content instead."
 
 
-async def browser_evaluate_js(session_id: str, expression: str) -> str:
+async def browser_evaluate_js(expression: str) -> str:
+    session_id = _require_browser_session()
     result = await registry.browser.evaluate(session_id=session_id, expression=expression)
     return json.dumps(result, default=str)
 
@@ -206,20 +282,20 @@ async def identity_get_api_key(credential_provider: str) -> str:
 
 
 async def task_create(
-    team_run_id: str,
-    agent_name: str,
     title: str,
     description: str = "",
     depends_on: str = "",
     priority: int = 0,
     assigned_to: str = "",
 ) -> str:
+    team_run_id = _require_team_run_id()
+    agent_role = _require_agent_role()
     deps = [d.strip() for d in depends_on.split(",") if d.strip()] if depends_on else []
     task = await registry.tasks.create_task(
         team_run_id=team_run_id,
         title=title,
         description=description,
-        created_by=agent_name,
+        created_by=agent_role,
         depends_on=deps,
         priority=priority,
         suggested_worker=assigned_to or None,
@@ -230,7 +306,7 @@ async def task_create(
         resource_type=ResourceType.TASK,
         resource_id=f"{team_run_id}/{task.id}",
         metadata={
-            "created_by": agent_name,
+            "created_by": agent_role,
             "depends_on": deps,
             "priority": priority,
             "suggested_worker": assigned_to or None,
@@ -241,7 +317,8 @@ async def task_create(
     )
 
 
-async def task_list(team_run_id: str, status: str = "", assigned_to: str = "") -> str:
+async def task_list(status: str = "", assigned_to: str = "") -> str:
+    team_run_id = _require_team_run_id()
     tasks = await registry.tasks.list_tasks(
         team_run_id=team_run_id,
         status=status or None,
@@ -257,25 +334,28 @@ async def task_list(team_run_id: str, status: str = "", assigned_to: str = "") -
     return "\n".join(lines)
 
 
-async def task_get(team_run_id: str, task_id: str) -> str:
+async def task_get(task_id: str) -> str:
+    team_run_id = _require_team_run_id()
     task = await registry.tasks.get_task(team_run_id=team_run_id, task_id=task_id)
     if task is None:
         return f"Task '{task_id}' not found."
     return json.dumps(task.model_dump(), default=str)
 
 
-async def task_claim(team_run_id: str, task_id: str, agent_name: str) -> str:
+async def task_claim(task_id: str) -> str:
+    team_run_id = _require_team_run_id()
+    agent_role = _require_agent_role()
     task = await registry.tasks.claim_task(
         team_run_id=team_run_id,
         task_id=task_id,
-        agent_name=agent_name,
+        agent_name=agent_role,
     )
     emit_audit_event(
         action=AuditAction.TASK_CLAIM,
         outcome=AuditOutcome.SUCCESS if task is not None else AuditOutcome.FAILURE,
         resource_type=ResourceType.TASK,
         resource_id=f"{team_run_id}/{task_id}",
-        metadata={"claimed_by": agent_name},
+        metadata={"claimed_by": agent_role},
     )
     if task is None:
         return f"Could not claim task '{task_id}' — already claimed, not found, or dependencies not met."
@@ -283,11 +363,11 @@ async def task_claim(team_run_id: str, task_id: str, agent_name: str) -> str:
 
 
 async def task_update(
-    team_run_id: str,
     task_id: str,
     status: str = "",
     result: str = "",
 ) -> str:
+    team_run_id = _require_team_run_id()
     task = await registry.tasks.update_task(
         team_run_id=team_run_id,
         task_id=task_id,
@@ -306,23 +386,27 @@ async def task_update(
     return f"Updated task '{task_id}' — status={task.status}"
 
 
-async def task_add_note(team_run_id: str, task_id: str, agent_name: str, content: str) -> str:
-    note = TaskNote(agent=agent_name, content=content)
+async def task_add_note(task_id: str, content: str) -> str:
+    team_run_id = _require_team_run_id()
+    agent_role = _require_agent_role()
+    note = TaskNote(agent=agent_role, content=content)
     task = await registry.tasks.add_note(team_run_id=team_run_id, task_id=task_id, note=note)
     emit_audit_event(
         action=AuditAction.TASK_NOTE,
         outcome=AuditOutcome.SUCCESS if task is not None else AuditOutcome.FAILURE,
         resource_type=ResourceType.TASK,
         resource_id=f"{team_run_id}/{task_id}",
-        metadata={"author": agent_name},
+        metadata={"author": agent_role},
     )
     if task is None:
         return f"Task '{task_id}' not found."
     return f"Added note to task '{task_id}'."
 
 
-async def task_get_available(team_run_id: str, agent_name: str = "") -> str:
-    tasks = await registry.tasks.get_available(team_run_id=team_run_id, worker_name=agent_name or None)
+async def task_get_available() -> str:
+    team_run_id = _require_team_run_id()
+    agent_role = _require_agent_role()
+    tasks = await registry.tasks.get_available(team_run_id=team_run_id, worker_name=agent_role or None)
     if not tasks:
         return "No available tasks (all tasks are done, claimed, or have unmet dependencies)."
     lines = [f"- [{t.id}] p{t.priority}: {t.title}" for t in tasks]
@@ -330,6 +414,8 @@ async def task_get_available(team_run_id: str, agent_name: str = "") -> str:
 
 
 # ── Agent management ─────────────────────────────────────────────
+# Delegation tools stay param-driven — agent_store / agent_runner / depth
+# are call-stack state for the parent runner, not request-scoped state.
 
 
 async def agent_create(
