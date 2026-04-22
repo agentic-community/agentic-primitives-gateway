@@ -247,6 +247,71 @@ class TestSessionLifecycle:
 # ── Execution history ────────────────────────────────────────────────
 
 
+class TestSessionIsolation:
+    """Intent: two sessions run in separate kernels.  A variable
+    defined in session A must not be visible from session B.
+
+    This is the core multi-tenant safety property of the code
+    interpreter primitive — if kernels shared state, any code a user
+    ran could leak variables, imported modules, monkey-patched
+    builtins, or filesystem mutations into another user's kernel.
+    The provider's stated contract in ``CLAUDE.md`` is that sessions
+    wrap distinct Jupyter kernels; this test verifies that at the
+    actual-kernel level, not at the ``_sessions`` dict level.
+    """
+
+    async def test_variable_in_session_a_invisible_to_session_b(self, client: AgenticPlatformClient) -> None:
+        a = (await client.start_code_session())["session_id"]
+        b = (await client.start_code_session())["session_id"]
+        assert a != b  # sanity: different session ids
+
+        try:
+            # Set a variable in A.
+            await client.execute_code(a, "x = 'secret_from_a'")
+
+            # Reading it in B must fail with NameError — kernels must
+            # be isolated.
+            result = await client.execute_code(b, "print(x)")
+            combined = result.get("stdout", "") + result.get("stderr", "")
+            assert result.get("exit_code", 0) != 0 or "NameError" in combined, (
+                f"Session B saw variable from A (exit={result.get('exit_code')}): "
+                f"{combined!r}.  Kernels are NOT isolated — this is a data-leak risk."
+            )
+            # The leaked value must not appear anywhere.
+            assert "secret_from_a" not in combined, (
+                "Session B literally printed A's variable value — kernel shared state."
+            )
+        finally:
+            with contextlib.suppress(Exception):
+                await client.stop_code_session(a)
+            with contextlib.suppress(Exception):
+                await client.stop_code_session(b)
+
+    async def test_import_in_session_a_invisible_to_session_b(self, client: AgenticPlatformClient) -> None:
+        """A stronger variant: importing a module in A must not make
+        it available in B without B's own import.  Catches kernels
+        that share a module namespace.
+        """
+        a = (await client.start_code_session())["session_id"]
+        b = (await client.start_code_session())["session_id"]
+        try:
+            await client.execute_code(a, "import json; _ = json.dumps({'a': 1})")
+            # Don't import json in B; try to use it.
+            result = await client.execute_code(b, "print(json.dumps({'b': 2}))")
+            combined = result.get("stdout", "") + result.get("stderr", "")
+            assert result.get("exit_code", 0) != 0 or "NameError" in combined, (
+                f"Session B could use json without importing — import-level leak. Output: {combined!r}"
+            )
+        finally:
+            with contextlib.suppress(Exception):
+                await client.stop_code_session(a)
+            with contextlib.suppress(Exception):
+                await client.stop_code_session(b)
+
+
+# ── Execution history ────────────────────────────────────────────────
+
+
 class TestExecutionHistory:
     async def test_execution_history(self, client: AgenticPlatformClient, code_session: str) -> None:
         await client.execute_code(code_session, "print('first')")
