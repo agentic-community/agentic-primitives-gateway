@@ -363,10 +363,31 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     enforcer_cls = _load_class(enforcer_cfg.backend)
     enforcer: PolicyEnforcer = enforcer_cls(**enforcer_cfg.config)
 
-    # Auto-provision a scoped engine if supported (Cedar enforcer)
+    # Auto-provision a scoped engine if supported (Cedar enforcer).
+    # Fail fast with a clear operator-facing message if the backing policy
+    # provider is unreachable — a running server with no policy engine would
+    # 403 every request under Cedar's default-deny, which is worse than a
+    # loud startup failure. The enforcer itself emits a policy.load audit
+    # event on provisioning failure so the refusal-to-start is recorded
+    # durably for SIEMs.
     if hasattr(enforcer, "ensure_engine"):
-        engine_id = await enforcer.ensure_engine()
-        await _seed_policies(engine_id)
+        try:
+            engine_id = await enforcer.ensure_engine()
+            await _seed_policies(engine_id)
+        except Exception as exc:
+            # Record only the exception class name. Exception str() from
+            # boto3 and similar SDKs can contain endpoint URLs, partial
+            # ARNs, or env var names that hint at credential configuration
+            # — the full traceback goes through logger.exception below,
+            # which the LogSanitizationFilter scrubs.
+            logger.error(
+                "Policy enforcement engine could not be provisioned (%s). "
+                "Check that the policy provider's credentials are valid "
+                "(e.g., AWS credentials for the AgentCore policy provider) "
+                "or disable enforcement in config.",
+                type(exc).__name__,
+            )
+            raise
 
     await enforcer.load_policies()
     if hasattr(enforcer, "start_refresh"):

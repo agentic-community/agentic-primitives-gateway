@@ -82,27 +82,37 @@ class CedarPolicyEnforcer(SyncRunnerMixin, PolicyEnforcer):
             The policy engine ID.
         """
         if self._engine_id:
+            emit_audit_event(
+                action=AuditAction.POLICY_LOAD,
+                outcome=AuditOutcome.SUCCESS,
+                resource_type=ResourceType.POLICY_ENGINE,
+                resource_id=self._engine_id,
+                reason="engine_id_configured",
+                metadata={"source": "configured"},
+            )
             return self._engine_id
 
         policy_provider = registry.policy
 
-        # Look for an existing gateway_enforcement engine
         try:
             engines_result = await policy_provider.list_policy_engines()
-            for eng in engines_result.get("policy_engines", []):
-                if eng.get("name") == self.AUTO_ENGINE_NAME:
-                    eid: str = eng["policy_engine_id"]
-                    self._engine_id = eid
-                    logger.info(
-                        "Found existing enforcement engine: %s (%s)",
-                        self.AUTO_ENGINE_NAME,
-                        eid,
-                    )
-                    return eid
-        except Exception:
-            logger.debug("Could not list engines, will try to create one")
+        except Exception as e:
+            self._emit_engine_provision_failure("engine_list_failed", e)
+            logger.exception("Failed to list existing enforcement engines")
+            raise
 
-        # Create a new one
+        for eng in engines_result.get("policy_engines", []):
+            if eng.get("name") == self.AUTO_ENGINE_NAME:
+                eid: str = eng["policy_engine_id"]
+                self._engine_id = eid
+                logger.info(
+                    "Found existing enforcement engine: %s (%s)",
+                    self.AUTO_ENGINE_NAME,
+                    eid,
+                )
+                self._emit_engine_ready(eid, source="reused")
+                return eid
+
         try:
             result = await policy_provider.create_policy_engine(
                 name=self.AUTO_ENGINE_NAME,
@@ -115,10 +125,60 @@ class CedarPolicyEnforcer(SyncRunnerMixin, PolicyEnforcer):
                 self.AUTO_ENGINE_NAME,
                 eid,
             )
+            self._emit_engine_ready(eid, source="created")
             return eid
-        except Exception:
+        except Exception as e:
+            self._emit_engine_provision_failure("engine_provision_failed", e)
             logger.exception("Failed to auto-provision enforcement engine")
             raise
+
+    def _emit_engine_ready(self, engine_id: str, *, source: str) -> None:
+        """Emit a durable record that enforcement is wired to an engine
+        whose name the gateway controls (auto-provisioned, either reused
+        or just created).
+
+        The configured path does NOT go through this helper — we don't
+        know that engine's name without a describe call, and we don't
+        claim the engine is "ready" (see ensure_engine for that rationale).
+        """
+        emit_audit_event(
+            action=AuditAction.POLICY_LOAD,
+            outcome=AuditOutcome.SUCCESS,
+            resource_type=ResourceType.POLICY_ENGINE,
+            resource_id=engine_id,
+            reason="engine_ready",
+            metadata={
+                "engine_name": self.AUTO_ENGINE_NAME,
+                "source": source,
+            },
+        )
+
+    def _emit_engine_provision_failure(self, reason: str, exc: BaseException) -> None:
+        """Emit a durable failure record before a provisioning exception
+        propagates.
+
+        - Only the error_type class name is recorded — exception str() from
+          boto3 can include endpoint URLs, partial ARNs, or env var names
+          that hint at credential configuration.
+        - ``resource_id`` is deliberately absent (unlike ``load_policies``
+          failure emits which carry ``self._engine_id``): at this point no
+          engine has been confirmed to exist, so there's no honest ID to
+          record. Refusing to invent one keeps the emit truthful.
+        - ``engine_name`` is the engine we were *trying* to provision, not
+          an engine that's been confirmed to exist. On ``engine_list_failed``
+          this means "we failed while looking for this name" rather than
+          "this engine errored."
+        """
+        emit_audit_event(
+            action=AuditAction.POLICY_LOAD,
+            outcome=AuditOutcome.FAILURE,
+            resource_type=ResourceType.POLICY_ENGINE,
+            reason=reason,
+            metadata={
+                "engine_name": self.AUTO_ENGINE_NAME,
+                "error_type": type(exc).__name__,
+            },
+        )
 
     async def authorize(
         self,

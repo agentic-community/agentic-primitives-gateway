@@ -220,3 +220,175 @@ class TestCedarPolicyEnforcer:
 
         enforcer = CedarPolicyEnforcer()
         assert isinstance(enforcer, PolicyEnforcer)
+
+
+class TestEnsureEngineAudit:
+    """Every exit path of ensure_engine() must leave a durable audit record.
+
+    Engine provisioning is a security-posture transition; SIEMs need to
+    distinguish configured vs. reused vs. created (so a surprise new
+    engine is visible) and must see a failure event before the process
+    dies on provisioning error.
+    """
+
+    @pytest.fixture
+    def captured_events(self):
+        events: list[dict] = []
+
+        def _capture(**kwargs):
+            events.append(kwargs)
+
+        with patch(
+            "agentic_primitives_gateway.enforcement.cedar.emit_audit_event",
+            side_effect=_capture,
+        ):
+            yield events
+
+    @pytest.mark.asyncio
+    async def test_configured_engine_id_emits_engine_id_configured(self, captured_events):
+        """engine_id supplied via config → emit records that an ID was
+        configured, NOT that the engine is confirmed reachable. No
+        describe call is made, so the emit deliberately does not claim
+        engine_ready, and engine_name is omitted (the configured engine
+        has a name we don't know without a network call).
+        """
+        enforcer = CedarPolicyEnforcer(engine_id="preset-engine")
+
+        # registry.policy should never be touched on this path
+        mock_registry = MagicMock()
+        with patch("agentic_primitives_gateway.enforcement.cedar.registry", mock_registry):
+            result = await enforcer.ensure_engine()
+
+        assert result == "preset-engine"
+        assert len(captured_events) == 1
+        emitted = captured_events[0]
+        assert emitted["outcome"].value == "success"
+        assert emitted["reason"] == "engine_id_configured"
+        assert emitted["resource_id"] == "preset-engine"
+        assert emitted["metadata"]["source"] == "configured"
+        # engine_name is deliberately absent — we don't know the configured
+        # engine's name and must not fabricate one
+        assert "engine_name" not in emitted["metadata"]
+
+    @pytest.mark.asyncio
+    async def test_existing_engine_emits_ready_with_source_reused(self, captured_events):
+        """An existing engine with the auto name is reused → source=reused."""
+        enforcer = CedarPolicyEnforcer()
+
+        mock_policy_provider = AsyncMock()
+        mock_policy_provider.list_policy_engines.return_value = {
+            "policy_engines": [
+                {"name": "some-other-engine", "policy_engine_id": "other-id"},
+                {
+                    "name": CedarPolicyEnforcer.AUTO_ENGINE_NAME,
+                    "policy_engine_id": "existing-id",
+                },
+            ],
+        }
+
+        mock_registry = MagicMock()
+        type(mock_registry).policy = property(lambda self: mock_policy_provider)
+
+        with patch("agentic_primitives_gateway.enforcement.cedar.registry", mock_registry):
+            result = await enforcer.ensure_engine()
+
+        assert result == "existing-id"
+        mock_policy_provider.create_policy_engine.assert_not_called()
+        assert len(captured_events) == 1
+        emitted = captured_events[0]
+        assert emitted["outcome"].value == "success"
+        assert emitted["reason"] == "engine_ready"
+        assert emitted["resource_id"] == "existing-id"
+        assert emitted["metadata"]["source"] == "reused"
+
+    @pytest.mark.asyncio
+    async def test_created_engine_emits_ready_with_source_created(self, captured_events):
+        """No existing engine → create, emit source=created."""
+        enforcer = CedarPolicyEnforcer()
+
+        mock_policy_provider = AsyncMock()
+        mock_policy_provider.list_policy_engines.return_value = {"policy_engines": []}
+        mock_policy_provider.create_policy_engine.return_value = {
+            "policy_engine_id": "new-id",
+        }
+
+        mock_registry = MagicMock()
+        type(mock_registry).policy = property(lambda self: mock_policy_provider)
+
+        with patch("agentic_primitives_gateway.enforcement.cedar.registry", mock_registry):
+            result = await enforcer.ensure_engine()
+
+        assert result == "new-id"
+        assert len(captured_events) == 1
+        emitted = captured_events[0]
+        assert emitted["outcome"].value == "success"
+        assert emitted["reason"] == "engine_ready"
+        assert emitted["resource_id"] == "new-id"
+        assert emitted["metadata"]["source"] == "created"
+
+    @pytest.mark.asyncio
+    async def test_create_failure_emits_failure_and_raises(self, captured_events):
+        """create_policy_engine raising → one failure emit, then re-raise."""
+        enforcer = CedarPolicyEnforcer()
+
+        mock_policy_provider = AsyncMock()
+        mock_policy_provider.list_policy_engines.return_value = {"policy_engines": []}
+        mock_policy_provider.create_policy_engine.side_effect = RuntimeError("credentials expired")
+
+        mock_registry = MagicMock()
+        type(mock_registry).policy = property(lambda self: mock_policy_provider)
+
+        with (
+            patch("agentic_primitives_gateway.enforcement.cedar.registry", mock_registry),
+            pytest.raises(RuntimeError, match="credentials expired"),
+        ):
+            await enforcer.ensure_engine()
+
+        assert len(captured_events) == 1
+        emitted = captured_events[0]
+        assert emitted["outcome"].value == "failure"
+        assert emitted["reason"] == "engine_provision_failed"
+        assert emitted["metadata"]["error_type"] == "RuntimeError"
+        assert emitted["metadata"]["engine_name"] == CedarPolicyEnforcer.AUTO_ENGINE_NAME
+        # No resource_id since no engine was ever created
+        assert emitted.get("resource_id") is None
+
+    @pytest.mark.asyncio
+    async def test_list_failure_propagates_does_not_fallback_to_create(self, captured_events):
+        """list_policy_engines raising must propagate — not fall through
+        to create_policy_engine. A silent fallback could duplicate engines
+        when the list failure is transient and create then succeeds, and
+        it misattributes the failure audit record to a downstream error.
+
+        The failure emit must carry the LIST error_type, not whatever
+        would have come from create, and create must never be called.
+        """
+
+        class ListSpecificError(Exception):
+            pass
+
+        enforcer = CedarPolicyEnforcer()
+
+        mock_policy_provider = AsyncMock()
+        mock_policy_provider.list_policy_engines.side_effect = ListSpecificError("list failed")
+        # create is configured so that, if it were mistakenly called, the
+        # test would see a different error_type in the emit — making the
+        # failure loud.
+        mock_policy_provider.create_policy_engine.side_effect = RuntimeError("create should never run")
+
+        mock_registry = MagicMock()
+        type(mock_registry).policy = property(lambda self: mock_policy_provider)
+
+        with (
+            patch("agentic_primitives_gateway.enforcement.cedar.registry", mock_registry),
+            pytest.raises(ListSpecificError, match="list failed"),
+        ):
+            await enforcer.ensure_engine()
+
+        mock_policy_provider.create_policy_engine.assert_not_called()
+        assert len(captured_events) == 1
+        emitted = captured_events[0]
+        assert emitted["outcome"].value == "failure"
+        assert emitted["reason"] == "engine_list_failed"
+        assert emitted["metadata"]["error_type"] == "ListSpecificError"
+        assert emitted.get("resource_id") is None
