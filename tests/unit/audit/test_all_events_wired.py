@@ -407,12 +407,25 @@ async def test_task_handlers_emit():
     mock_registry.tasks.update_task = AsyncMock(return_value=_task(status="done"))
     mock_registry.tasks.add_note = AsyncMock(return_value=_task())
 
-    async with _wire_router() as sink:
-        with patch.object(handlers, "registry", mock_registry):
-            await handlers.task_create("run1", "agent", "title")
-            await handlers.task_claim("run1", "t1", "agent")
-            await handlers.task_update("run1", "t1", status="done")
-            await handlers.task_add_note("run1", "t1", "agent", "note")
+    from agentic_primitives_gateway.primitives.tasks.context import (
+        reset_agent_role,
+        reset_team_run_id,
+        set_agent_role,
+        set_team_run_id,
+    )
+
+    run_token = set_team_run_id("run1")
+    role_token = set_agent_role("agent")
+    try:
+        async with _wire_router() as sink:
+            with patch.object(handlers, "registry", mock_registry):
+                await handlers.task_create("title")
+                await handlers.task_claim("t1")
+                await handlers.task_update("t1", status="done")
+                await handlers.task_add_note("t1", "note")
+    finally:
+        reset_agent_role(role_token)
+        reset_team_run_id(run_token)
 
     seen = _seen_actions(sink)
     assert AuditAction.TASK_CREATE in seen

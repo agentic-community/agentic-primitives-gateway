@@ -48,7 +48,6 @@ class TestBuildAgentTools:
         primitives = {"agents": PrimitiveConfig(enabled=True, tools=["sub"])}
         tools = build_tool_list(
             primitives,
-            namespace="test",
             agent_store=AsyncMock(),
             agent_runner=AsyncMock(),
             agent_depth=MAX_AGENT_DEPTH,

@@ -294,21 +294,24 @@ class TestStartStopSessions:
 
     async def test_start_sessions_code_interpreter(self, runner: TeamRunner) -> None:
         worker = _make_worker("ci-worker", with_code_interpreter=True)
-        ctx = await runner._start_sessions(worker)
-        assert "code_interpreter" in ctx
+        session_ids, cv_tokens = await runner._start_sessions(worker)
+        assert "code_interpreter" in session_ids
+        # Reset contextvars so we don't leak into other tests
+        await runner._stop_sessions(session_ids, cv_tokens)
 
     async def test_start_sessions_no_primitives(self, runner: TeamRunner) -> None:
         worker = _make_worker("plain-worker")
-        ctx = await runner._start_sessions(worker)
-        assert ctx == {}
+        session_ids, cv_tokens = await runner._start_sessions(worker)
+        assert session_ids == {}
+        assert cv_tokens == {}
 
     async def test_stop_sessions_noop(self, runner: TeamRunner) -> None:
-        """Stop sessions on empty context doesn't raise."""
-        await runner._stop_sessions({})
+        """Stop sessions with empty state doesn't raise."""
+        await runner._stop_sessions({}, {})
 
     async def test_stop_sessions_code_interpreter(self, runner: TeamRunner) -> None:
         """Stop sessions calls the provider."""
-        await runner._stop_sessions({"code_interpreter": "fake-sid"})
+        await runner._stop_sessions({"code_interpreter": "fake-sid"}, {})
 
 
 class TestApplyRestoreOverrides:
@@ -490,17 +493,17 @@ class TestBuildWorkerTools:
         tr = TeamRunner()
         worker_spec = _make_worker("w1")
         team_spec = _make_team(workers=["w1"])
-        tools = tr._build_worker_tools(worker_spec, team_spec, "run-1", {})
+        tools = tr._build_worker_tools(worker_spec, team_spec)
         tool_names = [t.name for t in tools]
         # Should include task board tools
         assert "list_tasks" in tool_names
         assert "complete_task" in tool_names
 
-    def test_builds_tools_with_session_context(self) -> None:
+    def test_builds_tools_with_code_interpreter(self) -> None:
         tr = TeamRunner()
         worker_spec = _make_worker("w1", with_code_interpreter=True)
         team_spec = _make_team(workers=["w1"])
-        tools = tr._build_worker_tools(worker_spec, team_spec, "run-1", {"code_interpreter": "sid-1"})
+        tools = tr._build_worker_tools(worker_spec, team_spec)
         tool_names = [t.name for t in tools]
         assert "execute_code" in tool_names
 

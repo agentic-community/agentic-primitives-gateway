@@ -247,7 +247,7 @@ See [Agent Delegation Guide](../guides/agent-delegation.md) for more details.
 
 ## Shared Memory Pools
 
-Agents can participate in shared memory pools via `PrimitiveConfig.shared_namespaces`. This enables knowledge sharing between agents without requiring a team:
+Agents can participate in shared memory pools via `PrimitiveConfig.shared_namespaces`. This enables memory sharing between agents without requiring a team:
 
 ```yaml
 researcher:
@@ -267,7 +267,7 @@ When `shared_namespaces` is configured, the agent gets additional tools:
 | `search_pool(pool, query)` | Search a shared pool by semantic similarity |
 | `list_pool(pool)` | List all findings in a pool |
 
-Each pool resolves to a user-scoped namespace (`{pool_name}:u:{user_id}`), so multiple users sharing the same agent have isolated pools.
+Each pool resolves to its declared namespace **cross-user** — the whole point of a shared pool is that Alice and Bob hit the same data. If the pool declares placeholders like `{agent_name}` or `{agent_owner}` they're substituted, but the `:u:` user-scoping suffix is **not** appended. Use the default private memory tools (`remember`/`recall`/`search_memory`) whenever you want per-user isolation.
 
 This is **Level 2** shared memory (agent-level pools). For **Level 1** (team-scoped shared memory), see [Teams](teams.md).
 

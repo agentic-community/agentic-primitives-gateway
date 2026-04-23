@@ -142,11 +142,11 @@ class TestOrphanRecoveryIntegration:
                 "spec_name": "test-agent",
                 "session_id": "integ-sess",
                 "actor_id": "test-agent:u:alice",
-                "knowledge_ns": "agent:test-agent:u:alice",
+                "memory_ns": "agent:test-agent:u:alice",
                 "trace_id": "trace-1",
                 "depth": 0,
                 "prev_overrides": {},
-                "session_ctx": {},
+                "session_ids": {},
                 "messages": [{"role": "user", "content": "hello"}],
                 "turns_used": 0,
                 "tools_called": [],
@@ -207,9 +207,11 @@ class TestAgentCheckpointIntegration:
         runner = AgentRunner()
         runner.set_checkpoint_store(store, replica_id="integ-replica")
 
-        # Mock the agent store for resume
+        # Mock the agent store for resume.  Resume uses
+        # ``resolve_qualified(owner, name)`` (not ``.get``) since
+        # owner-scoped identities landed; older tests used ``.get``.
         agent_store = AsyncMock()
-        agent_store.get = AsyncMock(return_value=spec)
+        agent_store.resolve_qualified = AsyncMock(return_value=spec)
         runner.set_store(agent_store)
 
         from agentic_primitives_gateway.agents.runner import _RunContext
@@ -219,7 +221,7 @@ class TestAgentCheckpointIntegration:
             session_id="integ-sess-001",
             actor_id="integ-agent:u:alice",
             trace_id="trace-integ",
-            knowledge_ns="agent:integ-agent:u:alice",
+            memory_ns="agent:integ-agent:u:alice",
             depth=0,
             prev_overrides={},
             messages=[{"role": "user", "content": "test message"}],

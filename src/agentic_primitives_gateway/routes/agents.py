@@ -8,7 +8,7 @@ from starlette.responses import Response, StreamingResponse
 from agentic_primitives_gateway import metrics
 from agentic_primitives_gateway.agents.namespace import (
     resolve_actor_id,
-    resolve_knowledge_namespace_for_identity,
+    resolve_memory_namespace_for_identity,
 )
 from agentic_primitives_gateway.agents.runner import AgentRunner
 from agentic_primitives_gateway.agents.store import AgentStore
@@ -274,10 +274,13 @@ async def get_agent_tools(name: str, owner: str | None = None) -> AgentToolsResp
     if spec.provider_overrides:
         set_provider_overrides(spec.provider_overrides)
 
-    # Build the tool list (same as the runner does)
+    # Build the tool list (same as the runner does).  Per-primitive
+    # context (memory namespace, session IDs, team_run_id) comes from
+    # contextvars at call time — for an introspection endpoint that
+    # never actually dispatches a tool, leaving the contextvars unset
+    # is correct.
     tools = build_tool_list(
         spec.primitives,
-        namespace="__introspect__",
         agent_store=_store,
         agent_runner=_runner,
     )
@@ -327,8 +330,8 @@ async def get_agent_memory(name: str, session_id: str | None = None, owner: str 
             stores=[],
         )
 
-    # Resolve knowledge namespace (user-scoped — same as runner)
-    namespace = resolve_knowledge_namespace_for_identity(
+    # Resolve memory namespace (user-scoped — same as runner)
+    namespace = resolve_memory_namespace_for_identity(
         name=name,
         owner_id=spec.owner_id,
         namespace_template=mem_config.namespace,
