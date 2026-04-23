@@ -380,7 +380,7 @@ def _emit_provider_call_event(
     """
     try:
         from agentic_primitives_gateway.audit.emit import emit_audit_event
-        from agentic_primitives_gateway.audit.models import AuditAction, AuditOutcome
+        from agentic_primitives_gateway.audit.models import PRIMITIVE_RESOURCE_TYPE, AuditAction, AuditOutcome
     except ImportError:  # pragma: no cover
         return
 
@@ -400,6 +400,7 @@ def _emit_provider_call_event(
     emit_audit_event(
         action=AuditAction.PROVIDER_CALL,
         outcome=audit_outcome,
+        resource_type=PRIMITIVE_RESOURCE_TYPE.get(primitive),
         resource_id=f"{primitive}/{provider_name}",
         duration_ms=round(duration_ms, 3),
         metadata=metadata,

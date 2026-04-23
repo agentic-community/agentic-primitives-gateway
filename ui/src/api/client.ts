@@ -107,6 +107,18 @@ function sseGetStream(url: string, signal?: AbortSignal): ReadableStream<string>
   });
 }
 
+/** Serialize AuditFilters into URLSearchParams — arrays become repeated keys. */
+function appendAuditFilters(qs: URLSearchParams, filters: AuditFilters): void {
+  for (const [k, v] of Object.entries(filters)) {
+    if (v === undefined || v === "") continue;
+    if (Array.isArray(v)) {
+      for (const item of v) qs.append(k, item);
+    } else {
+      qs.set(k, v);
+    }
+  }
+}
+
 /** Create a ReadableStream that POSTs to an SSE endpoint and pipes the response. */
 function sseStream(url: string, body: string, signal?: AbortSignal): ReadableStream<string> {
   return new ReadableStream({
@@ -331,19 +343,13 @@ export const api = {
   auditStatus: () => request<AuditStatus>("/api/v1/audit/status"),
   listAuditEvents: (filters: AuditFilters = {}, start = "-", end = "+", count = 100) => {
     const qs = new URLSearchParams({ start, end, count: String(count) });
-    for (const [k, v] of Object.entries(filters)) {
-      if (v !== undefined && v !== "") qs.set(k, String(v));
-    }
+    appendAuditFilters(qs, filters);
     return request<AuditListResponse>(`/api/v1/audit/events?${qs}`);
   },
-  streamAuditEvents: (filters: AuditFilters = {}, signal?: AbortSignal) => {
-    const qs = new URLSearchParams();
-    for (const [k, v] of Object.entries(filters)) {
-      if (v !== undefined && v !== "") qs.set(k, String(v));
-    }
-    const path = `/api/v1/audit/events/stream${qs.toString() ? "?" + qs : ""}`;
-    return sseGetStream(path, signal);
-  },
+  // Live tail is always broad — the UI filters client-side so that
+  // changing filters doesn't drop buffered events on reconnect.
+  streamAuditEvents: (signal?: AbortSignal) =>
+    sseGetStream("/api/v1/audit/events/stream", signal),
 
   // ── Agent versioning / fork / lineage ───────────────────────────
   // ``name`` may be bare (``"researcher"``) or qualified (``"alice:researcher"``).

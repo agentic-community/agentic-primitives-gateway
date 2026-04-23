@@ -1,4 +1,4 @@
-"""Tests for user-scoped session isolation (Phase C).
+"""Tests for user-scoped session isolation.
 
 Verifies that:
 - resolve_actor_id produces user-scoped IDs for authenticated users

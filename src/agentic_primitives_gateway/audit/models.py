@@ -64,6 +64,25 @@ class ResourceType(StrEnum):
     PAGE = "page"
 
 
+# Canonical ``primitive → ResourceType`` label for cross-cutting audit
+# emitters (``MetricsProxy``, provider healthchecks) that don't know the
+# specific kind of resource a method touches.  Kept deliberately coarse
+# (one label per primitive) so ``ResourceType`` stays "small and bounded."
+# The precise method name is in ``metadata.method``.
+PRIMITIVE_RESOURCE_TYPE: dict[str, ResourceType] = {
+    "memory": ResourceType.MEMORY,
+    "llm": ResourceType.LLM,
+    "policy": ResourceType.POLICY,
+    "tools": ResourceType.TOOL,
+    "tasks": ResourceType.TASK,
+    "observability": ResourceType.TRACE,
+    "evaluations": ResourceType.EVALUATOR,
+    "identity": ResourceType.IDENTITY,
+    "code_interpreter": ResourceType.CODE_EXECUTION,
+    "browser": ResourceType.PAGE,
+}
+
+
 class AuditAction:
     """String constants for the audit action taxonomy.
 

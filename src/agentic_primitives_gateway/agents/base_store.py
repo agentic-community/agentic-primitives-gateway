@@ -663,21 +663,21 @@ class SpecStore(ABC, Generic[SpecT, VersionT]):
         v = await self.get_deployed(name, owner_id)
         return v.spec if v is not None else None  # type: ignore[attr-defined]
 
-    # ── Phase-1 compat: the old AgentStore surface ─────────────────────────
+    # ── Bare-name lookup surface ───────────────────────────────────────────
     #
-    # Callers that pre-date caller-scoped resolution still use ``store.get``
-    # / ``store.create`` / ``store.update`` / ``store.delete`` / ``store.list``.
-    # These shims preserve system-namespace semantics so Phase 1 doesn't need
-    # to rewrite every route.  Phase 2 replaces the call sites with
-    # ``resolve_for_caller`` / ``resolve_qualified`` / ``create_version`` etc.
+    # ``get`` / ``create`` / ``update`` / ``delete`` / ``list`` operate on
+    # bare names without requiring the caller to know the owner namespace.
+    # Used by sub-agent delegation (``agents/runner.py``), agent-tool
+    # handlers, and A2A public discovery — contexts where the owner is
+    # implicit or undiscoverable.  Caller-context resolution uses
+    # ``resolve_for_caller`` / ``resolve_qualified`` instead.
 
     async def get(self, name: str) -> SpecT | None:
-        """Phase-1 compat lookup.
+        """Return the first deployed spec matching ``name`` across any namespace.
 
-        Scans every namespace for an identity with this name and returns
-        the first one with a deployed version.  Matches the old
-        single-hash semantics where ``store.get("researcher")`` was
-        unambiguous.  Phase 2 replaces this with caller-scoped resolution.
+        Used where the caller only has a bare name (sub-agent delegation,
+        A2A discovery).  Caller-scoped resolution should use
+        :meth:`resolve_for_caller` instead.
         """
         state = await self._load_state()
         for ident, meta in state.identities.items():
@@ -698,9 +698,11 @@ class SpecStore(ABC, Generic[SpecT, VersionT]):
         return [*mine, *system, *shared]
 
     async def create(self, spec: SpecT) -> SpecT:
-        # Phase-1 compat: routes still pass ``spec.owner_id`` through, which
-        # may be either a user id (from routes/agents.py POST) or "system"
-        # (from seeding).
+        """Create an identity + deployed version from a bare spec.
+
+        Takes ``owner_id`` from the spec (user id for route POSTs, ``"system"``
+        for seeding).  Auto-deploys and bypasses the approval gate.
+        """
         owner = getattr(spec, "owner_id", SYSTEM_OWNER) or SYSTEM_OWNER
         name = getattr(spec, "name", None)
         if name is None:
@@ -728,7 +730,7 @@ class SpecStore(ABC, Generic[SpecT, VersionT]):
                 spec=spec,
                 created_by=owner,
                 parent_version_id=None,
-                commit_message="phase-1 compat: create via old AgentStore.create()",
+                commit_message=f"create {self._entity_label} via bare-name API",
                 auto_deploy=True,
                 bypass_approval=True,
             )
@@ -764,9 +766,8 @@ class SpecStore(ABC, Generic[SpecT, VersionT]):
     async def _find_identity_by_name(self, name: str) -> tuple[str, str] | None:
         """Locate an identity by bare name, returning ``(owner_id, name)``.
 
-        Used by the Phase-1 compat shim so ``store.update``/``store.delete``
-        still work when the caller only knows the bare name.  Returns the
-        first identity found — Phase 2 callers must use qualified addressing.
+        Returns the first deployed identity found.  Callers that need
+        unambiguous addressing should use qualified ``(owner_id, name)``.
         """
         state = await self._load_state()
         for ident, meta in state.identities.items():
@@ -778,8 +779,7 @@ class SpecStore(ABC, Generic[SpecT, VersionT]):
         return None
 
     async def update(self, name: str, updates: dict[str, Any]) -> SpecT:
-        # Phase-1 compat: in-place update via a new version.  Finds the
-        # identity by bare name across all namespaces.
+        """In-place update via a new deployed version, looked up by bare name."""
         found = await self._find_identity_by_name(name)
         if found is None:
             raise KeyError(f"{self._entity_label.capitalize()} not found: {name}")
@@ -797,7 +797,7 @@ class SpecStore(ABC, Generic[SpecT, VersionT]):
             spec=new_spec,
             created_by=owner_id,
             parent_version_id=current.version_id,  # type: ignore[attr-defined]
-            commit_message="phase-1 compat: update via old AgentStore.update()",
+            commit_message=f"update {self._entity_label} via bare-name API",
             auto_deploy=True,
             bypass_approval=True,
         )

@@ -191,10 +191,3 @@ class TestBackgroundRunManagerAsync:
         assert store.append_event.await_count == 2
         # Should have rekeyed
         store.rename_key.assert_awaited_once_with("key1", "r1")
-
-
-class TestRedisStoreSeeding:
-    """Redis seeding moved to the versioned store — covered by Phase 1 tests."""
-
-    # Obsolete — see tests/unit/agents/test_versioned_store_redis.py (Phase 1).
-    pass
