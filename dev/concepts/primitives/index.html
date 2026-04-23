@@ -3305,16 +3305,16 @@
 <a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">list_memories</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">namespace</span><span class="p">,</span> <span class="n">limit</span><span class="o">=</span><span class="mi">100</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="n">MemoryRecord</span><span class="p">]:</span> <span class="o">...</span>
 </code></pre></div>
 <h2 id="shared-memory">Shared Memory<a class="headerlink" href="#shared-memory" title="Permanent link">&para;</a></h2>
-<p>The memory primitive supports shared namespaces for inter-agent knowledge sharing:</p>
+<p>The memory primitive supports shared namespaces for cross-agent collaboration. Both shared levels are <strong>cross-user by design</strong> — the whole point of a shared pool is that two callers hit the same data:</p>
 <ul>
 <li>
-<p><strong>Level 1: Team-scoped shared memory:</strong> Teams set <code>shared_memory_namespace</code> on the <code>TeamSpec</code>. All workers in the team receive <code>share_finding</code>, <code>read_shared</code>, <code>search_shared</code>, and <code>list_shared</code> tools that operate on a single team-wide namespace. This enables workers to share findings during a team run.</p>
+<p><strong>Level 1: Team-scoped shared memory:</strong> Teams set <code>shared_memory_namespace</code> on the <code>TeamSpec</code>. All workers in the team receive <code>share_finding</code>, <code>read_shared</code>, <code>search_shared</code>, and <code>list_shared</code> tools that operate on a single team-wide namespace. Enables workers to share findings during a team run.</p>
 </li>
 <li>
-<p><strong>Level 2: Agent-level shared pools:</strong> Individual agents set <code>shared_namespaces</code> on their <code>PrimitiveConfig.memory</code>. Each pool name resolves to a separate user-scoped namespace. Agents receive <code>share_to</code>, <code>read_from_pool</code>, <code>search_pool</code>, and <code>list_pool</code> tools that accept a <code>pool</code> parameter. This enables cross-agent knowledge sharing outside of a team context.</p>
+<p><strong>Level 2: Agent-level shared pools:</strong> Individual agents set <code>shared_namespaces</code> on their <code>PrimitiveConfig.memory</code>. Each declared pool resolves to its own cross-user namespace. Agents receive <code>share_to</code>, <code>read_from_pool</code>, <code>search_pool</code>, and <code>list_pool</code> tools that accept a <code>pool</code> parameter. Enables cross-agent sharing outside of a team context.</p>
 </li>
 </ul>
-<p>Both levels use the same underlying memory provider and are user-scoped (<code>{namespace}:u:{user_id}</code>).</p>
+<p>Private memory (every agent's default <code>remember</code>/<code>recall</code>/<code>search_memory</code> tools) remains user-scoped with a trailing <code>:u:{user_id}</code> — two users on the same agent never see each other's private facts. Shared namespaces deliberately drop the <code>:u:</code> suffix; if you want per-user isolation, use private memory instead of a pool.</p>
 <h2 id="healthcheck">Healthcheck<a class="headerlink" href="#healthcheck" title="Permanent link">&para;</a></h2>
 <p>Each provider implements a <code>healthcheck()</code> method that returns one of three states:</p>
 <table>

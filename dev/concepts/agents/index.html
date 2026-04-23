@@ -3831,7 +3831,7 @@
 <p><code>delegate_to</code> works with any agent — pre-existing or just created. Sub-agent streaming events are forwarded to the UI in real time, showing the same activity panels as static delegation.</p>
 <p>See <a href="../../guides/agent-delegation/">Agent Delegation Guide</a> for more details.</p>
 <h2 id="shared-memory-pools">Shared Memory Pools<a class="headerlink" href="#shared-memory-pools" title="Permanent link">&para;</a></h2>
-<p>Agents can participate in shared memory pools via <code>PrimitiveConfig.shared_namespaces</code>. This enables knowledge sharing between agents without requiring a team:</p>
+<p>Agents can participate in shared memory pools via <code>PrimitiveConfig.shared_namespaces</code>. This enables memory sharing between agents without requiring a team:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="nt">researcher</span><span class="p">:</span>
 <a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="w">  </span><span class="nt">primitives</span><span class="p">:</span>
 <a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="w">    </span><span class="nt">memory</span><span class="p">:</span>
@@ -3866,7 +3866,7 @@
 </tr>
 </tbody>
 </table>
-<p>Each pool resolves to a user-scoped namespace (<code>{pool_name}:u:{user_id}</code>), so multiple users sharing the same agent have isolated pools.</p>
+<p>Each pool resolves to its declared namespace <strong>cross-user</strong> — the whole point of a shared pool is that Alice and Bob hit the same data. If the pool declares placeholders like <code>{agent_name}</code> or <code>{agent_owner}</code> they're substituted, but the <code>:u:</code> user-scoping suffix is <strong>not</strong> appended. Use the default private memory tools (<code>remember</code>/<code>recall</code>/<code>search_memory</code>) whenever you want per-user isolation.</p>
 <p>This is <strong>Level 2</strong> shared memory (agent-level pools). For <strong>Level 1</strong> (team-scoped shared memory), see <a href="../teams/">Teams</a>.</p>
 <h2 id="export">Export<a class="headerlink" href="#export" title="Permanent link">&para;</a></h2>
 <p>Agents can be exported as standalone Python scripts via <code>GET /api/v1/agents/{name}/export</code>. The generated script uses <code>agentic-primitives-gateway-client</code> for primitive calls and raw <code>boto3</code> Bedrock <code>converse()</code> for the LLM loop. It includes all tool definitions, sub-agent delegation code, shared memory pool tools, JWT token refresh, and session management.</p>

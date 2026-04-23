@@ -3477,7 +3477,7 @@
 <p>Key design decisions:</p>
 <ul>
 <li><strong><code>_RunContext</code> dataclass</strong> holds all mutable state, shared between <code>run()</code> and <code>run_stream()</code></li>
-<li><strong>Tool handlers</strong> are bound with <code>functools.partial</code> to inject namespace/session_id</li>
+<li><strong>Tool handlers</strong> read per-primitive context (memory namespace, session IDs, team_run_id, agent_role, shared pools) from contextvars set by the runner at the start of each run and reset at the end. <code>functools.partial</code> is used only for agent-as-tool delegation (call-stack state like <code>agent_store</code> / <code>agent_runner</code> / <code>depth</code>).</li>
 <li><strong>Agent-as-tool</strong> delegation allows agents to call other agents (depth-limited)</li>
 <li><strong>Provider overrides</strong> are saved/restored around sub-agent calls</li>
 <li><strong>Shared memory pools</strong> (<code>PrimitiveConfig.shared_namespaces</code>) inject pool-based tools at build time</li>
@@ -3571,7 +3571,7 @@
 <a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a>├── watcher.py           # Config hot-reload
 <a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a>├── agents/
 <a id="__codelineno-7-10" name="__codelineno-7-10" href="#__codelineno-7-10"></a>│   ├── runner.py         # AgentRunner + _RunContext
-<a id="__codelineno-7-11" name="__codelineno-7-11" href="#__codelineno-7-11"></a>│   ├── namespace.py      # Knowledge namespace resolution
+<a id="__codelineno-7-11" name="__codelineno-7-11" href="#__codelineno-7-11"></a>│   ├── namespace.py      # Memory namespace resolution (per-user + shared pools)
 <a id="__codelineno-7-12" name="__codelineno-7-12" href="#__codelineno-7-12"></a>│   ├── export.py         # Export agents/teams as standalone Python scripts
 <a id="__codelineno-7-13" name="__codelineno-7-13" href="#__codelineno-7-13"></a>│   ├── store.py          # AgentStore ABC + FileAgentStore
 <a id="__codelineno-7-14" name="__codelineno-7-14" href="#__codelineno-7-14"></a>│   ├── base_store.py     # Generic store base classes

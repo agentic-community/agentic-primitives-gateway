@@ -4075,7 +4075,7 @@
 </tr>
 </tbody>
 </table>
-<p>The <code>{team_name}</code> placeholder in the namespace is expanded at runtime. Shared memory is scoped per user (<code>{namespace}:u:{user_id}</code>).</p>
+<p>The <code>{team_name}</code> placeholder in the namespace is expanded at runtime. Team shared memory is <strong>cross-user by design</strong> — the whole point is that workers (and the humans who run the team) collaborate on the same findings. If you need per-user isolation, use each worker's private memory (<code>remember</code>/<code>recall</code>/<code>search_memory</code>) instead of the shared pool.</p>
 <p>This is <strong>Level 1</strong> shared memory (team-scoped, single namespace). For <strong>Level 2</strong> (agent-level pools via <code>shared_namespaces</code>), see <a href="../agents/#shared-memory-pools">Agents</a>.</p>
 <h3 id="example">Example<a class="headerlink" href="#example" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="nt">teams</span><span class="p">:</span>
