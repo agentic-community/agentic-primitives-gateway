@@ -290,28 +290,36 @@ export interface WhoAmIResponse {
 // the UI dropdowns in lockstep — add a value here and the compiler
 // enforces exhaustive handling everywhere it's used.  Mirror the server
 // ``AuditOutcome`` / ``ResourceType`` StrEnums in ``audit/models.py``.
+// Listed alphabetically so the UI dropdown order is predictable.
 export const AUDIT_OUTCOMES = [
   "allow",
   "deny",
-  "success",
-  "failure",
   "error",
+  "failure",
   "not_implemented",
+  "success",
 ] as const;
 export type AuditOutcome = (typeof AUDIT_OUTCOMES)[number];
 
 export const AUDIT_RESOURCE_TYPES = [
   "agent",
-  "team",
+  "code_execution",
+  "credential",
+  "evaluator",
+  "file",
+  "http",
+  "identity",
+  "llm",
+  "memory",
+  "page",
   "policy",
   "policy_engine",
-  "credential",
   "session",
+  "task",
+  "team",
   "tool",
-  "http",
-  "memory",
+  "trace",
   "user",
-  "llm",
 ] as const;
 export type AuditResourceType = (typeof AUDIT_RESOURCE_TYPES)[number];
 
@@ -354,9 +362,9 @@ export interface AuditListResponse {
 export interface AuditFilters {
   action?: string;
   action_category?: string;
-  outcome?: AuditOutcome;
+  outcome?: AuditOutcome[];
   actor_id?: string;
-  resource_type?: AuditResourceType;
+  resource_type?: AuditResourceType[];
   resource_id?: string;
   correlation_id?: string;
 }

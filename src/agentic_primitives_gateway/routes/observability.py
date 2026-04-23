@@ -36,7 +36,7 @@ router = APIRouter(
 @router.post("/flush", response_model=FlushResponse, status_code=202)
 @handle_provider_errors("flush not supported by this provider")
 async def flush() -> FlushResponse:
-    async with audit_mutation(AuditAction.OBSERVABILITY_FLUSH):
+    async with audit_mutation(AuditAction.OBSERVABILITY_FLUSH, resource_type=ResourceType.TRACE):
         await registry.observability.flush()
     return FlushResponse(status=HealthStatus.ACCEPTED)
 
@@ -164,7 +164,7 @@ async def ingest_trace(request: IngestTraceRequest) -> dict[str, str]:
 
 @router.post("/logs", status_code=202)
 async def ingest_log(request: IngestLogRequest) -> dict[str, str]:
-    async with audit_mutation(AuditAction.LOG_INGEST):
+    async with audit_mutation(AuditAction.LOG_INGEST, resource_type=ResourceType.TRACE):
         await registry.observability.ingest_log(request.model_dump())
     return {"status": HealthStatus.ACCEPTED}
 
