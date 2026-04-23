@@ -247,6 +247,114 @@ class TestSessionLifecycle:
 # ── Execution history ────────────────────────────────────────────────
 
 
+class TestSessionIsolation:
+    """Intent: two sessions run in separate kernels.  A variable
+    defined in session A must not be visible from session B.
+
+    This is the core multi-tenant safety property of the code
+    interpreter primitive — if kernels shared state, any code a user
+    ran could leak variables, imported modules, monkey-patched
+    builtins, or filesystem mutations into another user's kernel.
+    The provider's stated contract in ``CLAUDE.md`` is that sessions
+    wrap distinct Jupyter kernels; this test verifies that at the
+    actual-kernel level, not at the ``_sessions`` dict level.
+    """
+
+    async def test_variable_in_session_a_invisible_to_session_b(self, client: AgenticPlatformClient) -> None:
+        a = (await client.start_code_session())["session_id"]
+        b = (await client.start_code_session())["session_id"]
+        assert a != b  # sanity: different session ids
+
+        try:
+            # Set a variable in A.
+            await client.execute_code(a, "x = 'secret_from_a'")
+
+            # Reading it in B must fail with NameError — kernels must
+            # be isolated.
+            result = await client.execute_code(b, "print(x)")
+            combined = result.get("stdout", "") + result.get("stderr", "")
+            assert result.get("exit_code", 0) != 0 or "NameError" in combined, (
+                f"Session B saw variable from A (exit={result.get('exit_code')}): "
+                f"{combined!r}.  Kernels are NOT isolated — this is a data-leak risk."
+            )
+            # The leaked value must not appear anywhere.
+            assert "secret_from_a" not in combined, (
+                "Session B literally printed A's variable value — kernel shared state."
+            )
+        finally:
+            with contextlib.suppress(Exception):
+                await client.stop_code_session(a)
+            with contextlib.suppress(Exception):
+                await client.stop_code_session(b)
+
+    async def test_import_in_session_a_invisible_to_session_b(self, client: AgenticPlatformClient) -> None:
+        """A stronger variant: importing a module in A must not make
+        it available in B without B's own import.  Catches kernels
+        that share a module namespace.
+        """
+        a = (await client.start_code_session())["session_id"]
+        b = (await client.start_code_session())["session_id"]
+        try:
+            await client.execute_code(a, "import json; _ = json.dumps({'a': 1})")
+            # Don't import json in B; try to use it.
+            result = await client.execute_code(b, "print(json.dumps({'b': 2}))")
+            combined = result.get("stdout", "") + result.get("stderr", "")
+            assert result.get("exit_code", 0) != 0 or "NameError" in combined, (
+                f"Session B could use json without importing — import-level leak. Output: {combined!r}"
+            )
+        finally:
+            with contextlib.suppress(Exception):
+                await client.stop_code_session(a)
+            with contextlib.suppress(Exception):
+                await client.stop_code_session(b)
+
+
+class TestSessionStatePersistence:
+    """Intent: within a single session, state persists across
+    ``execute_code`` calls.  This is what makes the code interpreter
+    useful as an agent tool — agents build up state over multiple
+    turns ("let me first load the data, then analyze it, then plot
+    it").  If each ``execute`` spawned a fresh kernel, agents would
+    lose their working context between turns.
+    """
+
+    async def test_variable_persists_across_executes_in_same_session(
+        self, client: AgenticPlatformClient, code_session: str
+    ) -> None:
+        await client.execute_code(code_session, "x = 42")
+        result = await client.execute_code(code_session, "print(x)")
+        assert result.get("exit_code", 0) == 0, f"Second execute failed: {result.get('stderr')}"
+        assert "42" in result.get("stdout", ""), (
+            f"Expected '42' in stdout; got {result.get('stdout')!r}.  "
+            "Session state did not persist across execute calls."
+        )
+
+    async def test_import_persists_across_executes_in_same_session(
+        self, client: AgenticPlatformClient, code_session: str
+    ) -> None:
+        """Imports establish module-level state that a new kernel
+        would lose.  Guards against a regression where each execute
+        spawns a fresh kernel (which would still pass the simple
+        ``x = 42; print(x)`` test only if they were one block).
+        """
+        await client.execute_code(code_session, "import math")
+        result = await client.execute_code(code_session, "print(math.pi)")
+        assert result.get("exit_code", 0) == 0
+        assert "3.14" in result.get("stdout", ""), f"Import did not persist; got {result.get('stdout')!r}"
+
+    async def test_function_definition_persists_across_executes(
+        self, client: AgenticPlatformClient, code_session: str
+    ) -> None:
+        """A function defined in one cell is callable from the next."""
+        await client.execute_code(code_session, "def double(n):\n    return n * 2")
+        result = await client.execute_code(code_session, "print(double(21))")
+        assert result.get("exit_code", 0) == 0
+        assert "42" in result.get("stdout", "")
+
+
+# ── Execution history ────────────────────────────────────────────────
+
+
 class TestExecutionHistory:
     async def test_execution_history(self, client: AgenticPlatformClient, code_session: str) -> None:
         await client.execute_code(code_session, "print('first')")

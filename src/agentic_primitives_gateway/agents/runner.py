@@ -296,6 +296,10 @@ class AgentRunner:
                 turn_content = ""
                 turn_tool_calls: list[dict[str, Any]] = []
                 stop_reason = "end_turn"
+                # Carry (id, name) from ``tool_use_start`` so
+                # ``tool_use_complete`` doesn't need to re-include
+                # them — some providers only emit them on start.
+                pending_tool: tuple[str, str] = ("", "")
 
                 async for event in registry.llm.route_request_stream(request_dict):
                     etype = event.get("type")
@@ -303,11 +307,15 @@ class AgentRunner:
                         turn_content += event["delta"]
                         yield {"type": "token", "content": event["delta"]}
                     elif etype == "tool_use_start":
-                        yield {"type": "tool_call_start", "name": event.get("name", ""), "id": event.get("id", "")}
+                        tool_id = event.get("id", "")
+                        tool_name = event.get("name", "")
+                        pending_tool = (tool_id, tool_name)
+                        yield {"type": "tool_call_start", "name": tool_name, "id": tool_id}
                     elif etype == "tool_use_complete":
-                        turn_tool_calls.append(
-                            {"id": event.get("id", ""), "name": event["name"], "input": event.get("input", {})}
-                        )
+                        tool_id = event.get("id") or pending_tool[0]
+                        tool_name = event.get("name") or pending_tool[1]
+                        turn_tool_calls.append({"id": tool_id, "name": tool_name, "input": event.get("input", {})})
+                        pending_tool = ("", "")
                     elif etype == "message_stop":
                         stop_reason = event.get("stop_reason", "end_turn")
 

@@ -59,16 +59,35 @@ async def run_agent_with_tools(
     message: str,
     tools: list[ToolDefinition],
     max_turns: int = 20,
+    cancel_event: asyncio.Event | None = None,
+    checkpoint_store: CheckpointStore | None = None,
+    run_id: str | None = None,
 ) -> str:
     """Run an agent's LLM loop with a specific set of tools.
 
-    Returns the final text content from the agent.
+    Returns the final text content from the agent.  If cancelled mid
+    run (either locally via ``cancel_event`` or cross-replica via
+    ``checkpoint_store.is_cancelled``), returns whatever text was
+    produced so far — the caller treats the partial content as the
+    best available result.  Checks happen at the same boundaries as
+    ``run_agent_with_tools_stream``: before each turn and before each
+    tool execution.  A long-running tool that's already in flight
+    is not interrupted — that's the cooperative-cancellation
+    contract.
     """
     llm_tools = to_llm_tools(tools) if tools else None
     messages: list[dict[str, Any]] = [{"role": "user", "content": message}]
     content = ""
 
     for _turn in range(max_turns):
+        # Check for cancellation before starting a new turn.
+        if cancel_event and cancel_event.is_set():
+            logger.info("Agent[%s] cancelled before turn %d", spec.name, _turn + 1)
+            return content
+        if checkpoint_store and run_id and await checkpoint_store.is_cancelled(run_id):
+            logger.info("Agent[%s] cancelled via Redis signal before turn %d", spec.name, _turn + 1)
+            return content
+
         request_dict: dict[str, Any] = {
             "model": spec.model,
             "messages": messages,
@@ -104,6 +123,17 @@ async def run_agent_with_tools(
 
         results = []
         for tc in tool_calls:
+            # Check for cancellation before each tool execution.
+            if cancel_event and cancel_event.is_set():
+                logger.info("Agent[%s] cancelled before tool %s", spec.name, tc["name"])
+                return content
+            if checkpoint_store and run_id and await checkpoint_store.is_cancelled(run_id):
+                logger.info(
+                    "Agent[%s] cancelled via Redis signal before tool %s",
+                    spec.name,
+                    tc["name"],
+                )
+                return content
             logger.info("Agent[%s] tool call: %s(%s)", spec.name, tc["name"], str(tc.get("input", {}))[:200])
             try:
                 result = await execute_tool(tc["name"], tc.get("input", {}), tools)

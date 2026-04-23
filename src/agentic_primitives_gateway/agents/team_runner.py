@@ -662,12 +662,21 @@ class TeamRunner:
         planner_spec = await self._get_agent(team_spec.planner, "Planner", team_spec.owner_id)
         prompt = await build_planner_prompt(team_spec, message, self._agent_store)  # type: ignore[arg-type]
         tools = self._planner_tools()
+        cancel_evt = self._cancel_events.get(team_run_id)
         async with self._team_role_context(
             team_run_id=team_run_id,
             agent_role="planner",
             memory_namespace=self._planner_memory_ns(team_spec, team_run_id, "planner"),
         ):
-            await run_agent_with_tools(planner_spec, prompt, tools, max_turns=planner_spec.max_turns)
+            await run_agent_with_tools(
+                planner_spec,
+                prompt,
+                tools,
+                max_turns=planner_spec.max_turns,
+                cancel_event=cancel_evt,
+                checkpoint_store=self._checkpoint_store,
+                run_id=team_run_id,
+            )
 
     async def _run_planner_stream(
         self, team_spec: TeamSpec, team_run_id: str, message: str, resume_hint: str | None = None
@@ -718,12 +727,21 @@ class TeamRunner:
 
         count_before = len(await registry.tasks.list_tasks(team_run_id))
         tools = self._planner_tools()
+        cancel_evt = self._cancel_events.get(team_run_id)
         async with self._team_role_context(
             team_run_id=team_run_id,
             agent_role="planner",
             memory_namespace=self._planner_memory_ns(team_spec, team_run_id, "planner"),
         ):
-            await run_agent_with_tools(planner_spec, prompt, tools, max_turns=planner_spec.max_turns)
+            await run_agent_with_tools(
+                planner_spec,
+                prompt,
+                tools,
+                max_turns=planner_spec.max_turns,
+                cancel_event=cancel_evt,
+                checkpoint_store=self._checkpoint_store,
+                run_id=team_run_id,
+            )
         count_after = len(await registry.tasks.list_tasks(team_run_id))
 
         new_count = count_after - count_before
@@ -1135,13 +1153,22 @@ class TeamRunner:
             tools = self._build_worker_tools(worker_spec, team_spec)
             upstream = await self._gather_upstream_context(team_run_id, task_id)
             message = build_task_message(title, description, upstream)
+            cancel_evt = self._cancel_events.get(team_run_id)
             async with self._team_role_context(
                 team_run_id=team_run_id,
                 agent_role=worker_spec.name,
                 memory_namespace=f"team:{team_spec.name}:{team_run_id}",
                 shared_memory_namespace=self._resolve_shared_namespace(team_spec),
             ):
-                return await run_agent_with_tools(worker_spec, message, tools, max_turns=worker_spec.max_turns)
+                return await run_agent_with_tools(
+                    worker_spec,
+                    message,
+                    tools,
+                    max_turns=worker_spec.max_turns,
+                    cancel_event=cancel_evt,
+                    checkpoint_store=self._checkpoint_store,
+                    run_id=team_run_id,
+                )
         finally:
             await self._stop_sessions(session_ids, cv_tokens)
 
@@ -1151,12 +1178,21 @@ class TeamRunner:
         synth_spec = await self._get_agent(team_spec.synthesizer, "Synthesizer", team_spec.owner_id)
         prompt = await build_synthesis_prompt(team_run_id, message)
         tools = self._synthesizer_tools()
+        cancel_evt = self._cancel_events.get(team_run_id)
         async with self._team_role_context(
             team_run_id=team_run_id,
             agent_role="synthesizer",
             memory_namespace=self._planner_memory_ns(team_spec, team_run_id, "synthesizer"),
         ):
-            return await run_agent_with_tools(synth_spec, prompt, tools, max_turns=synth_spec.max_turns)
+            return await run_agent_with_tools(
+                synth_spec,
+                prompt,
+                tools,
+                max_turns=synth_spec.max_turns,
+                cancel_event=cancel_evt,
+                checkpoint_store=self._checkpoint_store,
+                run_id=team_run_id,
+            )
 
     async def _run_synthesizer_stream(
         self, team_spec: TeamSpec, team_run_id: str, message: str, resume_hint: str | None = None
