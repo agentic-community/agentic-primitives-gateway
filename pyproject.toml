@@ -1,5 +1,9 @@
 [build-system]
-requires = ["hatchling"]
+# Pinned floor: `artifacts` glob behavior (used below to conditionally
+# ship the built UI in the wheel) has been stable since 1.21. Older
+# hatchling versions have different semantics around artifacts vs
+# force-include and could regress the Docker wheel build.
+requires = ["hatchling>=1.21"]
 build-backend = "hatchling.build"
 
 [project]
@@ -77,6 +81,18 @@ all = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/agentic_primitives_gateway"]
+
+# The compiled web UI lives at src/agentic_primitives_gateway/static/ and is
+# produced by `cd ui && npm run build` (also produced inside the Docker image
+# by the ui-builder stage). The directory is gitignored, so hatchling's
+# default "include VCS-tracked files only" rule would skip it. Declaring the
+# paths as `artifacts` tells hatchling to ship them in the wheel when they
+# exist and silently skip when they don't — so `pip install -e .` works
+# cleanly whether or not `npm run build` has run. At runtime `main.py`'s
+# `if _STATIC_DIR.exists()` guard handles the no-UI case.
+artifacts = [
+    "src/agentic_primitives_gateway/static/**",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

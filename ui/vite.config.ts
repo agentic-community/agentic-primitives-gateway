@@ -1,5 +1,6 @@
-/// <reference types="vitest" />
-import { defineConfig } from "vite";
+// Use vitest's defineConfig so the top-level `test:` block typechecks —
+// vite's own defineConfig doesn't know about it, which breaks `tsc -b`.
+import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 
 export default defineConfig({
