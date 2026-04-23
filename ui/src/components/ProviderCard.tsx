@@ -13,6 +13,7 @@ export default function ProviderCard({
   const statuses = info.available.map((b) => checks?.[`${primitive}/${b}`]);
   const hasChecks = statuses.some((s) => s !== undefined);
   const anyDown = hasChecks && statuses.some((s) => s === "down");
+  const anyTimeout = hasChecks && statuses.some((s) => s === "timeout");
   const allOk = hasChecks && statuses.every((s) => s === "ok");
 
   let borderClass = "border-gray-200 dark:border-gray-800";
@@ -21,8 +22,13 @@ export default function ProviderCard({
       borderClass = "border-green-400 dark:border-green-600";
     } else if (anyDown) {
       borderClass = "border-red-400 dark:border-red-600";
+    } else if (anyTimeout) {
+      // Timeout is a real failure mode (backing service slow/unreachable),
+      // not "almost fine" — surface it at orange, distinct from yellow
+      // (which means "reachable, needs user credentials")
+      borderClass = "border-orange-400 dark:border-orange-600";
     } else {
-      // All reachable (no down, not all ok)
+      // All reachable (no down, no timeout, not all ok)
       borderClass = "border-yellow-400 dark:border-yellow-600";
     }
   }
@@ -42,10 +48,11 @@ export default function ProviderCard({
         {info.available.map((backend) => {
           const checkKey = `${primitive}/${backend}`;
           const status = checks?.[checkKey];
-          const { bg, dot } = statusStyle(status);
+          const { bg, dot, label } = statusStyle(status);
           return (
             <span
               key={backend}
+              title={label}
               className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-mono ${bg}`}
             >
               {status !== undefined && (
@@ -79,6 +86,12 @@ function statusStyle(status: string | undefined) {
         dot: "bg-yellow-500",
         label: "Reachable — needs user credentials",
       };
+    case "timeout":
+      return {
+        bg: "bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-300",
+        dot: "bg-orange-500",
+        label: "Timed out — backing service slow or unreachable",
+      };
     case "down":
       return {
         bg: "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300",
@@ -86,10 +99,14 @@ function statusStyle(status: string | undefined) {
         label: "Down",
       };
     default:
+      // status === undefined (check not run for this provider) OR a new
+      // backend status string we don't know about yet. Render as gray and
+      // surface the raw value in the tooltip so it's obvious the UI
+      // needs updating rather than the chip just looking "quiet."
       return {
         bg: "bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300",
         dot: "",
-        label: "Unknown",
+        label: status ? `Unknown status: ${status}` : "No healthcheck result",
       };
   }
 }
