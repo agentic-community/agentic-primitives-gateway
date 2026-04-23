@@ -222,8 +222,8 @@ async def get_gateway_agent_card(request: Request) -> A2AAgentCard:
 async def get_per_agent_card(name: str, request: Request) -> A2AAgentCard:
     """Per-agent A2A card. Auth-exempt for public agents, requires auth otherwise.
 
-    Uses the back-compat ``store.get(name)`` lookup because this endpoint
-    is discovered by external clients that don't know the owner namespace.
+    Uses the bare-name ``store.get(name)`` lookup because this endpoint is
+    discovered by external clients that don't know the owner namespace.
     Treats the first-matching deployed spec as the agent card — intended
     only for publicly shared (``"*"``) agents.
     """

@@ -178,8 +178,7 @@ class TestResume:
 
         agent_store = AsyncMock()
         # Runner's resume path uses ``resolve_qualified`` against the stored
-        # ``spec_owner`` (defaults to ``"system"`` when a legacy checkpoint
-        # lacks the field).
+        # ``spec_owner`` (defaults to ``"system"`` when missing).
         agent_store.resolve_qualified = AsyncMock(return_value=_make_spec())
         runner.set_store(agent_store)
 
