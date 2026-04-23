@@ -391,6 +391,125 @@ async def test_stream_generator_emits_matching_events():
     assert allow_id == "0-1"
 
 
+class _PagingReader(_FakeReader):
+    """FakeReader variant that advances the cursor so loops terminate.
+
+    ``_FakeReader`` ignores ``end`` and always returns the newest N events,
+    which is fine for single-batch tests but makes the new multi-batch
+    loop non-terminating.  This subclass treats ``end`` as "exclusive
+    upper bound (index)" so pagination is observable.
+    """
+
+    async def list_events(
+        self,
+        *,
+        start: str,
+        end: str,
+        count: int,
+    ) -> tuple[list[AuditEvent], str | None]:
+        reversed_entries = list(reversed(self._entries))  # newest first
+        ids = [eid for eid, _ in reversed_entries]
+        # `end="+"` means "from the newest"; any entry id means "older than that id".
+        offset = 0 if end == "+" else ids.index(end) + 1 if end in ids else len(ids)
+        sliced = reversed_entries[offset : offset + count]
+        events = [evt for _, evt in sliced]
+        last_id = sliced[-1][0] if sliced else None
+        next_cursor = last_id if offset + count < len(ids) else None
+        return events, next_cursor
+
+
+@pytest.mark.asyncio
+async def test_list_events_loops_across_batches_until_count_met():
+    """Rare filters trigger multiple reader calls until count is reached."""
+    # 10 matching events among many non-matching — first batch (count*5 = 15)
+    # only contains 3 matches; the loop must fetch a second batch.
+    entries = []
+    for i in range(1, 31):
+        outcome = AuditOutcome.ERROR if i % 10 == 0 else AuditOutcome.SUCCESS
+        entries.append(_event_entry(f"0-{i}", action="auth.success", outcome=outcome))
+    fake = _PagingReader(entries=entries)
+    with patch.object(audit_routes, "_find_reader", return_value=fake):
+        app = _make_app(_admin_backend())
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/api/v1/audit/events?outcome=error&count=3")
+            body = resp.json()
+            assert len(body["events"]) == 3
+            assert all(e["outcome"] == "error" for e in body["events"])
+            # Scanned more than a single count*5 batch because matches were sparse.
+            assert body["scanned"] > 15
+
+
+@pytest.mark.asyncio
+async def test_list_events_loop_respects_max_scan_cap():
+    """If no match is found, the loop stops at _MAX_SCAN to bound latency."""
+    # No error events at all; the loop would run forever without the cap.
+    entries = [_event_entry(f"0-{i}", outcome=AuditOutcome.SUCCESS) for i in range(1, 200)]
+    fake = _PagingReader(entries=entries)
+    with (
+        patch.object(audit_routes, "_find_reader", return_value=fake),
+        patch.object(audit_routes, "_MAX_SCAN", 50),
+    ):
+        app = _make_app(_admin_backend())
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/api/v1/audit/events?outcome=error&count=5")
+            body = resp.json()
+            assert body["events"] == []
+            assert body["scanned"] <= 75  # one batch past the cap, at most
+
+
+@pytest.mark.asyncio
+async def test_list_events_filters_by_multiple_outcomes():
+    """Repeated ``outcome=`` query params keep events matching any of them."""
+    entries = [
+        _event_entry("0-1", action="policy.deny", outcome=AuditOutcome.DENY),
+        _event_entry("0-2", action="policy.allow", outcome=AuditOutcome.ALLOW),
+        _event_entry("0-3", action="auth.failure", outcome=AuditOutcome.FAILURE),
+        _event_entry("0-4", action="auth.success", outcome=AuditOutcome.SUCCESS),
+    ]
+    fake = _FakeReader(entries=entries)
+    with patch.object(audit_routes, "_find_reader", return_value=fake):
+        app = _make_app(_admin_backend())
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/api/v1/audit/events?outcome=deny&outcome=allow")
+            assert resp.status_code == 200
+            body = resp.json()
+            actions = {e["action"] for e in body["events"]}
+            assert actions == {"policy.deny", "policy.allow"}
+
+
+@pytest.mark.asyncio
+async def test_list_events_filters_by_multiple_resource_types():
+    """Repeated ``resource_type=`` keeps events matching any of them."""
+
+    def _typed_entry(entry_id: str, resource_type: str) -> tuple[str, AuditEvent]:
+        evt = AuditEvent(
+            action="tool.call",
+            outcome=AuditOutcome.SUCCESS,
+            resource_type=resource_type,
+        )
+        return entry_id, evt
+
+    entries = [
+        _typed_entry("0-1", "agent"),
+        _typed_entry("0-2", "team"),
+        _typed_entry("0-3", "policy"),
+        _typed_entry("0-4", "tool"),
+    ]
+    fake = _FakeReader(entries=entries)
+    with patch.object(audit_routes, "_find_reader", return_value=fake):
+        app = _make_app(_admin_backend())
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/api/v1/audit/events?resource_type=agent&resource_type=team")
+            assert resp.status_code == 200
+            body = resp.json()
+            types = {e["resource_type"] for e in body["events"]}
+            assert types == {"agent", "team"}
+
+
 @pytest.mark.asyncio
 async def test_stream_generator_emits_keepalive_on_idle():
     """When the reader yields ``None``, the route emits an SSE keepalive."""
@@ -516,11 +635,82 @@ def test_match_event_honors_each_filter_field():
         evt,
         action="policy.allow",
         action_category="policy",
-        outcome=AuditOutcome.ALLOW,
+        outcome=[AuditOutcome.ALLOW],
         actor_id="alice",
         resource_type=None,
         resource_id=None,
         correlation_id="trace-1",
+    )
+
+
+def test_match_event_outcome_multi_select():
+    """Outcome list acts like a set-membership predicate; empty/None = any."""
+    from agentic_primitives_gateway.routes.audit import _match_event
+
+    evt = AuditEvent(action="policy.allow", outcome=AuditOutcome.ALLOW)
+    # Event outcome in the allowed set → match.
+    assert _match_event(
+        evt,
+        action=None,
+        action_category=None,
+        outcome=[AuditOutcome.ALLOW, AuditOutcome.DENY],
+        actor_id=None,
+        resource_type=None,
+        resource_id=None,
+        correlation_id=None,
+    )
+    # Event outcome not in the allowed set → no match.
+    assert not _match_event(
+        evt,
+        action=None,
+        action_category=None,
+        outcome=[AuditOutcome.DENY, AuditOutcome.FAILURE],
+        actor_id=None,
+        resource_type=None,
+        resource_id=None,
+        correlation_id=None,
+    )
+    # Empty list = no filter; matches.
+    assert _match_event(
+        evt,
+        action=None,
+        action_category=None,
+        outcome=[],
+        actor_id=None,
+        resource_type=None,
+        resource_id=None,
+        correlation_id=None,
+    )
+
+
+def test_match_event_resource_type_multi_select():
+    """Resource type list acts like a set-membership predicate."""
+    from agentic_primitives_gateway.routes.audit import _match_event
+
+    evt = AuditEvent(
+        action="tool.call",
+        outcome=AuditOutcome.SUCCESS,
+        resource_type="agent",
+    )
+    assert _match_event(
+        evt,
+        action=None,
+        action_category=None,
+        outcome=None,
+        actor_id=None,
+        resource_type=["agent", "team"],
+        resource_id=None,
+        correlation_id=None,
+    )
+    assert not _match_event(
+        evt,
+        action=None,
+        action_category=None,
+        outcome=None,
+        actor_id=None,
+        resource_type=["team", "policy"],
+        resource_id=None,
+        correlation_id=None,
     )
 
 

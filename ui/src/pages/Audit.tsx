@@ -3,10 +3,14 @@ import { api } from "../api/client";
 import {
   AUDIT_OUTCOMES,
   AUDIT_RESOURCE_TYPES,
+  type AuditEvent,
   type AuditFilters,
+  type AuditOutcome,
+  type AuditResourceType,
   type AuditStatus,
 } from "../api/types";
 import AuditEventRow from "../components/AuditEventRow";
+import MultiSelect from "../components/MultiSelect";
 import { useAuditHistory } from "../hooks/useAuditHistory";
 import { useAuditStream } from "../hooks/useAuditStream";
 import { cn } from "../lib/cn";
@@ -66,7 +70,11 @@ export default function Audit() {
       {!sinkConfigured ? (
         <EmptyState error={statusError} />
       ) : mode === "live" ? (
-        <LiveTail filters={filters} paused={paused} onPauseToggle={() => setPaused((p) => !p)} />
+        <LiveTail
+          filters={filters}
+          paused={paused}
+          onPauseToggle={() => setPaused((p) => !p)}
+        />
       ) : (
         <HistoricalBrowse filters={filters} />
       )}
@@ -109,17 +117,33 @@ function FilterBar({
   filters: AuditFilters;
   onChange: (next: AuditFilters) => void;
 }) {
-  const patch = (k: keyof AuditFilters, v: string) => {
+  const patchString = (k: "action" | "action_category" | "actor_id" | "correlation_id" | "resource_id", v: string) => {
     const next = { ...filters };
     if (!v) {
       delete next[k];
     } else {
-      (next as Record<string, string>)[k] = v;
+      next[k] = v;
     }
     onChange(next);
   };
 
-  const hasFilters = Object.values(filters).some((v) => v !== undefined && v !== "");
+  const patchOutcome = (v: AuditOutcome[]) => {
+    const next = { ...filters };
+    if (v.length === 0) delete next.outcome;
+    else next.outcome = v;
+    onChange(next);
+  };
+
+  const patchResourceType = (v: AuditResourceType[]) => {
+    const next = { ...filters };
+    if (v.length === 0) delete next.resource_type;
+    else next.resource_type = v;
+    onChange(next);
+  };
+
+  const hasFilters = Object.values(filters).some(
+    (v) => v !== undefined && v !== "" && !(Array.isArray(v) && v.length === 0),
+  );
 
   return (
     <div className="flex flex-wrap items-center gap-2 text-xs">
@@ -127,52 +151,42 @@ function FilterBar({
         type="text"
         placeholder="action (e.g. policy.deny)"
         value={filters.action ?? ""}
-        onChange={(e) => patch("action", e.target.value)}
+        onChange={(e) => patchString("action", e.target.value)}
         className={filterInputClass}
       />
       <input
         type="text"
         placeholder="category (e.g. policy)"
         value={filters.action_category ?? ""}
-        onChange={(e) => patch("action_category", e.target.value)}
+        onChange={(e) => patchString("action_category", e.target.value)}
         className={filterInputClass}
       />
-      <select
-        value={filters.outcome ?? ""}
-        onChange={(e) => patch("outcome", e.target.value)}
-        className={filterInputClass}
-      >
-        <option value="">any outcome</option>
-        {AUDIT_OUTCOMES.map((o) => (
-          <option key={o} value={o}>
-            {o}
-          </option>
-        ))}
-      </select>
-      <select
-        value={filters.resource_type ?? ""}
-        onChange={(e) => patch("resource_type", e.target.value)}
-        className={filterInputClass}
-      >
-        <option value="">any resource</option>
-        {AUDIT_RESOURCE_TYPES.map((r) => (
-          <option key={r} value={r}>
-            {r}
-          </option>
-        ))}
-      </select>
+      <MultiSelect
+        options={AUDIT_OUTCOMES}
+        value={filters.outcome ?? []}
+        onChange={patchOutcome}
+        placeholder="any outcome"
+        label="Filter by outcome"
+      />
+      <MultiSelect
+        options={AUDIT_RESOURCE_TYPES}
+        value={filters.resource_type ?? []}
+        onChange={patchResourceType}
+        placeholder="any resource"
+        label="Filter by resource type"
+      />
       <input
         type="text"
         placeholder="actor_id"
         value={filters.actor_id ?? ""}
-        onChange={(e) => patch("actor_id", e.target.value)}
+        onChange={(e) => patchString("actor_id", e.target.value)}
         className={filterInputClass}
       />
       <input
         type="text"
         placeholder="correlation_id"
         value={filters.correlation_id ?? ""}
-        onChange={(e) => patch("correlation_id", e.target.value)}
+        onChange={(e) => patchString("correlation_id", e.target.value)}
         className={filterInputClass}
       />
       {hasFilters && (
@@ -200,9 +214,12 @@ function LiveTail({
   paused: boolean;
   onPauseToggle: () => void;
 }) {
-  const { events, status, dropped, clear, error } = useAuditStream(filters, {
-    paused,
-  });
+  const { events, status, dropped, clear, error } = useAuditStream({ paused });
+  const visible = useMemo(
+    () => events.filter((e) => matchesFilters(e, filters)),
+    [events, filters],
+  );
+  const hiddenByFilter = events.length - visible.length;
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
@@ -210,7 +227,8 @@ function LiveTail({
         <div className="flex items-center gap-3">
           <StreamStatusDot status={status} />
           <span className="font-mono">
-            {events.length} event{events.length === 1 ? "" : "s"}
+            {visible.length} event{visible.length === 1 ? "" : "s"}
+            {hiddenByFilter > 0 && ` • ${hiddenByFilter} hidden by filter`}
             {dropped > 0 && ` • ${dropped} dropped`}
           </span>
           {error && (
@@ -234,9 +252,32 @@ function LiveTail({
           </button>
         </div>
       </div>
-      <EventList events={events} empty="Waiting for events…" />
+      <EventList events={visible} empty="Waiting for events…" />
     </div>
   );
+}
+
+// Keep in sync with _match_event in src/.../routes/audit.py — same semantics.
+function matchesFilters(e: AuditEvent, f: AuditFilters): boolean {
+  if (f.action && e.action !== f.action) return false;
+  if (f.action_category) {
+    const cat = e.action.split(".", 1)[0] ?? e.action;
+    if (cat !== f.action_category) return false;
+  }
+  if (f.outcome && f.outcome.length > 0 && !f.outcome.includes(e.outcome)) {
+    return false;
+  }
+  if (f.actor_id && e.actor_id !== f.actor_id) return false;
+  if (
+    f.resource_type &&
+    f.resource_type.length > 0 &&
+    (e.resource_type === null || !f.resource_type.includes(e.resource_type))
+  ) {
+    return false;
+  }
+  if (f.resource_id && e.resource_id !== f.resource_id) return false;
+  if (f.correlation_id && e.correlation_id !== f.correlation_id) return false;
+  return true;
 }
 
 function HistoricalBrowse({ filters }: { filters: AuditFilters }) {

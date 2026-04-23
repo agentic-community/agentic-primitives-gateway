@@ -10,7 +10,7 @@ from starlette.responses import JSONResponse, Response
 
 from agentic_primitives_gateway import metrics
 from agentic_primitives_gateway.audit.emit import emit_audit_event
-from agentic_primitives_gateway.audit.models import AuditAction, AuditOutcome
+from agentic_primitives_gateway.audit.models import AuditAction, AuditOutcome, ResourceType
 from agentic_primitives_gateway.auth.base import AuthBackend
 from agentic_primitives_gateway.auth.models import ANONYMOUS_PRINCIPAL, NOOP_PRINCIPAL
 from agentic_primitives_gateway.context import set_authenticated_principal
@@ -83,6 +83,7 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
             emit_audit_event(
                 action=AuditAction.AUTH_FAILURE,
                 outcome=AuditOutcome.FAILURE,
+                resource_type=ResourceType.SESSION,
                 reason="invalid_or_missing_credentials",
                 http_method=request.method,
                 http_path=path,
@@ -104,6 +105,8 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
         emit_audit_event(
             action=AuditAction.AUTH_SUCCESS,
             outcome=AuditOutcome.SUCCESS,
+            resource_type=ResourceType.SESSION,
+            resource_id=principal.id,
             http_method=request.method,
             http_path=path,
             metadata={"backend": backend_name},
