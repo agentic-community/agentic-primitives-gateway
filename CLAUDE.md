@@ -160,7 +160,7 @@ pre-commit run --all-files # Run all hooks on entire repo
 
 ## Style
 
-- Python 3.11+, `from __future__ import annotations` in every file
+- Python 3.14+, `from __future__ import annotations` in every file
 - Pydantic v2 models for all request/response types
 - Async throughout (providers, routes, client)
 - hatchling for packaging

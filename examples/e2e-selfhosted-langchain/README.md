@@ -59,7 +59,7 @@ Client Script (LangChain + gateway-client)
 ## Prerequisites
 
 **Required:**
-- Python 3.11+
+- Python 3.14+
 - AWS credentials with Bedrock access (for LLM + embeddings)
 - Docker (for self-hosted services)
 
