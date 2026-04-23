@@ -60,6 +60,9 @@ Thumbs.db
 # UI
 ui/node_modules/
 ui/*.tsbuildinfo
+# tsc -b emits these next to vite.config.ts; only the .ts is source.
+ui/vite.config.js
+ui/vite.config.d.ts
 src/agentic_primitives_gateway/static/
 
 presentation/
