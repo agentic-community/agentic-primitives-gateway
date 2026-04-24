@@ -50,3 +50,72 @@ class TestConfigWatcher:
         await watcher.start()
         await watcher.stop()
         assert watcher._task is None
+
+    async def test_reload_success_emits_audit_event(self, tmp_path) -> None:
+        """Every successful reload leaves a durable config.reload SUCCESS
+        event so operators can correlate "config edit at T" with "gateway
+        picked it up at T+n" without digging through logs.
+        """
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text("providers: {}")
+        mock_reg = AsyncMock()
+        watcher = ConfigWatcher(str(config_file), mock_reg)
+
+        captured: list[dict] = []
+
+        def _capture(**kwargs):
+            captured.append(kwargs)
+
+        with (
+            patch("agentic_primitives_gateway.config.Settings.load", return_value=MagicMock()),
+            patch(
+                "agentic_primitives_gateway.watcher.emit_audit_event",
+                side_effect=_capture,
+            ),
+        ):
+            await watcher._reload()
+
+        assert len(captured) == 1
+        emitted = captured[0]
+        assert str(emitted["action"]) == "config.reload"
+        assert emitted["outcome"].value == "success"
+        assert emitted["resource_id"] == str(config_file)
+        assert "duration_ms" in emitted
+        assert emitted["metadata"]["config_path"] == str(config_file)
+
+    async def test_reload_failure_emits_audit_event(self, tmp_path) -> None:
+        """Failed reloads also emit — crucial because the app stays up on
+        the *previous* config, so this event is the only durable record
+        that a deploy-time config edit didn't take effect.
+        """
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text("providers: {}")
+        mock_reg = AsyncMock()
+        watcher = ConfigWatcher(str(config_file), mock_reg)
+
+        captured: list[dict] = []
+
+        def _capture(**kwargs):
+            captured.append(kwargs)
+
+        with (
+            patch(
+                "agentic_primitives_gateway.config.Settings.load",
+                side_effect=ValueError("bad config"),
+            ),
+            patch(
+                "agentic_primitives_gateway.watcher.emit_audit_event",
+                side_effect=_capture,
+            ),
+        ):
+            await watcher._reload()
+
+        assert len(captured) == 1
+        emitted = captured[0]
+        assert str(emitted["action"]) == "config.reload"
+        assert emitted["outcome"].value == "failure"
+        assert emitted["reason"] == "reload_failed"
+        assert emitted["metadata"]["error_type"] == "ValueError"
+        # error_type only — we never record the exception message because
+        # str(exc) on boto3 / YAML loaders can leak credentials or paths.
+        assert "error_message" not in emitted["metadata"]

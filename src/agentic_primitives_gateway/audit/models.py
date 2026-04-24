@@ -62,6 +62,7 @@ class ResourceType(StrEnum):
     CODE_EXECUTION = "code_execution"
     FILE = "file"
     PAGE = "page"
+    CONFIG = "config"
 
 
 # Canonical ``primitive → ResourceType`` label for cross-cutting audit
@@ -232,6 +233,14 @@ class AuditAction:
     # ``primitive``, ``provider``, ``status`` (ok|reachable|down|timeout),
     # and ``error_type`` + truncated ``error_message`` on failure.
     PROVIDER_HEALTHCHECK = "provider.healthcheck"
+
+    # Gateway config hot-reload outcome — emitted by the ConfigWatcher each
+    # time the watched YAML's mtime/inode changes and ``registry.reload()``
+    # runs. SUCCESS carries ``config_path`` + ``duration_ms`` in metadata;
+    # FAILURE uses ``reason="reload_failed"`` and ``error_type``. The app
+    # continues serving on the previous config on failure — this event is
+    # the only durable record that a deploy-time config edit didn't take.
+    CONFIG_RELOAD = "config.reload"
 
     # Resource access control
     RESOURCE_ACCESS_DENIED = "resource.access.denied"

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api/client";
 import type { AgentSpec, CredentialStatusResponse } from "../api/types";
@@ -10,44 +10,64 @@ import ProviderCard from "../components/ProviderCard";
 import { useHealth } from "../hooks/useHealth";
 import { useProviders } from "../hooks/useProviders";
 
+/** Derive a single Readiness status from a provider checks dict. Any
+ *  provider reporting "down" degrades readiness; anything else (ok,
+ *  reachable, timeout) is treated as non-blocking for the top-level
+ *  badge. Per-provider nuance is surfaced on the ProviderCard chips.
+ *  Exported so it can be unit-tested without mounting the Dashboard.
+ */
+export function deriveReadiness(
+  checks: Record<string, string> | null,
+): "ok" | "degraded" | null {
+  if (!checks) return null;
+  return Object.values(checks).some((s) => s === "down") ? "degraded" : "ok";
+}
+
 export default function Dashboard() {
-  const { health, readiness, loading: healthLoading } = useHealth();
+  const { health, loading: healthLoading } = useHealth();
   const { providers, loading: providersLoading } = useProviders();
-  const { user } = useAuth();
+  const { principalLoaded, principalId } = useAuth();
   const [agents, setAgents] = useState<AgentSpec[]>([]);
   const [agentsLoading, setAgentsLoading] = useState(true);
   const [credStatus, setCredStatus] = useState<CredentialStatusResponse | null>(null);
-  const [userChecks, setUserChecks] = useState<Record<string, string> | null>(null);
+  const [checks, setChecks] = useState<Record<string, string> | null>(null);
+  const [checksLoading, setChecksLoading] = useState(true);
 
+  // All authenticated API calls are gated on principalLoaded rather than
+  // the OIDC `user` object. `user` is null in noop + api_key deployments
+  // even when the caller is fully identified server-side; principalLoaded
+  // flips true after /whoami resolves, so it's the one signal that works
+  // across all three auth backends. The server-side effect is that every
+  // `provider.healthcheck` audit event is attributed to principalId (e.g.
+  // "noop", an api_key principal, or an OIDC subject) rather than
+  // "anonymous", which was the bug this refactor fixes.
   useEffect(() => {
+    if (!principalLoaded) return;
     api
       .listAgents()
       .then(setAgents)
       .catch(() => {})
       .finally(() => setAgentsLoading(false));
     api.credentialStatus().then(setCredStatus).catch(() => {});
-  }, []);
+    api
+      .providerStatus()
+      .then((r) => setChecks(r.checks))
+      .catch(() => setChecks({}))
+      .finally(() => setChecksLoading(false));
+  }, [principalLoaded, principalId]);
 
-  // When readyz shows "reachable" providers and user is authenticated,
-  // run an authenticated healthcheck to validate user credentials.
-  useEffect(() => {
-    if (!readiness?.checks || !user) return;
-    const hasReachable = Object.values(readiness.checks).some((s) => s === "reachable");
-    if (!hasReachable) return;
-    api.providerStatus().then((r) => setUserChecks(r.checks)).catch(() => {});
-  }, [readiness, user]);
+  const readinessStatus = useMemo(() => deriveReadiness(checks), [checks]);
 
-  // Merge: prefer authenticated checks over readyz checks
-  const mergedChecks = readiness?.checks
-    ? { ...readiness.checks, ...userChecks }
-    : userChecks ?? undefined;
-
-  // Only show credential banner if there are still "reachable" providers after merge
-  const stillNeedsCreds = mergedChecks
-    ? Object.values(mergedChecks).some((s) => s === "reachable")
+  const stillNeedsCreds = checks
+    ? Object.values(checks).some((s) => s === "reachable")
     : false;
 
-  const loading = healthLoading || providersLoading || agentsLoading;
+  const loading =
+    !principalLoaded ||
+    healthLoading ||
+    providersLoading ||
+    agentsLoading ||
+    checksLoading;
   if (loading) return <LoadingSpinner className="mt-32" />;
 
   return (
@@ -59,13 +79,8 @@ export default function Dashboard() {
         </h2>
         <div className="flex flex-wrap gap-2">
           {health && <HealthBadge status={health.status} label="Liveness" />}
-          {readiness && (
-            <HealthBadge status={readiness.status} label="Readiness" />
-          )}
-          {readiness?.config_reload_error && (
-            <span className="text-xs text-yellow-600 dark:text-yellow-400">
-              Config reload error: {readiness.config_reload_error}
-            </span>
+          {readinessStatus && (
+            <HealthBadge status={readinessStatus} label="Readiness" />
           )}
         </div>
       </section>
@@ -102,7 +117,7 @@ export default function Dashboard() {
                 key={primitive}
                 primitive={primitive}
                 info={info}
-                checks={mergedChecks}
+                checks={checks ?? undefined}
               />
             ))}
           </div>

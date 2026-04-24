@@ -494,6 +494,43 @@ async def test_policy_load_emits_only_when_content_changes():
     assert emits[0].metadata["policy_count"] == 1
 
 
+# ── Config hot-reload (watcher) emits ───────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_config_reload_emits_success_and_failure(tmp_path):
+    """ConfigWatcher emits config.reload on every reload attempt —
+    SUCCESS when the new config parses + applies, FAILURE (with
+    error_type in metadata) when it doesn't. The app stays up on the
+    previous config either way, so this event is the durable record
+    that ties a deploy-time edit to whether the gateway picked it up.
+    """
+    from agentic_primitives_gateway.watcher import ConfigWatcher
+
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text("providers: {}")
+    mock_registry = AsyncMock()
+    watcher = ConfigWatcher(str(cfg), mock_registry)
+
+    async with _wire_router() as sink:
+        # Success path
+        with patch("agentic_primitives_gateway.config.Settings.load", return_value=MagicMock()):
+            await watcher._reload()
+        # Failure path
+        with patch(
+            "agentic_primitives_gateway.config.Settings.load",
+            side_effect=ValueError("bad config"),
+        ):
+            await watcher._reload()
+
+    reload_events = [e for e in sink.events if e.action == AuditAction.CONFIG_RELOAD]
+    assert len(reload_events) == 2
+    assert reload_events[0].outcome.value == "success"
+    assert reload_events[1].outcome.value == "failure"
+    assert reload_events[1].reason == "reload_failed"
+    assert reload_events[1].metadata["error_type"] == "ValueError"
+
+
 # ── Policy mutation route emits ─────────────────────────────────────
 
 
