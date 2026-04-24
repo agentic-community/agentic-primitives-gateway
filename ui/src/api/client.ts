@@ -23,7 +23,6 @@ import type {
   PolicyInfo,
   PolicyListResponse,
   ProvidersResponse,
-  ReadinessResponse,
   SessionHistoryResponse,
   TeamLineage,
   TeamListResponse,
@@ -151,18 +150,15 @@ function sseStream(url: string, body: string, signal?: AbortSignal): ReadableStr
 }
 
 export const api = {
-  // Health
+  // Health — liveness only. `/readyz` is an anonymous kubelet probe;
+  // the dashboard uses `/api/v1/providers/status` below for per-provider
+  // data so audit events are attributed to the logged-in user.
   health: () => request<HealthResponse>("/healthz"),
-  readiness: async (): Promise<ReadinessResponse> => {
-    // readyz returns 503 when providers are degraded, but the body still
-    // contains useful check data — parse it regardless of status code.
-    const res = await fetch("/readyz", {
-      headers: { "Content-Type": "application/json" },
-    });
-    return res.json();
-  },
 
-  // Authenticated provider status (uses user credentials for healthchecks)
+  // Authenticated provider status (uses user credentials for healthchecks).
+  // Sole dashboard source for the Provider chips + Readiness badge —
+  // client-side reducer collapses the checks dict into a single
+  // ok/degraded value.
   providerStatus: () =>
     request<{ checks: Record<string, string> }>("/api/v1/providers/status"),
 

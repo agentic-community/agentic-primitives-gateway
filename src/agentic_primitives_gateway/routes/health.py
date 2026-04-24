@@ -1,4 +1,5 @@
 import asyncio
+import contextvars
 import logging
 from typing import Any
 
@@ -104,19 +105,44 @@ async def _check_provider(primitive: str, provider_name: str) -> tuple[str, str,
     """Run a single provider healthcheck with a timeout.
 
     Returns a status string: ``"ok"`` (fully healthy), ``"reachable"``
-    (server up but needs user credentials), or ``"down"``.
+    (server up but needs user credentials), ``"down"``, or ``"timeout"``.
 
-    Each healthcheck runs in its own thread via ``asyncio.run`` so that
-    providers which block the event loop (e.g. synchronous gRPC connects
-    in mem0) don't stall other concurrent checks.  We use ``asyncio.wait``
-    instead of ``asyncio.wait_for`` because the latter tries to cancel then
-    await executor futures, which blocks until the thread finishes.
+    Each healthcheck runs in its own thread via ``asyncio.run`` for two
+    independent reasons:
+
+    1. **Isolation from blocking providers.** Some providers (e.g. mem0
+       constructing a Milvus client) block synchronously inside their
+       async healthcheck. On the main event loop that would stall every
+       other concurrent healthcheck past the timeout budget. The thread
+       pool isolates each check so one slow provider doesn't starve the
+       others.
+    2. **Cooperation with ``asyncio.wait``.** We use ``asyncio.wait`` with
+       a timeout (not ``asyncio.wait_for``) because ``wait_for`` tries to
+       cancel the thread-bound future, which blocks until the thread
+       finishes anyway.
+
+    Contextvar propagation: we snapshot the request's context via
+    ``copy_context()`` and invoke the thread's work inside ``ctx.run``.
+    That carries the authenticated principal, AWS credentials, resolved
+    service credentials, and correlation id into the worker — so both
+    ``emit_audit_event`` (reading the principal) and the provider's
+    healthcheck (reading per-request creds) behave identically inside
+    the thread and on the main loop. For exempt callers (``/readyz``,
+    kubelet), the snapshot has the anonymous principal — same visible
+    outcome as before.
     """
     provider = registry.get_primitive(primitive).get(provider_name)
     key = f"{primitive}/{provider_name}"
 
+    # Capture request-scoped context (principal, creds, correlation_id)
+    # and carry it into the worker thread.
+    ctx = contextvars.copy_context()
+
+    def _run_in_thread() -> Any:
+        return ctx.run(asyncio.run, provider.healthcheck())
+
     loop = asyncio.get_running_loop()
-    task = asyncio.ensure_future(loop.run_in_executor(None, lambda: asyncio.run(provider.healthcheck())))
+    task = asyncio.ensure_future(loop.run_in_executor(None, _run_in_thread))
 
     exc: BaseException | None = None
     done, _ = await asyncio.wait({task}, timeout=_HEALTHCHECK_TIMEOUT)
@@ -133,37 +159,56 @@ async def _check_provider(primitive: str, provider_name: str) -> tuple[str, str,
         logger.debug("Healthcheck timed out: %s", key)
         status = "timeout"
 
+    # Emit on the main loop inside the request's own context (not the
+    # snapshot we passed to the thread), so the event reaches whichever
+    # router is installed on this replica.
     _emit_healthcheck_event(primitive, provider_name, status, exc=exc)
     return primitive, provider_name, key, status
 
 
+async def _run_all_healthchecks() -> dict[str, str]:
+    """Run every configured provider's healthcheck in parallel.
+
+    Single source of truth for both ``/readyz`` and
+    ``/api/v1/providers/status``. The caller's identity (anonymous for
+    exempt routes, authenticated for the dashboard) is automatically
+    picked up from contextvars by ``_check_provider``, so both endpoints
+    share one implementation.
+    """
+    tasks = [
+        _check_provider(primitive, provider_name)
+        for primitive in PRIMITIVES
+        for provider_name in registry.get_primitive(primitive).names
+    ]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    checks: dict[str, str] = {}
+    for result in results:
+        if isinstance(result, BaseException):
+            logger.exception("Healthcheck task failed", exc_info=result)
+            continue
+        prim, prov, key, status = result
+        checks[key] = status
+        PROVIDER_HEALTH.labels(primitive=prim, provider=prov).set(1 if status != "down" else 0)
+    return checks
+
+
 @router.get("/readyz")
 async def readiness() -> JSONResponse:
-    checks: dict[str, str] = {}
+    """Kubernetes readiness probe.
+
+    Auth-exempt so kubelet can call it without credentials. Runs every
+    provider's healthcheck via the shared ``_run_all_healthchecks``
+    helper; returns 503 when any provider is ``down`` or the last
+    config reload failed.
+    """
     try:
-        tasks = []
-        for primitive in PRIMITIVES:
-            prim_providers = registry.get_primitive(primitive)
-            for provider_name in prim_providers.names:
-                tasks.append(_check_provider(primitive, provider_name))
-
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-
-        for result in results:
-            if isinstance(result, BaseException):
-                logger.exception("Healthcheck task failed", exc_info=result)
-                continue
-            prim, prov, key, status = result
-            checks[key] = status
-            PROVIDER_HEALTH.labels(
-                primitive=prim,
-                provider=prov,
-            ).set(1 if status != "down" else 0)
+        checks = await _run_all_healthchecks()
     except Exception:
         logger.exception("Readiness check failed")
         return JSONResponse(
             status_code=503,
-            content={"status": HealthStatus.ERROR, "checks": checks},
+            content={"status": HealthStatus.ERROR, "checks": {}},
         )
 
     any_down = any(s == "down" for s in checks.values())
@@ -186,35 +231,6 @@ async def readiness() -> JSONResponse:
     )
 
 
-# ── Authenticated provider status (runs with user credentials) ──────
-
-
-async def _check_provider_authenticated(primitive: str, provider_name: str) -> tuple[str, str, str, str]:
-    """Healthcheck that runs on the main event loop with user credentials in context.
-
-    Unlike ``_check_provider`` (which runs in a thread pool with a fresh
-    event loop), this runs directly so that providers see the request-scoped
-    credentials populated by ``CredentialResolutionMiddleware``.
-    """
-
-    provider = registry.get_primitive(primitive).get(provider_name)
-    key = f"{primitive}/{provider_name}"
-
-    exc: BaseException | None = None
-    try:
-        result = await asyncio.wait_for(provider.healthcheck(), timeout=_HEALTHCHECK_TIMEOUT)
-        status = result if isinstance(result, str) else "ok" if result else "down"
-    except TimeoutError:
-        status = "timeout"
-    except Exception as e:
-        logger.debug("Authenticated healthcheck failed: %s", key, exc_info=True)
-        status = "down"
-        exc = e
-
-    _emit_healthcheck_event(primitive, provider_name, status, exc=exc)
-    return primitive, provider_name, key, status
-
-
 @router.get(
     "/api/v1/providers/status",
     dependencies=[Depends(require_principal)],
@@ -225,22 +241,9 @@ async def provider_status() -> dict:
 
     Runs behind auth + credential resolution middleware so each provider's
     ``healthcheck()`` sees the authenticated user's resolved credentials.
-    Providers that returned ``"reachable"`` on ``/readyz`` (no server creds)
-    will attempt authenticated checks here and may return ``"ok"`` if the
-    user has valid credentials stored.
+    Shares implementation with ``/readyz`` — the only difference is
+    whichever principal is in contextvars when the checks run. Dashboard
+    callers get user-attributed ``provider.healthcheck`` audit events;
+    probe callers get anonymous ones.
     """
-    checks: dict[str, str] = {}
-    tasks = []
-    for primitive in PRIMITIVES:
-        prim_providers = registry.get_primitive(primitive)
-        for provider_name in prim_providers.names:
-            tasks.append(_check_provider_authenticated(primitive, provider_name))
-
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-    for result in results:
-        if isinstance(result, BaseException):
-            continue
-        _prim, _prov, key, status = result
-        checks[key] = status
-
-    return {"checks": checks}
+    return {"checks": await _run_all_healthchecks()}

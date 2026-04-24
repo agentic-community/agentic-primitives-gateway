@@ -77,12 +77,6 @@ export interface HealthResponse {
   status: "ok" | "degraded" | "error";
 }
 
-export interface ReadinessResponse {
-  status: "ok" | "degraded" | "error";
-  checks: Record<string, string>; // "ok" | "reachable" | "down"
-  config_reload_error?: string;
-}
-
 export interface ProviderInfo {
   default: string;
   available: string[];
@@ -304,6 +298,7 @@ export type AuditOutcome = (typeof AUDIT_OUTCOMES)[number];
 export const AUDIT_RESOURCE_TYPES = [
   "agent",
   "code_execution",
+  "config",
   "credential",
   "evaluator",
   "file",

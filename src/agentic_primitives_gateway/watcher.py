@@ -3,8 +3,12 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+from agentic_primitives_gateway.audit.emit import emit_audit_event
+from agentic_primitives_gateway.audit.models import AuditAction, AuditOutcome, ResourceType
 
 if TYPE_CHECKING:
     from agentic_primitives_gateway.registry import ProviderRegistry
@@ -49,17 +53,40 @@ class ConfigWatcher:
 
     async def _reload(self) -> None:
         global _last_reload_error
+        started = time.monotonic()
         try:
             from agentic_primitives_gateway.config import Settings
 
             new_settings = Settings.load()
             await self._registry.reload(new_settings)
             _last_reload_error = None
+            duration_ms = (time.monotonic() - started) * 1000
             logger.info("Config reloaded successfully from %s", self._config_path)
-        except Exception:
+            emit_audit_event(
+                action=AuditAction.CONFIG_RELOAD,
+                outcome=AuditOutcome.SUCCESS,
+                resource_type=ResourceType.CONFIG,
+                resource_id=self._config_path,
+                duration_ms=duration_ms,
+                metadata={"config_path": self._config_path},
+            )
+        except Exception as e:
             msg = f"Config reload failed for {self._config_path}"
             logger.exception(msg)
             _last_reload_error = msg
+            duration_ms = (time.monotonic() - started) * 1000
+            emit_audit_event(
+                action=AuditAction.CONFIG_RELOAD,
+                outcome=AuditOutcome.FAILURE,
+                resource_type=ResourceType.CONFIG,
+                resource_id=self._config_path,
+                reason="reload_failed",
+                duration_ms=duration_ms,
+                metadata={
+                    "config_path": self._config_path,
+                    "error_type": type(e).__name__,
+                },
+            )
 
     async def _poll_loop(self) -> None:
         self._stat_key_cache = self._stat_key()
