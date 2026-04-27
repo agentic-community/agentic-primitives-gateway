@@ -19,6 +19,7 @@ import pytest
 
 from agentic_primitives_gateway.config import Settings, settings
 from agentic_primitives_gateway.main import app
+from agentic_primitives_gateway.models.enums import ServerCredentialMode
 from agentic_primitives_gateway.registry import registry
 from agentic_primitives_gateway_client import AgenticPlatformClient
 
@@ -117,7 +118,7 @@ def _init_registry(_skip_without_aws_credentials):
     )
     # Patch the global settings singleton so that get_boto3_session() and
     # other helpers that check allow_server_credentials see the test value.
-    settings.allow_server_credentials = "always"
+    settings.allow_server_credentials = ServerCredentialMode.ALWAYS
     registry.initialize(test_settings)
 
 

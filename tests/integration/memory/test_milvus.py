@@ -22,6 +22,7 @@ import pytest
 import agentic_primitives_gateway.config as _config_module
 from agentic_primitives_gateway.config import Settings
 from agentic_primitives_gateway.main import app
+from agentic_primitives_gateway.models.enums import ServerCredentialMode
 from agentic_primitives_gateway.registry import registry
 from agentic_primitives_gateway_client import AgenticPlatformClient, AgenticPlatformError
 
@@ -117,7 +118,7 @@ def _init_registry():
     )
     orig_settings = _config_module.settings
     _config_module.settings = test_settings
-    _config_module.settings.allow_server_credentials = "always"
+    _config_module.settings.allow_server_credentials = ServerCredentialMode.ALWAYS
     registry.initialize(test_settings)
 
     yield
