@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "agentic-primitives-gateway-client"
 version = "0.1.0"
 description = "Python client for the Agentic Primitives Gateway API"
-requires-python = ">=3.11"
+requires-python = ">=3.13"
 dependencies = [
     "httpx>=0.27.0",
 ]

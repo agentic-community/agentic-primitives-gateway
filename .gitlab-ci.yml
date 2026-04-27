@@ -5,7 +5,7 @@ stages:
   - deploy
 
 default:
-  image: public.ecr.aws/docker/library/python:3.12-slim
+  image: public.ecr.aws/docker/library/python:3.14-slim
 
 # ---------------------------------------------------------------------------
 # Lint

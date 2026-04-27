@@ -24,7 +24,7 @@ import builtins
 import logging
 from abc import ABC, abstractmethod
 from datetime import UTC, datetime
-from typing import Any, Generic, TypeVar, cast
+from typing import Any, cast
 from uuid import uuid4
 
 from pydantic import BaseModel
@@ -37,10 +37,6 @@ from agentic_primitives_gateway.models.agents import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-SpecT = TypeVar("SpecT", bound=BaseModel)
-VersionT = TypeVar("VersionT", bound=BaseModel)
 
 
 SYSTEM_OWNER = "system"
@@ -87,7 +83,7 @@ def _identity_key(owner_id: str, name: str) -> str:
     return f"{owner_id}:{name}"
 
 
-class SpecStore(ABC, Generic[SpecT, VersionT]):
+class SpecStore[SpecT: BaseModel, VersionT: BaseModel](ABC):
     """Abstract versioned store for agents or teams.
 
     Implementations persist the same logical shape — a set of immutable

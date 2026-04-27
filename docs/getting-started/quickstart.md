@@ -4,7 +4,7 @@ Get the gateway running and chat with an agent in under 2 minutes.
 
 ## Prerequisites
 
-- Python 3.11+
+- Python 3.14+
 - AWS credentials configured (`aws configure` or environment variables)
 - Access to Amazon Bedrock models in your AWS region
 
