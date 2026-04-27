@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 
 from agentic_primitives_gateway.context import get_aws_credentials, set_aws_credentials
+from agentic_primitives_gateway.models.enums import ServerCredentialMode
 
 
 class TestAWSCredentialMiddleware:
@@ -76,13 +77,23 @@ class TestAWSCredentialsDataclass:
         assert get_aws_credentials() is None
 
     def test_get_boto3_session_without_creds_raises_when_server_creds_disabled(self) -> None:
-        from agentic_primitives_gateway.context import get_boto3_session
-
-        set_aws_credentials(None)
+        # Force ``allow_server_credentials`` off for the duration of this
+        # test. Integration tests earlier in the run can leave it in the
+        # enabled state (integration/conftest.py uses "always"), so we
+        # can't rely on the module-level default here.
         import pytest
 
-        with pytest.raises(ValueError, match="server credential fallback is disabled"):
-            get_boto3_session(default_region="us-east-1")
+        from agentic_primitives_gateway.config import settings
+        from agentic_primitives_gateway.context import get_boto3_session
+
+        original = settings.allow_server_credentials
+        try:
+            settings.allow_server_credentials = ServerCredentialMode.NEVER
+            set_aws_credentials(None)
+            with pytest.raises(ValueError, match="server credential fallback is disabled"):
+                get_boto3_session(default_region="us-east-1")
+        finally:
+            settings.allow_server_credentials = original
 
     def test_get_boto3_session_without_creds_works_when_server_creds_enabled(self) -> None:
         from agentic_primitives_gateway.config import settings
@@ -90,7 +101,7 @@ class TestAWSCredentialsDataclass:
 
         original = settings.allow_server_credentials
         try:
-            settings.allow_server_credentials = True
+            settings.allow_server_credentials = ServerCredentialMode.ALWAYS
             set_aws_credentials(None)
             session = get_boto3_session(default_region="us-east-1")
             assert session.region_name == "us-east-1"
