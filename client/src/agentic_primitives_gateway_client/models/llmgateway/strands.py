@@ -94,7 +94,7 @@ class LLMGateway:
         system_prompt_content: list[dict[str, Any]] | None = None,
         invocation_state: dict[str, Any] | None = None,
         **kwargs: Any,
-    ) -> AsyncGenerator[dict[str, Any], None]:
+    ) -> AsyncGenerator[dict[str, Any]]:
         """Stream inference through the gateway, yielding Strands StreamEvents."""
         request = self._build_request(messages, tool_specs, system_prompt, system_prompt_content, tool_choice)
 
@@ -206,7 +206,7 @@ class LLMGateway:
         prompt: list[dict[str, Any]],
         system_prompt: str | None = None,
         **kwargs: Any,
-    ) -> AsyncGenerator[dict[str, T | Any], None]:
+    ) -> AsyncGenerator[dict[str, T | Any]]:
         """Get structured output by forcing a tool call."""
         schema = output_model.model_json_schema()
         tool_spec = {

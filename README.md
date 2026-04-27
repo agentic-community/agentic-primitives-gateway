@@ -15,7 +15,7 @@ The gateway extracts infrastructure into a standalone service. Agent developers 
 ## Quickstart
 
 ```bash
-# Prerequisites: Python 3.11+, AWS credentials (aws configure)
+# Prerequisites: Python 3.14+, AWS credentials (aws configure)
 git clone <repo-url>
 cd agentic-primitives-gateway
 pip install -e .

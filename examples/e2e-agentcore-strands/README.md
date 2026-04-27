@@ -50,7 +50,7 @@ The definitive example for running the Agentic Primitives Gateway with all AWS-m
 
 1. **AWS Credentials** -- any standard method: env vars, `~/.aws/credentials`, IRSA, Pod Identity
 2. **Redis** -- running at `localhost:6379` (or set `REDIS_URL`)
-3. **Python 3.11+**
+3. **Python 3.14+**
 4. **AgentCore Memory Resource** -- create one in the AgentCore console and set `AGENTCORE_MEMORY_ID`
 
 Optional:
