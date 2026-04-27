@@ -2,16 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-
-# Suppress noisy gRPC/abseil fork warnings from healthcheck thread pool.
-os.environ.setdefault("GRPC_VERBOSITY", "ERROR")
-os.environ.setdefault("GRPC_ENABLE_FORK_SUPPORT", "0")
-# Disable Langfuse SDK telemetry (PostHog pings to us.i.posthog.com).
-os.environ.setdefault("LANGFUSE_SDK_TELEMETRY_ENABLED", "false")
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
