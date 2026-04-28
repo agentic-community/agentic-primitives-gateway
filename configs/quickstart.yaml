@@ -37,6 +37,23 @@ providers:
         backend: "agentic_primitives_gateway.primitives.memory.in_memory.InMemoryProvider"
         config: {}
 
+  knowledge:
+    default: "llamaindex"
+    backends:
+      llamaindex:
+        backend: "agentic_primitives_gateway.primitives.knowledge.llamaindex.LlamaIndexKnowledgeProvider"
+        config:
+          store_type: vector
+          # SimpleVectorStore in-memory; SimpleDocstore keeps nodes in-process.
+          # No external services required — great for dev + CI.
+          embed_model:
+            provider: bedrock
+            config:
+              model_name: amazon.titan-embed-text-v2:0
+          llm:
+            backend_name: bedrock
+            model: us.anthropic.claude-sonnet-4-20250514-v1:0
+
 agents:
   specs:
     assistant:

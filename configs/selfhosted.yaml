@@ -74,6 +74,29 @@ providers:
             config:
               model: amazon.titan-embed-text-v2:0
 
+  # Knowledge: LlamaIndex + FalkorDB property graph.  Swap the graph_store
+  # block for a vector_store block (pinecone, pgvector, milvus, weaviate)
+  # if you want RAG instead of GraphRAG.
+  knowledge:
+    default: "llamaindex"
+    backends:
+      llamaindex:
+        backend: "agentic_primitives_gateway.primitives.knowledge.llamaindex.LlamaIndexKnowledgeProvider"
+        config:
+          store_type: graph
+          graph_store:
+            provider: falkordb
+            config:
+              url: "redis://${FALKORDB_HOST:=localhost}:${FALKORDB_PORT:=6379}"
+              database: "apg_knowledge"
+          embed_model:
+            provider: bedrock
+            config:
+              model_name: amazon.titan-embed-text-v2:0
+          llm:
+            backend_name: bedrock
+            model: us.anthropic.claude-sonnet-4-20250514-v1:0
+
   # Observability: Langfuse
   observability:
     default: "langfuse"

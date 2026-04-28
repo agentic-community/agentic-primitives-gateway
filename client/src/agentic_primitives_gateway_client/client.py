@@ -684,6 +684,85 @@ class AgenticPlatformClient:
             return
         self._raise_for_status(resp)
 
+    # ── Knowledge (RAG / graph retrieval) ───────────────────────────────
+
+    async def list_knowledge_namespaces(self) -> dict[str, Any]:
+        """List knowledge namespaces visible to the caller."""
+        resp = await self._get("/api/v1/knowledge/namespaces")
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def ingest_knowledge(
+        self,
+        namespace: str,
+        documents: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Ingest documents into the knowledge base.
+
+        Each document is a dict with ``text`` (required) and optional
+        ``metadata`` / ``document_id`` / ``source``.
+        """
+        resp = await self._post(
+            f"/api/v1/knowledge/{namespace}/documents",
+            json={"documents": documents},
+        )
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def list_knowledge_documents(
+        self,
+        namespace: str,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        resp = await self._get(
+            f"/api/v1/knowledge/{namespace}/documents",
+            params={"limit": limit, "offset": offset},
+        )
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def delete_knowledge_document(self, namespace: str, document_id: str) -> None:
+        resp = await self._delete(f"/api/v1/knowledge/{namespace}/documents/{document_id}")
+        if resp.status_code == 204:
+            return
+        self._raise_for_status(resp)
+
+    async def retrieve_knowledge(
+        self,
+        namespace: str,
+        query: str,
+        top_k: int = 10,
+        filters: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Retrieve ranked chunks from the knowledge base (no synthesis)."""
+        resp = await self._post(
+            f"/api/v1/knowledge/{namespace}/retrieve",
+            json={"query": query, "top_k": top_k, "filters": filters or {}},
+        )
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
+    async def query_knowledge(
+        self,
+        namespace: str,
+        question: str,
+        top_k: int = 5,
+        filters: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Retrieve-and-synthesize against the knowledge base.
+
+        Not every backend supports this (returns 501 when unsupported);
+        the canonical pattern is ``retrieve`` + synthesize via the LLM
+        primitive, which preserves uniform provider routing / audit.
+        """
+        resp = await self._post(
+            f"/api/v1/knowledge/{namespace}/query",
+            json={"question": question, "top_k": top_k, "filters": filters or {}},
+        )
+        self._raise_for_status(resp)
+        return self._json_dict(resp)
+
     # ── Memory: Conversation events ────────────────────────────────────
 
     async def create_event(

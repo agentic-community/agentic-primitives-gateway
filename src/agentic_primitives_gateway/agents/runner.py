@@ -18,6 +18,7 @@ from agentic_primitives_gateway.agents.checkpoint_utils import (
 )
 from agentic_primitives_gateway.agents.namespace import (
     resolve_actor_id,
+    resolve_knowledge_namespace,
     resolve_memory_namespace,
     resolve_shared_pools,
 )
@@ -40,6 +41,10 @@ from agentic_primitives_gateway.primitives.browser.context import (
 from agentic_primitives_gateway.primitives.code_interpreter.context import (
     reset_code_interpreter_session_id,
     set_code_interpreter_session_id,
+)
+from agentic_primitives_gateway.primitives.knowledge.context import (
+    reset_knowledge_namespace,
+    set_knowledge_namespace,
 )
 from agentic_primitives_gateway.primitives.memory.context import (
     reset_memory_namespace,
@@ -123,6 +128,7 @@ class _RunContext:
     actor_id: str
     trace_id: str
     memory_ns: str
+    knowledge_ns: str
     depth: int
     prev_overrides: dict[str, str]
     memory_pool_map: dict[str, str] | None = None
@@ -376,6 +382,7 @@ class AgentRunner:
         if principal is None:
             raise RuntimeError("Cannot run agent without an authenticated principal")
         memory_ns = resolve_memory_namespace(spec, principal)
+        knowledge_ns = resolve_knowledge_namespace(spec, principal)  # always a string, like memory_ns
         actor_id = resolve_actor_id(spec, principal)
         pool_map = resolve_shared_pools(spec)
 
@@ -385,6 +392,7 @@ class AgentRunner:
         cv_tokens: dict[str, Any] = {
             "memory_ns": set_memory_namespace(memory_ns),
             "memory_pools": set_memory_pools(pool_map),
+            "knowledge_ns": set_knowledge_namespace(knowledge_ns),
         }
 
         tools = build_tool_list(
@@ -402,6 +410,7 @@ class AgentRunner:
             actor_id=actor_id,
             trace_id=uuid.uuid4().hex,
             memory_ns=memory_ns,
+            knowledge_ns=knowledge_ns,
             depth=depth,
             prev_overrides=prev_overrides,
             memory_pool_map=pool_map,
@@ -697,6 +706,9 @@ class AgentRunner:
         if "memory_pools" in tokens:
             with contextlib.suppress(Exception):
                 reset_memory_pools(tokens["memory_pools"])
+        if "knowledge_ns" in tokens:
+            with contextlib.suppress(Exception):
+                reset_knowledge_namespace(tokens["knowledge_ns"])
         # Session contextvars are reset inside ``_cleanup_sessions``
         # so the reset happens atomically with the provider-side
         # ``stop_session`` call.
@@ -742,6 +754,7 @@ class AgentRunner:
             "actor_id": ctx.actor_id,
             "memory_ns": ctx.memory_ns,
             "memory_pool_map": ctx.memory_pool_map,
+            "knowledge_ns": ctx.knowledge_ns,
             "trace_id": ctx.trace_id,
             "depth": ctx.depth,
             "prev_overrides": ctx.prev_overrides,
@@ -818,12 +831,14 @@ class AgentRunner:
         # namespace / session state as before the crash.
         prev_overrides = self._apply_overrides(spec)
         resumed_memory_ns = data["memory_ns"]
+        resumed_knowledge_ns = data["knowledge_ns"]
         resumed_pool_map = data.get("memory_pool_map")
         resumed_session_ids = data.get("session_ids") or {}
 
         cv_tokens: dict[str, Any] = {
             "memory_ns": set_memory_namespace(resumed_memory_ns),
             "memory_pools": set_memory_pools(resumed_pool_map),
+            "knowledge_ns": set_knowledge_namespace(resumed_knowledge_ns),
         }
         # Reinstall session contextvars for any sessions the crashed
         # replica had already started.  If the session is dead on the
@@ -851,6 +866,7 @@ class AgentRunner:
             actor_id=data["actor_id"],
             trace_id=data.get("trace_id", uuid.uuid4().hex),
             memory_ns=resumed_memory_ns,
+            knowledge_ns=resumed_knowledge_ns,
             depth=data.get("depth", 0),
             prev_overrides=prev_overrides,
             memory_pool_map=resumed_pool_map,

@@ -52,6 +52,10 @@ from agentic_primitives_gateway.primitives.code_interpreter.context import (
     reset_code_interpreter_session_id,
     set_code_interpreter_session_id,
 )
+from agentic_primitives_gateway.primitives.knowledge.context import (
+    reset_knowledge_namespace,
+    set_knowledge_namespace,
+)
 from agentic_primitives_gateway.primitives.memory.context import (
     reset_memory_namespace,
     reset_shared_memory_namespace,
@@ -189,6 +193,7 @@ class TeamRunner:
         agent_role: str,
         memory_namespace: str,
         shared_memory_namespace: str | None = None,
+        knowledge_namespace: str | None = None,
     ) -> AsyncIterator[None]:
         """Install per-role contextvars around a single agent-loop run.
 
@@ -201,9 +206,12 @@ class TeamRunner:
         shared_token = (
             set_shared_memory_namespace(shared_memory_namespace) if shared_memory_namespace is not None else None
         )
+        knowledge_token = set_knowledge_namespace(knowledge_namespace)
         try:
             yield
         finally:
+            with contextlib.suppress(Exception):
+                reset_knowledge_namespace(knowledge_token)
             if shared_token is not None:
                 with contextlib.suppress(Exception):
                     reset_shared_memory_namespace(shared_token)
@@ -1107,6 +1115,7 @@ class TeamRunner:
                 agent_role=worker_name,
                 memory_namespace=f"team:{team_spec.name}:{team_run_id}",
                 shared_memory_namespace=self._resolve_shared_namespace(team_spec),
+                knowledge_namespace=self._resolve_worker_knowledge_ns(worker_spec),
             ):
                 async for event in run_agent_with_tools_stream(
                     worker_spec,
@@ -1159,6 +1168,7 @@ class TeamRunner:
                 agent_role=worker_spec.name,
                 memory_namespace=f"team:{team_spec.name}:{team_run_id}",
                 shared_memory_namespace=self._resolve_shared_namespace(team_spec),
+                knowledge_namespace=self._resolve_worker_knowledge_ns(worker_spec),
             ):
                 return await run_agent_with_tools(
                     worker_spec,
@@ -1220,7 +1230,15 @@ class TeamRunner:
                 yield event
 
     def _synthesizer_tools(self) -> list[ToolDefinition]:
-        """Synthesizer gets read-only task board access."""
+        """Synthesizer gets read-only task board access.
+
+        Deliberately excluded from knowledge retrieval: the synthesizer's
+        job is to compose a final response from task results that
+        workers already produced.  If cross-referencing against the
+        corpus is needed, that should happen inside a worker task (which
+        can surface retrieved chunks via ``shared_memory`` or its
+        ``result``), not re-run during synthesis.
+        """
         primitives = {"task_board": PrimitiveConfig(enabled=True, tools=["list_tasks", "get_task"])}
         return build_tool_list(primitives)
 
@@ -1280,6 +1298,7 @@ class TeamRunner:
                 agent_role=worker_name,
                 memory_namespace=f"team:{team_spec.name}:{team_run_id}",
                 shared_memory_namespace=self._resolve_shared_namespace(team_spec),
+                knowledge_namespace=self._resolve_worker_knowledge_ns(worker_spec),
             ):
                 async for event in run_agent_with_tools_stream(
                     worker_spec,
@@ -1468,9 +1487,13 @@ class TeamRunner:
         """Build the full tool list for a worker: its primitives + task board + shared memory.
 
         All request-scoped context (memory namespace, shared namespace,
-        session IDs, team_run_id, agent_role) is installed by
-        ``_team_role_context`` + ``_start_sessions`` before the agent
-        loop runs — this method only produces the tool list.
+        session IDs, team_run_id, agent_role, knowledge namespace) is
+        installed by ``_team_role_context`` + ``_start_sessions`` before
+        the agent loop runs — this method only produces the tool list.
+        ``build_tool_list`` reads the knowledge contextvar directly to
+        decide whether to include ``search_knowledge``, so callers must
+        enter ``_team_role_context`` (which sets the contextvar) before
+        invoking this.
         """
         worker_primitives = dict(worker_spec.primitives)
         worker_primitives["task_board"] = PrimitiveConfig(enabled=True, tools=_WORKER_BOARD_TOOLS)
@@ -1482,6 +1505,23 @@ class TeamRunner:
             worker_primitives["shared_memory"] = PrimitiveConfig(enabled=True)
 
         return build_tool_list(worker_primitives)
+
+    @staticmethod
+    def _resolve_worker_knowledge_ns(worker_spec: AgentSpec) -> str | None:
+        """Resolve a worker's knowledge namespace from its spec + caller principal.
+
+        Wraps :func:`resolve_knowledge_namespace` with the principal
+        lookup so the three worker callsites can pass the result
+        directly into ``_team_role_context``.  Returns ``None`` only
+        when there's no authenticated principal (defensive — worker
+        runs always have one); otherwise returns a namespace string.
+        """
+        from agentic_primitives_gateway.agents.namespace import resolve_knowledge_namespace
+
+        principal = get_authenticated_principal()
+        if principal is None:
+            return None
+        return resolve_knowledge_namespace(worker_spec, principal)
 
     @staticmethod
     def _resolve_shared_namespace(team_spec: TeamSpec) -> str | None:

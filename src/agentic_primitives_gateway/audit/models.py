@@ -62,6 +62,7 @@ class ResourceType(StrEnum):
     CODE_EXECUTION = "code_execution"
     FILE = "file"
     PAGE = "page"
+    KNOWLEDGE = "knowledge"
     CONFIG = "config"
 
 
@@ -81,6 +82,7 @@ PRIMITIVE_RESOURCE_TYPE: dict[str, ResourceType] = {
     "identity": ResourceType.IDENTITY,
     "code_interpreter": ResourceType.CODE_EXECUTION,
     "browser": ResourceType.PAGE,
+    "knowledge": ResourceType.KNOWLEDGE,
 }
 
 
@@ -148,6 +150,15 @@ class AuditAction:
     TEAM_VERSION_REJECT = "team.version.reject"
     TEAM_VERSION_DEPLOY = "team.version.deploy"
     TEAM_FORK = "team.fork"
+
+    # Knowledge primitive — bulk-indexed RAG / graph retrieval corpus.
+    # Retrieve/query enrich via the KnowledgeProvider __init_subclass__
+    # wrapper (chunk count + top-1 score land in metadata); ingest/delete
+    # additionally emit via ``audit_mutation`` at the route layer.
+    KNOWLEDGE_INGEST = "knowledge.ingest"
+    KNOWLEDGE_DELETE = "knowledge.delete"
+    KNOWLEDGE_RETRIEVE = "knowledge.retrieve"
+    KNOWLEDGE_QUERY = "knowledge.query"
 
     # Memory primitive — resource CRUD, strategies, branches, event/record writes
     MEMORY_RESOURCE_CREATE = "memory.resource.create"

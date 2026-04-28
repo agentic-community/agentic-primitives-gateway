@@ -14,7 +14,12 @@ requires-python = ">=3.13"
 dependencies = [
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.34.0",
-    "pydantic>=2.0.0",
+    # Upper-bound pydantic: point releases re-pin ``pydantic-core`` exactly
+    # (e.g. 2.12.5 → core==2.46.2).  Floating past a minor can pull in a
+    # core that a transitive dep has already pinned to a neighbouring
+    # patch version, breaking app start with ``SystemError: incompatible
+    # pydantic-core version``.  Widen deliberately when bumping.
+    "pydantic>=2.10.0,<2.13.0",
     "pydantic-settings>=2.0.0",
     "pyyaml>=6.0",
     "prometheus-client>=0.20.0",
@@ -66,6 +71,26 @@ jwt = [
     "httpx>=0.27.0",
     "cryptography>=42.0.0",
 ]
+knowledge-llamaindex = [
+    "llama-index-core>=0.13.0,<0.15.0",
+    # Embedding models — one per supported gateway embed provider.
+    "llama-index-embeddings-bedrock>=0.5.0,<0.9.0",
+    "llama-index-embeddings-openai>=0.3.0,<0.7.0",
+    # Vector stores dispatched by LlamaIndexKnowledgeProvider._build_vector_store.
+    # Upper bounds are set deliberately: these packages transitively install
+    # `pydantic-core` versions that clash with the gateway's pinned `pydantic`
+    # when left unbounded (e.g. weaviate-client 4.20+ pulls pydantic-core 2.46.3
+    # while pydantic 2.12 strict-pins 2.46.2 → SystemError on app start).
+    "llama-index-vector-stores-milvus>=1.0.0,<2.0.0",
+    "llama-index-vector-stores-pinecone>=0.4.0,<1.0.0",
+    "llama-index-vector-stores-postgres>=0.4.0,<1.0.0",
+    "llama-index-vector-stores-weaviate>=1.1.0,<1.7.0",
+    "weaviate-client>=4.9.0,<4.20.0",
+]
+knowledge-falkordb = [
+    "llama-index-graph-stores-falkordb>=0.3.0,<0.6.0",
+    "falkordb>=1.0.0,<2.0.0",
+]
 dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.24.0",
@@ -76,7 +101,7 @@ dev = [
     "types-PyYAML>=6.0.0",
 ]
 all = [
-    "agentic-primitives-gateway[mem0,agentcore,langfuse,keycloak,entra,okta,selenium,jupyter,cedar,redis,jwt]",
+    "agentic-primitives-gateway[mem0,agentcore,langfuse,keycloak,entra,okta,selenium,jupyter,cedar,redis,jwt,knowledge-llamaindex,knowledge-falkordb]",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -164,6 +189,8 @@ module = [
     "redis.*",
     "strands.*",
     "langchain_core.*",
+    "llama_index.*",
+    "falkordb.*",
 ]
 ignore_missing_imports = true
 

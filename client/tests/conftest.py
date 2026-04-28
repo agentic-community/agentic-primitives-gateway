@@ -165,6 +165,14 @@ def _mock_handler(request: httpx.Request) -> httpx.Response:
     if path.startswith("/api/v1/memory/"):
         return _handle_memory(method, path, request)
 
+    # Knowledge namespaces (before the general knowledge handler)
+    if path == "/api/v1/knowledge/namespaces" and method == "GET":
+        return httpx.Response(200, json={"namespaces": list(_knowledge_store.keys())})
+
+    # Knowledge endpoints
+    if path.startswith("/api/v1/knowledge/"):
+        return _handle_knowledge(method, path, request)
+
     return httpx.Response(404, json={"detail": "Not found"})
 
 
@@ -1392,6 +1400,10 @@ _policy_generations: dict[str, dict] = {}
 _events: dict[str, dict[str, list[dict]]] = {}
 _event_counter = 0
 
+# knowledge: namespace -> { document_id -> {metadata, source, text} }
+_knowledge_store: dict[str, dict[str, dict]] = {}
+_knowledge_counter = 0
+
 
 def _handle_browser(method: str, path: str, request: httpx.Request) -> httpx.Response:
     """Mock handler for browser endpoints."""
@@ -1632,9 +1644,89 @@ def _handle_memory(method: str, path: str, request: httpx.Request) -> httpx.Resp
     return httpx.Response(404, json={"detail": "Not found"})
 
 
+def _handle_knowledge(method: str, path: str, request: httpx.Request) -> httpx.Response:
+    """Mock handler for knowledge endpoints."""
+    global _knowledge_counter
+    rest = path.removeprefix("/api/v1/knowledge/")
+    parts = rest.split("/")
+    namespace = parts[0]
+
+    # POST /{namespace}/documents
+    if method == "POST" and len(parts) == 2 and parts[1] == "documents":
+        body = json.loads(request.content)
+        ns_store = _knowledge_store.setdefault(namespace, {})
+        document_ids: list[str] = []
+        for doc in body.get("documents", []):
+            _knowledge_counter += 1
+            doc_id = doc.get("document_id") or f"doc-{_knowledge_counter}"
+            ns_store[doc_id] = {
+                "text": doc["text"],
+                "metadata": doc.get("metadata", {}),
+                "source": doc.get("source"),
+            }
+            document_ids.append(doc_id)
+        return httpx.Response(
+            201,
+            json={"document_ids": document_ids, "ingested": len(document_ids)},
+        )
+
+    # GET /{namespace}/documents
+    if method == "GET" and len(parts) == 2 and parts[1] == "documents":
+        ns_store = _knowledge_store.get(namespace, {})
+        documents = [
+            {"document_id": doc_id, "metadata": rec["metadata"], "source": rec.get("source")}
+            for doc_id, rec in ns_store.items()
+        ]
+        return httpx.Response(200, json={"documents": documents, "total": len(documents)})
+
+    # DELETE /{namespace}/documents/{document_id}
+    if method == "DELETE" and len(parts) == 3 and parts[1] == "documents":
+        ns_store = _knowledge_store.get(namespace, {})
+        if parts[2] in ns_store:
+            del ns_store[parts[2]]
+            return httpx.Response(204)
+        return httpx.Response(404, json={"detail": "Document not found"})
+
+    # POST /{namespace}/retrieve
+    if method == "POST" and len(parts) == 2 and parts[1] == "retrieve":
+        body = json.loads(request.content)
+        query = body["query"].lower()
+        top_k = body.get("top_k", 10)
+        ns_store = _knowledge_store.get(namespace, {})
+        matches = []
+        for doc_id, rec in ns_store.items():
+            if query in rec["text"].lower():
+                matches.append((doc_id, rec))
+        chunks = []
+        for idx, (doc_id, rec) in enumerate(matches[:top_k]):
+            chunks.append(
+                {
+                    "chunk_id": f"{doc_id}:{idx}",
+                    "document_id": doc_id,
+                    "text": rec["text"],
+                    "score": 0.9,
+                    "metadata": rec["metadata"],
+                }
+            )
+        return httpx.Response(200, json={"chunks": chunks})
+
+    # POST /{namespace}/query
+    if method == "POST" and len(parts) == 2 and parts[1] == "query":
+        body = json.loads(request.content)
+        return httpx.Response(
+            200,
+            json={
+                "answer": f"Mock synthesized answer for: {body['question']}",
+                "chunks": [],
+            },
+        )
+
+    return httpx.Response(404, json={"detail": "Not found"})
+
+
 @pytest.fixture(autouse=True)
 def _clear_store():
-    global _event_counter, _policy_engine_counter, _policy_counter, _evaluator_counter
+    global _event_counter, _policy_engine_counter, _policy_counter, _evaluator_counter, _knowledge_counter
     _store.clear()
     _events.clear()
     _tools_store.clear()
@@ -1660,6 +1752,8 @@ def _clear_store():
     _policy_engine_counter = 0
     _policy_counter = 0
     _evaluator_counter = 0
+    _knowledge_store.clear()
+    _knowledge_counter = 0
     yield
     _store.clear()
     _events.clear()
@@ -1686,6 +1780,8 @@ def _clear_store():
     _policy_engine_counter = 0
     _policy_counter = 0
     _evaluator_counter = 0
+    _knowledge_store.clear()
+    _knowledge_counter = 0
 
 
 @pytest.fixture

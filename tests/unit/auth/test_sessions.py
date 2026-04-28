@@ -114,6 +114,7 @@ class TestRunnerUsesActorId:
             actor_id="test-agent:u:alice",
             trace_id="t",
             memory_ns="ns",
+            knowledge_ns="test-corpus",
             depth=0,
             prev_overrides={},
             content="response text",

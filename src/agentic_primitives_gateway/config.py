@@ -175,6 +175,14 @@ _DEFAULTS: dict[str, dict[str, Any]] = {
             }
         },
     },
+    Primitive.KNOWLEDGE: {
+        "default": "noop",
+        "backends": {
+            "noop": {
+                "backend": "agentic_primitives_gateway.primitives.knowledge.noop.NoopKnowledgeProvider",
+            }
+        },
+    },
 }
 
 
@@ -189,6 +197,7 @@ class ProvidersConfig(BaseModel):
     policy: PrimitiveProvidersConfig = PrimitiveProvidersConfig(**_DEFAULTS[Primitive.POLICY])
     evaluations: PrimitiveProvidersConfig = PrimitiveProvidersConfig(**_DEFAULTS[Primitive.EVALUATIONS])
     tasks: PrimitiveProvidersConfig = PrimitiveProvidersConfig(**_DEFAULTS[Primitive.TASKS])
+    knowledge: PrimitiveProvidersConfig = PrimitiveProvidersConfig(**_DEFAULTS[Primitive.KNOWLEDGE])
 
 
 class SeedPolicyConfig(BaseModel):

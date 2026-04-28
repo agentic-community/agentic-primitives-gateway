@@ -53,6 +53,7 @@ from agentic_primitives_gateway.routes import (
     evaluations,
     health,
     identity,
+    knowledge,
     llm,
     memory,
     observability,
@@ -529,6 +530,7 @@ async def metrics() -> Response:
 
 app.include_router(health.router)
 app.include_router(memory.router)
+app.include_router(knowledge.router)
 app.include_router(observability.router)
 app.include_router(llm.router)
 app.include_router(tools.router)

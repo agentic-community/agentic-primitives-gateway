@@ -304,6 +304,7 @@ export const AUDIT_RESOURCE_TYPES = [
   "file",
   "http",
   "identity",
+  "knowledge",
   "llm",
   "memory",
   "page",

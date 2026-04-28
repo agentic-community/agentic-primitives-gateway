@@ -40,6 +40,7 @@ from agentic_primitives_gateway.agents.tools.handlers import (
     code_execute,
     identity_get_api_key,
     identity_get_token,
+    knowledge_search,
     memory_delete,
     memory_list,
     memory_retrieve,
@@ -550,6 +551,22 @@ _TOOL_CATALOG: dict[str, list[ToolDefinition]] = {
             handler=agent_delegate_to,
         ),
     ],
+    "knowledge": [
+        ToolDefinition(
+            name="search_knowledge",
+            description="Search the agent's knowledge base (RAG) and return the most relevant chunks with relevance scores and sources. Use this when you need grounded facts from an ingested corpus.",
+            primitive="knowledge",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "What to search for."},
+                    "top_k": {"type": "integer", "description": "Maximum results to return.", "default": 5},
+                },
+                "required": ["query"],
+            },
+            handler=knowledge_search,
+        ),
+    ],
 }
 
 
@@ -670,9 +687,10 @@ def build_tool_list(
 ) -> list[ToolDefinition]:
     """Build the final tool list for an agent run from its primitive config.
 
-    Per-primitive context (memory namespace, session IDs, team run ID,
-    agent role) flows through contextvars set by the runner — this
-    function never sees them.  Only two cases need arg-threading:
+    Per-primitive context (memory namespace, knowledge namespace,
+    session IDs, team run ID, agent role) flows through contextvars
+    set by the runner — this function never sees the resolved values.
+    Only two cases need arg-threading:
 
     - **Agent-as-tool delegation** (``agents`` / ``agent_management``) —
       ``agent_store`` / ``agent_runner`` / ``agent_depth`` are

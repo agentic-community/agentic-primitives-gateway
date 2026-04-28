@@ -12,6 +12,7 @@ import pytest
 from agentic_primitives_gateway.agents.namespace import (
     resolve_actor_id,
     resolve_actor_id_for_identity,
+    resolve_knowledge_namespace,
     resolve_memory_namespace,
     resolve_memory_namespace_for_identity,
 )
@@ -157,3 +158,79 @@ class TestNamespaceIsolation:
             principal=_ALICE,
         )
         assert ns_alice != ns_bob
+
+
+class TestResolveKnowledgeNamespace:
+    """Intent: knowledge namespaces are shared-by-default, opt-in user-scoped.
+
+    A support bot's KB is the same corpus for every caller — ``agents/namespace.py``
+    deliberately does NOT append ``:u:{principal.id}`` the way memory does.
+    Deployments that *do* want per-user corpora opt in with a ``{principal_id}``
+    placeholder in the template, which then gets substituted.
+
+    Both halves matter:
+      * If someone copy-pastes the memory pattern and force-appends ``:u:``,
+        every multi-user support bot silently gets per-user corpora and the
+        shared KB breaks — same failure shape as the shared-pool incident.
+      * If someone "simplifies" the template substitution and drops the
+        ``{principal_id}`` branch, deployments that opted into per-user
+        corpora silently lose isolation.
+    """
+
+    def _spec(self, namespace: str | None = None, owner_id: str = "system") -> AgentSpec:
+        primitives = {}
+        if namespace is not None:
+            primitives["knowledge"] = PrimitiveConfig(enabled=True, namespace=namespace)
+        return AgentSpec(
+            name="support-bot",
+            model="m",
+            primitives=primitives,
+            owner_id=owner_id,
+        )
+
+    def test_default_template_is_shared_across_users(self) -> None:
+        """Alice and Bob on the same agent MUST resolve to the same knowledge namespace."""
+        spec = self._spec()
+        bob = AuthenticatedPrincipal(id="bob", type="user")
+        assert resolve_knowledge_namespace(spec, _ALICE) == resolve_knowledge_namespace(spec, bob)
+
+    def test_default_template_shape(self) -> None:
+        spec = self._spec()
+        assert resolve_knowledge_namespace(spec, _ALICE) == "knowledge:system:support-bot"
+
+    def test_explicit_template_without_principal_id_is_shared(self) -> None:
+        """An explicit template that doesn't reference ``{principal_id}`` is still shared."""
+        spec = self._spec(namespace="corpus:{agent_name}")
+        bob = AuthenticatedPrincipal(id="bob", type="user")
+        assert resolve_knowledge_namespace(spec, _ALICE) == resolve_knowledge_namespace(spec, bob)
+        assert resolve_knowledge_namespace(spec, _ALICE) == "corpus:support-bot"
+
+    def test_principal_id_placeholder_opts_in_to_user_scoping(self) -> None:
+        """When the template DOES contain ``{principal_id}``, per-user isolation kicks in."""
+        spec = self._spec(namespace="corpus:{agent_name}:u:{principal_id}")
+        bob = AuthenticatedPrincipal(id="bob", type="user")
+        alice_ns = resolve_knowledge_namespace(spec, _ALICE)
+        bob_ns = resolve_knowledge_namespace(spec, bob)
+        assert alice_ns == "corpus:support-bot:u:alice"
+        assert bob_ns == "corpus:support-bot:u:bob"
+        assert alice_ns != bob_ns
+
+    def test_session_id_placeholder_is_silently_stripped(self) -> None:
+        """Intent: ``{session_id}`` in a knowledge template is silently removed.
+
+        This behavior is inherited from :func:`_substitute` (memory uses
+        the same strip to hand session scoping off to ``resolve_actor_id``).
+        For knowledge it's a surprise — a bulk-indexed corpus usually
+        shouldn't be session-scoped — but the strip is consistent with
+        the rest of the template-resolution layer, so we pin it rather
+        than flip to an error.
+
+        If someone changes this to raise instead of strip (perhaps a
+        reasonable design choice), this test fails and the author has
+        to update the namespace.py docstring + any deployments that
+        put ``{session_id}`` in a knowledge template.
+        """
+        spec = self._spec(namespace="corpus:{agent_name}:{session_id}")
+        # Both users resolve to the same stripped namespace — session
+        # and user scoping are both absent by design.
+        assert resolve_knowledge_namespace(spec, _ALICE) == "corpus:support-bot"

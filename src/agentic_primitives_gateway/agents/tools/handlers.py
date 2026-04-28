@@ -22,6 +22,7 @@ from agentic_primitives_gateway.models.agents import AgentSpec, PrimitiveConfig
 from agentic_primitives_gateway.models.tasks import TaskNote
 from agentic_primitives_gateway.primitives.browser.context import get_browser_session_id
 from agentic_primitives_gateway.primitives.code_interpreter.context import get_code_interpreter_session_id
+from agentic_primitives_gateway.primitives.knowledge.context import get_knowledge_namespace
 from agentic_primitives_gateway.primitives.memory.context import (
     get_memory_namespace,
     get_memory_pools,
@@ -47,6 +48,19 @@ def _require_shared_memory_namespace() -> str:
     ns = get_shared_memory_namespace()
     if ns is None:
         raise RuntimeError("shared_memory tool called without a team shared namespace bound")
+    return ns
+
+
+def _require_knowledge_namespace() -> str:
+    ns = get_knowledge_namespace()
+    if ns is None:
+        # The tool should have been dropped from build_tool_list when no
+        # corpus resolved — hitting this means the runner didn't set the
+        # contextvar.  Memory namespace is NEVER a valid fallback.
+        raise RuntimeError(
+            "knowledge tool called without a bound corpus namespace — "
+            "set primitives.knowledge.namespace on the agent spec"
+        )
     return ns
 
 
@@ -116,6 +130,24 @@ async def memory_list(limit: int = 20) -> str:
     if not records:
         return "No memories found."
     return "\n".join(f"- {r.key}: {r.content[:100]}" for r in records)
+
+
+# ── Knowledge (RAG / retrieval) ──────────────────────────────────────
+
+
+async def knowledge_search(query: str, top_k: int = 5) -> str:
+    namespace = _require_knowledge_namespace()
+    chunks = await registry.knowledge.retrieve(namespace=namespace, query=query, top_k=top_k)
+    if not chunks:
+        return "No relevant knowledge found."
+    lines = []
+    for c in chunks:
+        source = c.metadata.get("source") if isinstance(c.metadata, dict) else None
+        prefix = f"[{c.score:.2f}] "
+        if source:
+            prefix += f"({source}) "
+        lines.append(f"- {prefix}{c.text}")
+    return "\n".join(lines)
 
 
 # ── Shared memory (team-scoped) ────────────────────────────────────

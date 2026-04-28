@@ -109,9 +109,14 @@ nav:
     - Tasks:
       - In-Memory: primitives/tasks/in-memory.md
       - Redis: primitives/tasks/redis.md
+    - Knowledge:
+      - Noop: primitives/knowledge/noop.md
+      - LlamaIndex: primitives/knowledge/llamaindex.md
+      - AgentCore: primitives/knowledge/agentcore.md
   - API Reference:
     - Overview: api/overview.md
     - Memory: api/memory.md
+    - Knowledge: api/knowledge.md
     - Identity: api/identity.md
     - Code Interpreter: api/code-interpreter.md
     - Browser: api/browser.md

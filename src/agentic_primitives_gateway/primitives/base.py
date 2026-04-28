@@ -4,6 +4,7 @@ from agentic_primitives_gateway.primitives.browser.base import BrowserProvider
 from agentic_primitives_gateway.primitives.code_interpreter.base import CodeInterpreterProvider
 from agentic_primitives_gateway.primitives.evaluations.base import EvaluationsProvider
 from agentic_primitives_gateway.primitives.identity.base import IdentityProvider
+from agentic_primitives_gateway.primitives.knowledge.base import KnowledgeProvider
 from agentic_primitives_gateway.primitives.llm.base import LLMProvider
 from agentic_primitives_gateway.primitives.memory.base import MemoryProvider
 from agentic_primitives_gateway.primitives.observability.base import ObservabilityProvider
@@ -16,6 +17,7 @@ __all__ = [
     "CodeInterpreterProvider",
     "EvaluationsProvider",
     "IdentityProvider",
+    "KnowledgeProvider",
     "LLMProvider",
     "MemoryProvider",
     "ObservabilityProvider",

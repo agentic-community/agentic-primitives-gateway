@@ -144,6 +144,45 @@ LLM_REQUESTS = Counter(
     ["model", "status"],  # status: success|failure
 )
 
+# ── Knowledge primitive ──────────────────────────────────────────────
+#
+# Labels are deliberately bounded:
+#   - ``provider`` is bounded by configured knowledge backends.
+#   - ``store_type`` is one of ``vector|graph|hybrid|native`` (the last
+#     is used by managed backends like AgentCore KB that don't surface
+#     a store distinction).  Bounded by taxonomy, not config.
+
+KNOWLEDGE_CHUNKS_RETRIEVED = Counter(
+    "gateway_knowledge_chunks_retrieved_total",
+    "Chunks returned from knowledge retrieve() calls.",
+    ["provider", "store_type"],
+)
+
+KNOWLEDGE_RETRIEVAL_SCORE = Histogram(
+    "gateway_knowledge_retrieval_score",
+    "Top-1 relevance score per knowledge retrieve() call.",
+    ["provider", "store_type"],
+    buckets=(0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0),
+)
+
+KNOWLEDGE_DOCUMENTS_INGESTED = Counter(
+    "gateway_knowledge_documents_ingested_total",
+    "Documents accepted by knowledge ingest() calls.",
+    ["provider", "store_type"],
+)
+
+KNOWLEDGE_DOCUMENTS_DELETED = Counter(
+    "gateway_knowledge_documents_deleted_total",
+    "Documents removed by knowledge delete() calls.",
+    ["provider", "store_type"],
+)
+
+KNOWLEDGE_QUERY_TOKENS = Counter(
+    "gateway_knowledge_query_tokens_total",
+    "Tokens consumed by knowledge query() synthesis (only populated by backends that route synthesis through the LLM primitive or surface token usage).",
+    ["provider", "kind"],  # kind: prompt|completion
+)
+
 # ── Versioning / fork / approval ─────────────────────────────────────
 #
 # Labels are deliberately bounded:

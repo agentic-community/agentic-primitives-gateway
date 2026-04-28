@@ -84,6 +84,7 @@ class TestProviderDiscovery:
             "policy",
             "evaluations",
             "tasks",
+            "knowledge",
         }
         assert set(data.keys()) == expected
 

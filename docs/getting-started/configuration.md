@@ -38,6 +38,21 @@ providers:
             provider: aws_bedrock
             config:
               model: amazon.titan-embed-text-v2:0
+
+  knowledge:
+    default: "llamaindex"
+    backends:
+      llamaindex:
+        backend: "agentic_primitives_gateway.primitives.knowledge.llamaindex.LlamaIndexKnowledgeProvider"
+        config:
+          store_type: vector          # vector | graph | hybrid
+          embed_model:
+            provider: bedrock
+            config:
+              model_name: amazon.titan-embed-text-v2:0
+          llm:                         # only used by query() — synthesis routes through registry.llm
+            backend_name: bedrock
+            model: us.anthropic.claude-sonnet-4-20250514-v1:0
 ```
 
 ### Environment Variable Expansion

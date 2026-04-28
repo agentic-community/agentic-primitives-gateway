@@ -1,9 +1,9 @@
-"""Shared namespace *templates* for agent memory and conversation history.
+"""Shared namespace *templates* for agent memory, knowledge, and conversation history.
 
 This module is the pure-function layer for namespace resolution: it
 takes an agent spec + principal and returns a resolved namespace
-string.  It does not touch contextvars — that wiring lives in
-``primitives/memory/context.py`` and the runners set the contextvars
+string.  It does not touch contextvars — that wiring lives in each
+primitive's ``context.py`` module and the runners set the contextvars
 using the values this module computes.
 
 Memory and conversation-history keys are scoped on three axes:
@@ -21,7 +21,31 @@ Shared memory pools (``PrimitiveConfig.memory.shared_namespaces``) are
 a deliberate exception to user-scoping: pools are cross-user by
 design, so ``resolve_shared_pools`` does **not** append ``:u:``.
 
+Knowledge namespaces point at a bulk-indexed, often shared corpus
+(support KB, product docs, code repository).  They are agent-level,
+not user-level — every user chatting with the same agent should hit
+the same corpus.  :func:`resolve_knowledge_namespace` does not append
+``:u:{principal.id}`` automatically; deployments that need per-user
+corpora can include ``{principal_id}`` in their template explicitly.
+
 Templates accept ``{agent_owner}`` and ``{agent_name}`` placeholders.
+
+User-scope format convention — IMPORTANT
+----------------------------------------
+
+Every user-scoped key uses ``:u:{user_id}`` with ``{user_id}`` as the
+**terminal segment** — no trailing colons or extra segments after
+the user id.  The route-level parser in
+:func:`routes._helpers.require_user_scoped` takes everything after
+the ``:u:`` marker as the owner id, so::
+
+    agent:alice:bot:u:alice          # parsed owner = "alice"          ✓
+    knowledge:system:support:u:alice # parsed owner = "alice"          ✓
+    :u:alice:kb                      # parsed owner = "alice:kb"       ✗
+
+The last form would 403 alice from what looks like her own
+namespace.  If you're constructing a namespace in a new code path,
+put the user segment at the end.
 """
 
 from __future__ import annotations
@@ -30,6 +54,7 @@ from agentic_primitives_gateway.auth.models import AuthenticatedPrincipal
 from agentic_primitives_gateway.models.agents import AgentSpec
 
 _DEFAULT_NS_TEMPLATE = "agent:{agent_owner}:{agent_name}"
+_DEFAULT_KNOWLEDGE_NS_TEMPLATE = "knowledge:{agent_owner}:{agent_name}"
 
 
 def _substitute(template: str, *, agent_owner: str, agent_name: str) -> str:
@@ -64,6 +89,35 @@ def resolve_memory_namespace_for_identity(
     template = namespace_template or _DEFAULT_NS_TEMPLATE
     base = _substitute(template, agent_owner=owner_id, agent_name=name)
     return f"{base}:u:{principal.id}"
+
+
+def resolve_knowledge_namespace(spec: AgentSpec, principal: AuthenticatedPrincipal) -> str:
+    """Resolve the knowledge namespace for the agent's ``search_knowledge`` tool.
+
+    Reads ``primitives.knowledge.namespace`` verbatim (with ``{agent_owner}``
+    / ``{agent_name}`` substitution).  Falls back to a default template
+    when no namespace is configured — same shape as
+    :func:`resolve_memory_namespace`, so every caller just reads a string.
+
+    Unlike memory, knowledge is **not** user-scoped by default: a support
+    bot's KB is the same corpus for every caller.  Deployments that need
+    per-user corpora can include ``{principal_id}`` in their template
+    explicitly — but it's not added automatically.
+
+    ``{session_id}`` placeholders are silently stripped (inherited from
+    :func:`_substitute`).  That's appropriate for memory, where session
+    scoping is handled by ``resolve_actor_id``, but for knowledge it's
+    arguably a surprise — a bulk-indexed corpus usually doesn't make
+    sense to scope by session.  We keep the strip for template-format
+    consistency with memory, but operators should NOT include
+    ``{session_id}`` in knowledge templates.
+    """
+    k_config = spec.primitives.get("knowledge")
+    template = k_config.namespace if k_config and k_config.namespace else _DEFAULT_KNOWLEDGE_NS_TEMPLATE
+    ns = _substitute(template, agent_owner=spec.owner_id, agent_name=spec.name)
+    # Allow explicit user-scoping via a ``{principal_id}`` placeholder
+    # without forcing it on every deployment.
+    return ns.replace("{principal_id}", principal.id)
 
 
 def resolve_shared_pools(spec: AgentSpec) -> dict[str, str] | None:

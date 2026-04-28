@@ -279,6 +279,7 @@ def _minimal_ctx() -> _RunContext:
         actor_id="a",
         trace_id="t",
         memory_ns="ns",
+        knowledge_ns="test-corpus",
         depth=0,
         prev_overrides={},
     )
@@ -622,6 +623,7 @@ class TestExecToolsStreaming:
             actor_id="test-agent",
             trace_id="trace",
             memory_ns="ns",
+            knowledge_ns="test-corpus",
             depth=0,
             prev_overrides={},
             tools=[
@@ -677,6 +679,7 @@ class TestInitContextMemoryInjection:
             actor_id="test-agent",
             trace_id="t",
             memory_ns="ns",
+            knowledge_ns="test-corpus",
             depth=0,
             prev_overrides={},
             llm_tools=[{"name": "tool1"}],
@@ -684,6 +687,49 @@ class TestInitContextMemoryInjection:
         request = AgentRunner._build_request(ctx)
         assert request["max_tokens"] == 500
         assert request["tools"] == [{"name": "tool1"}]
+
+
+class TestKnowledgeNamespaceIsolation:
+    """Sub-agent runs must not inherit the parent's corpus namespace.
+
+    Each run resolves its own ``knowledge_ns`` from its own spec and
+    installs it in the contextvar.  ``_finalize`` restores the parent's
+    value via the captured token so the parent's next turn sees its own
+    corpus again.  A future refactor that skipped the per-run
+    ``set_knowledge_namespace`` call would silently give the child the
+    parent's corpus — this test pins the separation.
+    """
+
+    async def test_child_resolves_its_own_knowledge_ns(self) -> None:
+        from agentic_primitives_gateway.primitives.knowledge.context import get_knowledge_namespace
+
+        runner = AgentRunner()
+        parent_spec = _make_spec(
+            name="parent",
+            primitives={"knowledge": PrimitiveConfig(enabled=True, namespace="parent-corpus")},
+        )
+        child_spec = _make_spec(name="child")  # no knowledge config; default template
+
+        parent_ctx = await runner._init_context(parent_spec, "hi", "parent-sess", 0)
+        parent_ns = get_knowledge_namespace()
+        assert parent_ns == "parent-corpus"
+
+        child_ctx = await runner._init_context(child_spec, "hi", "child-sess", 1)
+        child_ns = get_knowledge_namespace()
+        assert child_ns != parent_ns
+        assert child_ns == child_ctx.knowledge_ns
+        # Pin the exact default-template resolution so a future change to
+        # _DEFAULT_KNOWLEDGE_NS_TEMPLATE surfaces here rather than quietly
+        # migrating every default-namespace agent to a new corpus.
+        assert child_ns == "knowledge:system:child"
+
+        # Finalize the child — parent's contextvar must come back.
+        with patch.object(runner, "_cleanup_sessions", new_callable=AsyncMock):
+            await runner._finalize(child_ctx, "hi")
+        assert get_knowledge_namespace() == parent_ns
+
+        with patch.object(runner, "_cleanup_sessions", new_callable=AsyncMock):
+            await runner._finalize(parent_ctx, "hi")
 
 
 class TestSerializeArtifacts:

@@ -12,6 +12,7 @@ class Primitive(StrEnum):
     POLICY = "policy"
     EVALUATIONS = "evaluations"
     TASKS = "tasks"
+    KNOWLEDGE = "knowledge"
 
 
 class LogLevel(StrEnum):
