@@ -150,6 +150,33 @@ def _server_credentials_allowed() -> bool:
     return mode in (ServerCredentialMode.FALLBACK, ServerCredentialMode.ALWAYS)
 
 
+def _emit_server_credentials_used(service: str) -> None:
+    """Emit ``provider.server_credentials_used`` for non-admin callers.
+
+    Admin callers are deliberately excluded — ambient-cred use by admins
+    is the expected operator path.  The event exists to surface the
+    "backend sees one shared principal" state for non-admin requests, so
+    audit consumers can tell when per-user isolation has collapsed.
+    """
+    principal = get_authenticated_principal()
+    if principal is not None and principal.is_admin:
+        return
+
+    from agentic_primitives_gateway.audit.emit import emit_audit_event
+    from agentic_primitives_gateway.audit.models import AuditAction, AuditOutcome, ResourceType
+    from agentic_primitives_gateway.config import settings
+
+    mode = settings.allow_server_credentials
+    mode_str = str(mode.value) if hasattr(mode, "value") else str(mode)
+    emit_audit_event(
+        action=AuditAction.PROVIDER_SERVER_CREDENTIALS_USED,
+        outcome=AuditOutcome.SUCCESS,
+        resource_type=ResourceType.CREDENTIAL,
+        resource_id=service,
+        metadata={"service": service, "mode": mode_str},
+    )
+
+
 def get_boto3_session(default_region: str = "us-east-1") -> Any:
     """Create a boto3 Session from the current request's AWS credentials.
 
@@ -170,6 +197,7 @@ def get_boto3_session(default_region: str = "us-east-1") -> Any:
         )
 
     if _server_credentials_allowed():
+        _emit_server_credentials_used("aws")
         return boto3.Session(region_name=default_region)
 
     raise ValueError(
@@ -209,6 +237,7 @@ def get_service_credentials_or_defaults(
 
     # No client credentials — check if server fallback is allowed
     if _server_credentials_allowed():
+        _emit_server_credentials_used(service)
         return merged
 
     # Check if the server defaults actually have values
