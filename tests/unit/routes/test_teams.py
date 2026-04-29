@@ -456,3 +456,39 @@ class TestGetTeamRun:
 
         task.cancel()
         loop.close()
+
+    def test_non_admin_denied_when_run_ownership_unknown(self, teams_client: TestClient) -> None:
+        """``_require_run_owner`` default-denies on unknown ownership.
+
+        A bob who has team access (team shared_with includes him or
+        "*") and knows alice's team_run_id could otherwise read her
+        task board in a window where the ownership record was evicted
+        (e.g. replica restart without Redis event store).  The default
+        flipped from allow to deny — admins still bypass, non-admins
+        without a recorded match get 403.
+        """
+        from agentic_primitives_gateway.auth.base import AuthBackend
+        from agentic_primitives_gateway.auth.models import AuthenticatedPrincipal
+
+        # Seed a team shared with everyone, so resolve_team_spec passes
+        # and we isolate the _require_run_owner check itself.  The
+        # team is created under the noop (admin) principal, so its
+        # owner_id is "noop" — bob addresses it with the qualified
+        # ``{owner}:{name}`` form.
+        payload = {**TEAM_PAYLOAD, "shared_with": ["*"]}
+        teams_client.post("/api/v1/teams", json=payload)
+
+        class BobBackend(AuthBackend):
+            async def authenticate(self, request):
+                return AuthenticatedPrincipal(id="bob", type="user", scopes=frozenset())
+
+        prev = getattr(app.state, "auth_backend", None)
+        app.state.auth_backend = BobBackend()
+        try:
+            c = TestClient(app, raise_server_exceptions=False)
+            # Qualified team name so resolve_team_spec locates the
+            # spec bob doesn't own but has access to via shared_with.
+            resp = c.get("/api/v1/teams/noop:test-team/runs/alice-run-id")
+            assert resp.status_code == 403
+        finally:
+            app.state.auth_backend = prev
