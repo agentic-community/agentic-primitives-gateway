@@ -535,3 +535,129 @@ class TestCodeInterpreterListSessionsFiltering:
             assert "bob-ci" not in session_ids
         finally:
             app.state.auth_backend = prev
+
+
+# ── Memory pools: transitive-through-agents ACL ──────────────────────
+
+
+class TestMemoryPoolTransitiveACL:
+    """Unscoped shared-pool endpoints require transitive access.
+
+    The gateway enforces pool-level access by walking specs visible
+    to the caller: if some agent or team the caller can access declares
+    the pool, the caller gets read/write REST parity with what they could
+    already do via the agent-tool surface.  Delete is stricter.
+    """
+
+    def _stores(self, tmp_path):
+        """Wire real stores into the module-level slots used by routes."""
+        from agentic_primitives_gateway.agents.file_store import FileAgentStore, FileTeamStore
+        from agentic_primitives_gateway.routes.agents import set_agent_store
+        from agentic_primitives_gateway.routes.teams import set_team_store
+
+        agent_store = FileAgentStore(path=str(tmp_path / "agents.json"))
+        team_store = FileTeamStore(path=str(tmp_path / "teams.json"))
+        team_store.bind_agent_store(agent_store)
+        set_agent_store(agent_store)
+        set_team_store(team_store)
+        return agent_store, team_store
+
+    def _fixed_backend(self, principal):
+        from agentic_primitives_gateway.auth.base import AuthBackend
+
+        class FixedBackend(AuthBackend):
+            async def authenticate(self, request):
+                return principal
+
+        prev = getattr(app.state, "auth_backend", None)
+        app.state.auth_backend = FixedBackend()
+        return prev
+
+    def _create_agent(self, client, owner_id: str, pool: str, shared_with=None):
+        """POST a spec that declares ``pool`` in shared_namespaces."""
+        payload = {
+            "name": f"agent-{owner_id}",
+            "model": "noop/stub",
+            "primitives": {"memory": {"shared_namespaces": [pool]}},
+            "shared_with": shared_with or [],
+        }
+        # owner_id flows from the authenticated principal; caller injects
+        # the right backend before invoking this helper.
+        resp = client.post("/api/v1/agents", json=payload)
+        assert resp.status_code == 201, resp.text
+        return resp.json()
+
+    def test_bob_without_any_declaring_agent_denied(self, tmp_path) -> None:
+        """Orphan-pool case: bob has no agent that declares pool-p."""
+        self._stores(tmp_path)
+        prev = self._fixed_backend(_user("bob"))
+        try:
+            c = TestClient(app, raise_server_exceptions=False)
+            resp = c.post("/api/v1/memory/pool-p", json={"key": "k1", "content": "v"})
+            assert resp.status_code == 403
+        finally:
+            app.state.auth_backend = prev
+
+    def test_bob_owns_agent_declaring_pool_allowed_read_write(self, tmp_path) -> None:
+        self._stores(tmp_path)
+        prev = self._fixed_backend(_user("bob"))
+        try:
+            c = TestClient(app, raise_server_exceptions=False)
+            self._create_agent(c, owner_id="bob", pool="pool-p")
+            assert c.post("/api/v1/memory/pool-p", json={"key": "k", "content": "v"}).status_code == 201
+            assert c.get("/api/v1/memory/pool-p/k").status_code == 200
+            assert c.get("/api/v1/memory/pool-p").status_code == 200
+            assert c.post("/api/v1/memory/pool-p/search", json={"query": "x"}).status_code == 200
+        finally:
+            app.state.auth_backend = prev
+
+    def test_bob_sharee_allowed_read_write_denied_delete(self, tmp_path) -> None:
+        """Bob reads/writes via alice's shared agent; delete requires ownership."""
+        self._stores(tmp_path)
+
+        # Alice creates an agent that declares pool-p and shares with *.
+        prev_alice = self._fixed_backend(_user("alice"))
+        try:
+            c_alice = TestClient(app, raise_server_exceptions=False)
+            self._create_agent(c_alice, owner_id="alice", pool="pool-p", shared_with=["*"])
+            # Bob writes a key first so the delete call has something to target.
+            # We use alice's client here because she owns the agent, but the
+            # important thing is bob's ACL on pool-p, not who seeded the data.
+            c_alice.post("/api/v1/memory/pool-p", json={"key": "k1", "content": "v"})
+        finally:
+            app.state.auth_backend = prev_alice
+
+        prev_bob = self._fixed_backend(_user("bob"))
+        try:
+            c_bob = TestClient(app, raise_server_exceptions=False)
+            # Read/write parity with the tool surface — all four ops.
+            assert c_bob.post("/api/v1/memory/pool-p", json={"key": "k2", "content": "v"}).status_code == 201
+            assert c_bob.get("/api/v1/memory/pool-p/k1").status_code == 200
+            assert c_bob.get("/api/v1/memory/pool-p").status_code == 200
+            assert c_bob.post("/api/v1/memory/pool-p/search", json={"query": "x"}).status_code == 200
+            # Delete is stricter — sharee cannot wipe the owner's data.
+            assert c_bob.delete("/api/v1/memory/pool-p/k1").status_code == 403
+        finally:
+            app.state.auth_backend = prev_bob
+
+    def test_admin_bypasses_all_checks(self, tmp_path) -> None:
+        self._stores(tmp_path)
+        prev = self._fixed_backend(_admin())
+        try:
+            c = TestClient(app, raise_server_exceptions=False)
+            # No agent declares this pool; admin still gets through.
+            assert c.post("/api/v1/memory/pool-p", json={"key": "k", "content": "v"}).status_code == 201
+            assert c.delete("/api/v1/memory/pool-p/k").status_code == 204
+        finally:
+            app.state.auth_backend = prev
+
+    def test_user_scoped_namespace_unaffected(self, tmp_path) -> None:
+        """User-scoped ``:u:{self}`` namespaces skip the transitive check."""
+        self._stores(tmp_path)
+        prev = self._fixed_backend(_user("bob"))
+        try:
+            c = TestClient(app, raise_server_exceptions=False)
+            ns = "agent:whatever:u:bob"
+            assert c.post(f"/api/v1/memory/{ns}", json={"key": "k", "content": "v"}).status_code == 201
+        finally:
+            app.state.auth_backend = prev

@@ -86,6 +86,7 @@ async def test_memory_mutations_emit():
             patch.object(memroute, "registry", mock_registry),
             patch.object(memroute, "_check_actor"),
             patch.object(memroute, "_check_namespace"),
+            patch.object(memroute, "_check_pool_access", new=AsyncMock()),
         ):
             await memroute.create_event(
                 "actor", "sess", CreateEventRequest(messages=[EventMessage(text="hi", role="user")])
