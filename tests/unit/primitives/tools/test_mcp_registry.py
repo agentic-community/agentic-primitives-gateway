@@ -251,32 +251,46 @@ class TestMCPRegistryProvider:
 
         search_resp = MagicMock()
         search_resp.json.return_value = {
-            "results": [
-                {"name": "calc", "description": "Calculator", "inputSchema": {}},
-            ]
+            "query": "math",
+            "search_mode": "hybrid",
+            "servers": [],
+            "tools": [
+                {
+                    "server_path": "/calc/",
+                    "server_name": "Calculator",
+                    "tool_name": "add",
+                    "description": "Add numbers",
+                    "inputSchema": {"type": "object"},
+                    "relevance_score": 0.9,
+                }
+            ],
+            "total_tools": 1,
         }
         search_resp.raise_for_status = MagicMock()
 
         with patch("httpx.Client") as mock_client_cls:
             mock_client = self._mock_httpx_client()
-            mock_client.get.return_value = search_resp
+            mock_client.post.return_value = search_resp
             mock_client_cls.return_value = mock_client
 
             result = await provider.search_tools("math", max_results=5)
 
+        # Verify POST with JSON body, not GET
+        mock_client.post.assert_called_once()
+        call_kwargs = mock_client.post.call_args
+        assert "/api/search/semantic" in call_kwargs[0][0]
+        assert call_kwargs.kwargs["json"] == {"query": "math", "max_results": 5}
+
         assert len(result) == 1
-        assert result[0]["name"] == "calc"
+        assert result[0]["name"] == "Calculator/add"
+        assert result[0]["metadata"]["server"] == "Calculator"
 
     @pytest.mark.asyncio
     async def test_search_tools_fallback_to_list(self, mock_get_creds):
         mock_get_creds.return_value = None
         provider = self._make_provider(base_url="http://localhost:8080")
 
-        # Semantic search fails
-        search_resp = MagicMock()
-        search_resp.raise_for_status.side_effect = Exception("404")
-
-        # List tools succeeds
+        # List tools succeeds (used by fallback path)
         servers_resp = MagicMock()
         servers_resp.json.return_value = {
             "servers": [
@@ -299,14 +313,14 @@ class TestMCPRegistryProvider:
 
         with patch("httpx.Client") as mock_client_cls:
             mock_client = self._mock_httpx_client()
+            mock_client.get.return_value = servers_resp
 
-            def get_side_effect(url, **kwargs):
+            def post_side_effect(url, **kwargs):
                 if "semantic" in url:
                     raise Exception("search not available")
-                return servers_resp
+                return mcp_resp
 
-            mock_client.get.side_effect = get_side_effect
-            mock_client.post.return_value = mcp_resp
+            mock_client.post.side_effect = post_side_effect
             mock_client_cls.return_value = mock_client
 
             result = await provider.search_tools("weather", max_results=5)
