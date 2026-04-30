@@ -76,11 +76,11 @@ class EntraIdentityProvider(SyncRunnerMixin, IdentityProvider):
     def _get_app(self) -> msal.ConfidentialClientApplication:
         """Create an MSAL ConfidentialClientApplication from resolved config."""
         cfg = self._resolve_config()
-        tenant_id = cfg["tenant_id"] or self._tenant_id
+        tenant_id = cfg.get("tenant_id") or self._tenant_id
         authority = f"https://login.microsoftonline.com/{tenant_id}"
         return msal.ConfidentialClientApplication(
-            client_id=cfg["client_id"] or self._client_id,
-            client_credential=cfg["client_secret"] or self._client_secret,
+            client_id=cfg.get("client_id") or self._client_id,
+            client_credential=cfg.get("client_secret") or self._client_secret,
             authority=authority,
         )
 

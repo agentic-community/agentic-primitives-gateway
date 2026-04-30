@@ -186,12 +186,23 @@ class TestServerCredentialsUsedEvent:
         assert matching == []
 
     async def test_service_credentials_fallback_emits(self) -> None:
+        """``fallback`` + any server-filled key → emit once.
+
+        ``_emit_server_credentials_used`` is called from the helper
+        when ``defaults`` contains truthy values the caller didn't
+        supply — that's the "operator credentials actually fill gaps
+        in the caller's request" state we want auditable.  If the
+        defaults are all-None there are literally no operator values
+        to fill with; no emit.
+        """
         set_service_credentials({})
         set_authenticated_principal(_non_admin())
         try:
             events = await _collect(
                 ServerCredentialMode.FALLBACK,
-                lambda: get_service_credentials_or_defaults("langfuse", {"public_key": None, "secret_key": None}),
+                lambda: get_service_credentials_or_defaults(
+                    "langfuse", {"public_key": "server-pk", "secret_key": "server-sk"}
+                ),
             )
         finally:
             set_authenticated_principal(None)

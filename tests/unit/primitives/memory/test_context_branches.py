@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from agentic_primitives_gateway.config import settings
 from agentic_primitives_gateway.context import (
     AWSCredentials,
     get_boto3_session,
@@ -12,71 +13,169 @@ from agentic_primitives_gateway.context import (
     set_aws_credentials,
     set_service_credentials,
 )
+from agentic_primitives_gateway.models.enums import ServerCredentialMode
+
+
+class _ModeOverride:
+    """Context manager that swaps ``allow_server_credentials`` for a test."""
+
+    def __init__(self, mode: ServerCredentialMode) -> None:
+        self._mode = mode
+        self._prev: object = None
+
+    def __enter__(self):
+        self._prev = settings.allow_server_credentials
+        settings.allow_server_credentials = self._mode
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        settings.allow_server_credentials = self._prev
 
 
 class TestGetServiceCredentialsOrDefaults:
-    """Test all branches of get_service_credentials_or_defaults()."""
+    """Three-branch rule — mode determines the entire behavior.
 
-    def test_client_creds_override_defaults(self):
-        set_service_credentials({"langfuse": {"public_key": "client-pk", "secret_key": "client-sk"}})
-        result = get_service_credentials_or_defaults(
-            "langfuse",
-            {"public_key": "server-pk", "secret_key": "server-sk", "base_url": "https://server.com"},
-        )
-        assert result["public_key"] == "client-pk"
-        assert result["secret_key"] == "client-sk"
-        assert result["base_url"] == "https://server.com"
+    ``NEVER``: caller supplies the full shape; ``defaults`` values are
+    not consulted.  ``ALWAYS``: caller is ignored; ``defaults`` is
+    returned unchanged.  ``FALLBACK``: merge (caller wins), emit
+    ``provider.server_credentials_used`` once if any key was filled
+    from ``defaults``.
+    """
 
-    def test_no_client_creds_server_fallback_allowed(self):
-        set_service_credentials({})
-        with patch("agentic_primitives_gateway.context._server_credentials_allowed", return_value=True):
-            result = get_service_credentials_or_defaults(
-                "langfuse",
-                {"public_key": "server-pk", "secret_key": None},
-            )
-        assert result["public_key"] == "server-pk"
+    # ── NEVER ────────────────────────────────────────────────────
 
-    def test_no_client_creds_server_fallback_disabled_with_defaults(self):
+    def test_never_empty_client_creds_raises(self):
         set_service_credentials({})
         with (
-            patch("agentic_primitives_gateway.context._server_credentials_allowed", return_value=False),
-            pytest.raises(ValueError, match="credential fallback is disabled"),
+            _ModeOverride(ServerCredentialMode.NEVER),
+            pytest.raises(ValueError, match="No langfuse credentials provided"),
         ):
             get_service_credentials_or_defaults(
                 "langfuse",
                 {"public_key": "server-pk", "secret_key": "server-sk"},
             )
 
-    def test_no_client_creds_no_server_fallback_no_defaults_returns_merged(self):
-        set_service_credentials({})
-        with patch("agentic_primitives_gateway.context._server_credentials_allowed", return_value=False):
-            # defaults have no truthy values, so no error raised
+    def test_never_full_client_creds_returns_them_without_defaults(self):
+        """Even when operator defaults exist, ``never`` ignores them."""
+        set_service_credentials({"langfuse": {"public_key": "alice-pk", "secret_key": "alice-sk"}})
+        with _ModeOverride(ServerCredentialMode.NEVER):
             result = get_service_credentials_or_defaults(
                 "langfuse",
-                {"public_key": None, "secret_key": None},
+                {"public_key": "server-pk", "secret_key": "server-sk", "host": "https://server.com"},
             )
-        assert result["public_key"] is None
+        assert result["public_key"] == "alice-pk"
+        assert result["secret_key"] == "alice-sk"
+        # ``host`` wasn't vended by Alice and under NEVER defaults don't fill.
+        assert result["host"] is None
+
+    def test_never_partial_client_creds_returns_shape_preserving_dict(self):
+        """Partial client creds → shape-preserving dict with ``None`` for missing keys."""
+        set_service_credentials({"langfuse": {"public_key": "alice-pk"}})
+        with _ModeOverride(ServerCredentialMode.NEVER):
+            result = get_service_credentials_or_defaults(
+                "langfuse",
+                {"public_key": "server-pk", "secret_key": "server-sk"},
+            )
+        assert result["public_key"] == "alice-pk"
         assert result["secret_key"] is None
 
-    def test_client_creds_merge_with_defaults(self):
-        set_service_credentials({"svc": {"key_a": "from_client"}})
-        result = get_service_credentials_or_defaults(
-            "svc",
-            {"key_a": "default_a", "key_b": "default_b"},
-        )
-        assert result["key_a"] == "from_client"
+    # ── ALWAYS ───────────────────────────────────────────────────
+
+    def test_always_ignores_client_creds(self):
+        """Under ``always``, operator controls credentials — caller values discarded."""
+        set_service_credentials({"langfuse": {"public_key": "alice-pk", "secret_key": "alice-sk"}})
+        with _ModeOverride(ServerCredentialMode.ALWAYS):
+            result = get_service_credentials_or_defaults(
+                "langfuse",
+                {"public_key": "server-pk", "secret_key": "server-sk"},
+            )
+        assert result["public_key"] == "server-pk"
+        assert result["secret_key"] == "server-sk"
+
+    def test_always_empty_client_creds_returns_defaults(self):
+        set_service_credentials({})
+        with _ModeOverride(ServerCredentialMode.ALWAYS):
+            result = get_service_credentials_or_defaults(
+                "langfuse",
+                {"public_key": "server-pk", "secret_key": "server-sk"},
+            )
+        assert result == {"public_key": "server-pk", "secret_key": "server-sk"}
+
+    # ── FALLBACK ─────────────────────────────────────────────────
+
+    def test_fallback_merges_client_wins(self):
+        set_service_credentials({"svc": {"key_a": "alice"}})
+        with _ModeOverride(ServerCredentialMode.FALLBACK):
+            result = get_service_credentials_or_defaults(
+                "svc",
+                {"key_a": "default_a", "key_b": "default_b"},
+            )
+        assert result["key_a"] == "alice"
         assert result["key_b"] == "default_b"
 
-    def test_empty_client_cred_values_not_merged(self):
-        """Client creds with empty string values should not override defaults."""
+    def test_fallback_empty_client_creds_uses_defaults(self):
+        set_service_credentials({})
+        with _ModeOverride(ServerCredentialMode.FALLBACK):
+            result = get_service_credentials_or_defaults(
+                "langfuse",
+                {"public_key": "server-pk", "secret_key": None},
+            )
+        assert result["public_key"] == "server-pk"
+
+    def test_fallback_empty_values_dont_override(self):
+        """Empty-string client values are ignored — a fall-through to defaults."""
         set_service_credentials({"svc": {"key_a": ""}})
-        result = get_service_credentials_or_defaults(
-            "svc",
-            {"key_a": "default_a"},
-        )
-        # client_creds is truthy (dict has entries), so it proceeds as client creds
-        # but empty values aren't merged, so default stays
+        with _ModeOverride(ServerCredentialMode.FALLBACK):
+            result = get_service_credentials_or_defaults(
+                "svc",
+                {"key_a": "default_a"},
+            )
         assert result["key_a"] == "default_a"
+
+    def test_fallback_full_override_no_audit_emit(self):
+        """No server-filled keys → no audit event."""
+        set_service_credentials({"svc": {"key_a": "alice", "key_b": "alice"}})
+        with (
+            _ModeOverride(ServerCredentialMode.FALLBACK),
+            patch("agentic_primitives_gateway.context._emit_server_credentials_used") as emit,
+        ):
+            get_service_credentials_or_defaults(
+                "svc",
+                {"key_a": "default_a", "key_b": "default_b"},
+            )
+        emit.assert_not_called()
+
+    def test_fallback_partial_override_emits_once(self):
+        """Any server-filled key → emit exactly once (not per key)."""
+        set_service_credentials({"svc": {"key_a": "alice"}})
+        with (
+            _ModeOverride(ServerCredentialMode.FALLBACK),
+            patch("agentic_primitives_gateway.context._emit_server_credentials_used") as emit,
+        ):
+            get_service_credentials_or_defaults(
+                "svc",
+                {"key_a": "default_a", "key_b": "default_b", "key_c": "default_c"},
+            )
+        emit.assert_called_once_with("svc")
+
+    def test_fallback_emit_for_empty_client_creds(self):
+        set_service_credentials({})
+        with (
+            _ModeOverride(ServerCredentialMode.FALLBACK),
+            patch("agentic_primitives_gateway.context._emit_server_credentials_used") as emit,
+        ):
+            get_service_credentials_or_defaults("svc", {"key_a": "default_a"})
+        emit.assert_called_once_with("svc")
+
+    def test_always_emits_for_non_empty_defaults(self):
+        """``always`` is also a "shared-cred" state — audit consumers want to see it."""
+        set_service_credentials({})
+        with (
+            _ModeOverride(ServerCredentialMode.ALWAYS),
+            patch("agentic_primitives_gateway.context._emit_server_credentials_used") as emit,
+        ):
+            get_service_credentials_or_defaults("svc", {"key_a": "default_a"})
+        emit.assert_called_once_with("svc")
 
 
 class TestGetBoto3Session:
