@@ -11,9 +11,14 @@ from starlette.responses import JSONResponse, Response
 from agentic_primitives_gateway import metrics
 from agentic_primitives_gateway.audit.emit import emit_audit_event
 from agentic_primitives_gateway.audit.models import AuditAction, AuditOutcome, ResourceType
+from agentic_primitives_gateway.auth.access import filter_allowed_provider_overrides
 from agentic_primitives_gateway.auth.base import AuthBackend
-from agentic_primitives_gateway.auth.models import ANONYMOUS_PRINCIPAL, NOOP_PRINCIPAL
-from agentic_primitives_gateway.context import set_authenticated_principal
+from agentic_primitives_gateway.auth.models import ANONYMOUS_PRINCIPAL, NOOP_PRINCIPAL, AuthenticatedPrincipal
+from agentic_primitives_gateway.context import (
+    get_provider_overrides,
+    set_authenticated_principal,
+    set_provider_overrides,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +65,7 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
         if backend is None:
             set_authenticated_principal(NOOP_PRINCIPAL)
             request.state.principal = NOOP_PRINCIPAL
+            _enforce_provider_override_allowlist(NOOP_PRINCIPAL, request.url.path)
             return await call_next(request)
 
         # Exempt paths get anonymous principal (non-admin) without validation
@@ -68,11 +74,13 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
             if path.startswith(prefix):
                 set_authenticated_principal(ANONYMOUS_PRINCIPAL)
                 request.state.principal = ANONYMOUS_PRINCIPAL
+                _enforce_provider_override_allowlist(ANONYMOUS_PRINCIPAL, path)
                 return await call_next(request)
         for suffix in AUTH_EXEMPT_SUFFIXES:
             if path.endswith(suffix):
                 set_authenticated_principal(ANONYMOUS_PRINCIPAL)
                 request.state.principal = ANONYMOUS_PRINCIPAL
+                _enforce_provider_override_allowlist(ANONYMOUS_PRINCIPAL, path)
                 return await call_next(request)
 
         principal = await backend.authenticate(request)
@@ -102,6 +110,7 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
 
         set_authenticated_principal(principal)
         request.state.principal = principal
+        _enforce_provider_override_allowlist(principal, path)
         emit_audit_event(
             action=AuditAction.AUTH_SUCCESS,
             outcome=AuditOutcome.SUCCESS,
@@ -117,3 +126,34 @@ class AuthenticationMiddleware(BaseHTTPMiddleware):
             principal_type=principal.type,
         ).inc()
         return await call_next(request)
+
+
+def _enforce_provider_override_allowlist(principal: AuthenticatedPrincipal, path: str) -> None:
+    """Strip ``X-Provider-*`` overrides that are not on the universal allow-list.
+
+    ``RequestContextMiddleware`` (which runs earlier) populates the
+    provider-override contextvar verbatim from the request headers.
+    The allow-list lives in :mod:`auth.access` and is *universal* —
+    it applies to every caller, admin included.  Request-time backend
+    selection is a routing preference for non-trust-sensitive
+    primitives; for identity / policy / tools / the global default,
+    the configured backend is the authoritative choice and a request
+    header can't override it.  Admins who need to pin a backend for
+    testing use startup config or a shadow deployment, not this path.
+    """
+    overrides = get_provider_overrides()
+    if not overrides:
+        return
+    kept, dropped = filter_allowed_provider_overrides(overrides)
+    if not dropped:
+        return
+    set_provider_overrides(kept)
+    emit_audit_event(
+        action=AuditAction.RESOURCE_ACCESS_DENIED,
+        outcome=AuditOutcome.FAILURE,
+        resource_type=ResourceType.SESSION,
+        resource_id=principal.id,
+        reason="provider_override_not_on_allowlist",
+        http_path=path,
+        metadata={"dropped_overrides": dropped},
+    )

@@ -1126,21 +1126,23 @@ class AgentRunner:
         turns_used: int,
         tools_called: list[str],
     ) -> None:
+        principal = get_authenticated_principal()
+        payload: dict[str, Any] = {
+            "trace_id": trace_id,
+            "name": f"agent:{spec.name}:chat",
+            "input": user_msg,
+            "output": assistant_msg,
+            "metadata": {
+                "agent_name": spec.name,
+                "session_id": session_id,
+                "turns_used": turns_used,
+                "tools_called": tools_called,
+            },
+        }
+        if principal is not None:
+            payload["user_id"] = principal.id
         try:
-            await registry.observability.ingest_trace(
-                {
-                    "trace_id": trace_id,
-                    "name": f"agent:{spec.name}:chat",
-                    "input": user_msg,
-                    "output": assistant_msg,
-                    "metadata": {
-                        "agent_name": spec.name,
-                        "session_id": session_id,
-                        "turns_used": turns_used,
-                        "tools_called": tools_called,
-                    },
-                }
-            )
+            await registry.observability.ingest_trace(payload)
         except Exception:
             logger.debug("Failed to trace conversation for agent %s", spec.name, exc_info=True)
 

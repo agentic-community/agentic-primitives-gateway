@@ -34,9 +34,12 @@ from agentic_primitives_gateway.agents.runner import AgentRunner
 from agentic_primitives_gateway.agents.store import AgentStore
 from agentic_primitives_gateway.audit.emit import emit_audit_event
 from agentic_primitives_gateway.audit.models import AuditAction, AuditOutcome, ResourceType
-from agentic_primitives_gateway.auth.access import require_access
+from agentic_primitives_gateway.auth.access import (
+    ProviderOverrideSource,
+    apply_filtered_provider_overrides,
+    require_access,
+)
 from agentic_primitives_gateway.config import settings
-from agentic_primitives_gateway.context import set_provider_overrides
 from agentic_primitives_gateway.models.a2a import (
     A2AAgentCapabilities,
     A2AAgentCard,
@@ -105,8 +108,11 @@ async def _require_agent(name: str) -> AgentSpec:
 
     store = _get_store()
     spec: AgentSpec = await resolve_agent_spec(store, name, require_principal())
-    if spec.provider_overrides:
-        set_provider_overrides(spec.provider_overrides)
+    apply_filtered_provider_overrides(
+        spec.provider_overrides,
+        source=ProviderOverrideSource.A2A,
+        resource_id=spec.name,
+    )
     return spec
 
 

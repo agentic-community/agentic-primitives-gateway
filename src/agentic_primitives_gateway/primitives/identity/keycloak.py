@@ -81,20 +81,20 @@ class KeycloakIdentityProvider(SyncRunnerMixin, IdentityProvider):
         """Create a KeycloakOpenID client from resolved config."""
         cfg = self._resolve_config()
         return KeycloakOpenID(
-            server_url=cfg["server_url"] or self._server_url,
-            realm_name=cfg["realm"] or self._realm,
-            client_id=cfg["client_id"] or self._client_id,
-            client_secret_key=cfg["client_secret"] or self._client_secret,
+            server_url=cfg.get("server_url") or self._server_url,
+            realm_name=cfg.get("realm") or self._realm,
+            client_id=cfg.get("client_id") or self._client_id,
+            client_secret_key=cfg.get("client_secret") or self._client_secret,
         )
 
     def _get_admin(self) -> KeycloakAdmin:
         """Create a KeycloakAdmin client from resolved config."""
         cfg = self._resolve_config()
         return KeycloakAdmin(
-            server_url=cfg["server_url"] or self._server_url,
-            realm_name=cfg["realm"] or self._realm,
-            client_id=cfg["client_id"] or self._client_id,
-            client_secret_key=cfg["client_secret"] or self._client_secret,
+            server_url=cfg.get("server_url") or self._server_url,
+            realm_name=cfg.get("realm") or self._realm,
+            client_id=cfg.get("client_id") or self._client_id,
+            client_secret_key=cfg.get("client_secret") or self._client_secret,
         )
 
     # ── Data plane — runtime token operations ─────────────────────

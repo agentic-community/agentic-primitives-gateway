@@ -484,6 +484,33 @@ class TestTraceHelpers:
 
         mock_reg.observability.ingest_trace.assert_awaited_once()
 
+    async def test_trace_conversation_attributes_to_current_principal(self) -> None:
+        """Runner-originated traces carry the calling principal's ``user_id``.
+
+        Distinct from the REST ingest path, which relays whatever the
+        caller submits.  The runner is the originator of auto-trace
+        hooks, so it provides the attribution the backend expects.
+        """
+        from agentic_primitives_gateway.auth.models import AuthenticatedPrincipal
+        from agentic_primitives_gateway.context import set_authenticated_principal
+
+        set_authenticated_principal(AuthenticatedPrincipal(id="alice", type="user"))
+        runner = AgentRunner()
+        spec = _make_spec()
+        captured: dict[str, object] = {}
+
+        async def _capture(payload: dict[str, object]) -> None:
+            captured.update(payload)
+
+        try:
+            with patch(f"{_RUNNER_MOD}.registry") as mock_reg:
+                mock_reg.observability = AsyncMock()
+                mock_reg.observability.ingest_trace.side_effect = _capture
+                await runner._trace_conversation("trace-1", spec, "sess", "hi", "hello", 1, [])
+            assert captured.get("user_id") == "alice"
+        finally:
+            set_authenticated_principal(None)
+
     async def test_trace_conversation_failure_silent(self) -> None:
         runner = AgentRunner()
         spec = _make_spec()

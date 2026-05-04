@@ -245,6 +245,17 @@ class AuditAction:
     # and ``error_type`` + truncated ``error_message`` on failure.
     PROVIDER_HEALTHCHECK = "provider.healthcheck"
 
+    # Emitted when the gateway attaches its own ambient credentials to a
+    # backend call on behalf of a caller (under ``allow_server_credentials:
+    # fallback`` or ``always`` with no caller-presented creds).  Surfaces
+    # "degraded operation" — the backend sees the gateway's principal, not
+    # the calling user's, so any backend-enforced per-user ACL collapses
+    # to a single shared identity.  Metadata carries ``service`` (e.g.
+    # ``"langfuse"``, ``"aws"``) and ``mode`` (``"fallback"`` or
+    # ``"always"``).  Admin callers are ignored — the event exists to
+    # highlight non-admin requests using shared creds.
+    PROVIDER_SERVER_CREDENTIALS_USED = "provider.server_credentials_used"
+
     # Gateway config hot-reload outcome — emitted by the ConfigWatcher each
     # time the watched YAML's mtime/inode changes and ``registry.reload()``
     # runs. SUCCESS carries ``config_path`` + ``duration_ms`` in metadata;

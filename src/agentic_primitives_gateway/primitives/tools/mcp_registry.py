@@ -458,22 +458,30 @@ class MCPRegistryProvider(SyncRunnerMixin, ToolsProvider):
 
             try:
                 with httpx.Client(timeout=30, verify=self._verify_ssl) as client:
-                    resp = client.get(
+                    resp = client.post(
                         f"{base_url}/api/search/semantic",
-                        params={"query": query, "max_results": max_results},
+                        json={"query": query, "max_results": max_results},
                         headers=self._headers(token),
                     )
                     resp.raise_for_status()
                     results = resp.json()
 
                 tools: list[dict[str, Any]] = []
-                for item in results if isinstance(results, list) else results.get("results", []):
+                raw_tools = results.get("tools", []) if isinstance(results, dict) else []
+                for item in raw_tools:
+                    server_name = item.get("server_name", "")
+                    tool_name = item.get("tool_name", item.get("name", ""))
+                    full_name = f"{server_name}/{tool_name}" if server_name and tool_name else tool_name
                     tools.append(
                         {
-                            "name": item.get("name", ""),
+                            "name": full_name,
                             "description": item.get("description", ""),
-                            "parameters": item.get("inputSchema", {}),
-                            "metadata": item,
+                            "parameters": item.get("inputSchema") or {},
+                            "metadata": {
+                                "server": server_name,
+                                "server_path": item.get("server_path", ""),
+                                "relevance_score": item.get("relevance_score"),
+                            },
                         }
                     )
                 return tools

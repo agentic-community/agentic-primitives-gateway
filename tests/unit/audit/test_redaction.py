@@ -59,3 +59,86 @@ class TestScrubSecrets:
     def test_leaves_non_secret_text(self):
         out = scrub_secrets("GET /api/v1/memory/my-ns returned 200")
         assert out == "GET /api/v1/memory/my-ns returned 200"
+
+
+class TestCredentialHeaderCoverage:
+    """Sanitization coverage for ``X-Cred-*`` / ``X-AWS-*`` / ``Authorization``.
+
+    These headers are the per-request credential surface — a downstream
+    library error that wraps the raw request must not leak the header
+    value into application logs or audit events.  The dual defense:
+    ``redact_mapping`` handles dict-keyed metadata (audit events);
+    ``scrub_secrets`` handles free-form text (log messages + exception
+    tracebacks).
+    """
+
+    def test_redact_mapping_x_cred_prefix(self):
+        """Any ``x-cred-*`` key is redacted regardless of the specific service."""
+        out = redact_mapping(
+            {
+                "x-cred-keycloak-client-secret": "abc",
+                "x-cred-langfuse-public-key": "pk-live-xyz",
+                "x-cred-new-service-key": "whatever",
+                "user": "alice",
+            }
+        )
+        assert out["x-cred-keycloak-client-secret"] == REDACTED
+        assert out["x-cred-langfuse-public-key"] == REDACTED
+        assert out["x-cred-new-service-key"] == REDACTED
+        assert out["user"] == "alice"
+
+    def test_redact_mapping_x_cred_prefix_mixed_case(self):
+        out = redact_mapping({"X-Cred-Keycloak-Client-Secret": "abc"})
+        assert out["X-Cred-Keycloak-Client-Secret"] == REDACTED
+
+    def test_redact_mapping_x_aws_prefix_redacts_secret_but_not_region(self):
+        """``X-AWS-Region`` is explicitly allowed through — it isn't a secret."""
+        out = redact_mapping(
+            {
+                "x-aws-secret-access-key": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+                "x-aws-session-token": "FQoGZXIvYXdzEJr...",
+                "x-aws-region": "us-east-1",
+            }
+        )
+        assert out["x-aws-secret-access-key"] == REDACTED
+        assert out["x-aws-session-token"] == REDACTED
+        assert out["x-aws-region"] == "us-east-1"
+
+    def test_redact_mapping_extra_keys_still_honored(self):
+        """Per-call ``extra_keys`` composes with the built-in deny-list."""
+        out = redact_mapping({"tenant_secret": "s"}, extra_keys=["tenant_secret"])
+        assert out["tenant_secret"] == REDACTED
+
+    def test_scrub_x_cred_header_line(self):
+        """A traceback-like line carrying ``X-Cred-*: value`` is scrubbed."""
+        line = "httpx.HTTPError: bad creds: X-Cred-Keycloak-Client-Secret: supersecret123"
+        out = scrub_secrets(line)
+        assert "supersecret123" not in out
+        assert REDACTED in out
+
+    def test_scrub_x_cred_header_equals_form(self):
+        """Some libraries format headers as ``key=value``; that shape is covered."""
+        out = scrub_secrets("headers(X-Cred-Langfuse-Public-Key=pk-live-abc)")
+        assert "pk-live-abc" not in out
+
+    def test_scrub_aws_secret_access_key_value(self):
+        """Non-AKIA AWS secret (40-char) in free-form text is scrubbed."""
+        secret = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+        out = scrub_secrets(f"error: X-AWS-Secret-Access-Key: {secret} failed")
+        assert secret not in out
+
+    def test_scrub_aws_session_token_value(self):
+        token = "FQoGZXIvYXdzEJrlongopaquetokenhere"
+        out = scrub_secrets(f"X-AWS-Session-Token: {token}")
+        assert token not in out
+
+    def test_scrub_authorization_non_bearer(self):
+        """Opaque API key in Authorization header (no Bearer prefix) is scrubbed."""
+        out = scrub_secrets("Authorization: my-opaque-api-key-12345")
+        assert "my-opaque-api-key-12345" not in out
+        assert REDACTED in out
+
+    def test_scrub_bearer_authorization_still_works(self):
+        """Bearer path is unchanged — the new pattern doesn't clobber the existing one."""
+        out = scrub_secrets("Authorization: Bearer eyJhbGciOiJI.payload.sig")
+        assert "eyJhbGciOiJI.payload.sig" not in out

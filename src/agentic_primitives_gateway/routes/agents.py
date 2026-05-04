@@ -15,10 +15,13 @@ from agentic_primitives_gateway.agents.store import AgentStore
 from agentic_primitives_gateway.agents.tools import _TOOL_CATALOG, build_tool_list
 from agentic_primitives_gateway.audit.emit import emit_audit_event
 from agentic_primitives_gateway.audit.models import AuditAction, AuditOutcome, ResourceType
-from agentic_primitives_gateway.auth.access import require_owner_or_admin
+from agentic_primitives_gateway.auth.access import (
+    ProviderOverrideSource,
+    apply_filtered_provider_overrides,
+    require_owner_or_admin,
+)
 from agentic_primitives_gateway.context import (
     get_provider_override,
-    set_provider_overrides,
 )
 from agentic_primitives_gateway.models.agents import (
     AgentLineage,
@@ -271,8 +274,11 @@ async def get_agent_tools(name: str, owner: str | None = None) -> AgentToolsResp
     spec: AgentSpec = await resolve_agent_spec(store, name, require_principal(), owner_query=owner)
 
     # Apply agent-level provider overrides so we resolve the correct providers
-    if spec.provider_overrides:
-        set_provider_overrides(spec.provider_overrides)
+    apply_filtered_provider_overrides(
+        spec.provider_overrides,
+        source=ProviderOverrideSource.AGENT_RUN,
+        resource_id=spec.name,
+    )
 
     # Build the tool list (same as the runner does).  Per-primitive
     # context (memory namespace, knowledge namespace, session IDs,
@@ -318,8 +324,11 @@ async def get_agent_memory(name: str, session_id: str | None = None, owner: str 
     spec: AgentSpec = await resolve_agent_spec(store, name, require_principal(), owner_query=owner)
 
     # Apply agent-level provider overrides so we read from the same provider the agent writes to
-    if spec.provider_overrides:
-        set_provider_overrides(spec.provider_overrides)
+    apply_filtered_provider_overrides(
+        spec.provider_overrides,
+        source=ProviderOverrideSource.AGENT_RUN,
+        resource_id=spec.name,
+    )
 
     mem_config = spec.primitives.get("memory")
     if not mem_config or not mem_config.enabled:
@@ -404,8 +413,11 @@ async def chat_with_agent(name: str, request: ChatRequest) -> ChatResponse:
     spec = await resolve_agent_spec(store, name, require_principal())
 
     # Apply agent-level provider overrides to the current request context
-    if spec.provider_overrides:
-        set_provider_overrides(spec.provider_overrides)
+    apply_filtered_provider_overrides(
+        spec.provider_overrides,
+        source=ProviderOverrideSource.AGENT_RUN,
+        resource_id=spec.name,
+    )
 
     return await _runner.run(
         spec=spec,
@@ -425,8 +437,11 @@ async def chat_with_agent_stream(name: str, request: ChatRequest) -> StreamingRe
     store = _get_store()
     spec = await resolve_agent_spec(store, name, require_principal())
 
-    if spec.provider_overrides:
-        set_provider_overrides(spec.provider_overrides)
+    apply_filtered_provider_overrides(
+        spec.provider_overrides,
+        source=ProviderOverrideSource.AGENT_RUN,
+        resource_id=spec.name,
+    )
 
     session_id = request.session_id or ""
     queue, _ = _bg.start(
@@ -443,8 +458,11 @@ async def list_sessions(name: str) -> dict:
     store = _get_store()
     spec = await resolve_agent_spec(store, name, require_principal())
 
-    if spec.provider_overrides:
-        set_provider_overrides(spec.provider_overrides)
+    apply_filtered_provider_overrides(
+        spec.provider_overrides,
+        source=ProviderOverrideSource.AGENT_RUN,
+        resource_id=spec.name,
+    )
 
     actor_id = resolve_actor_id(spec, require_principal())
     sessions: list[dict[str, Any]] = []
@@ -466,8 +484,11 @@ async def cleanup_sessions(name: str, keep: int = 5) -> dict:
     store = _get_store()
     spec = await resolve_agent_spec(store, name, require_principal())
 
-    if spec.provider_overrides:
-        set_provider_overrides(spec.provider_overrides)
+    apply_filtered_provider_overrides(
+        spec.provider_overrides,
+        source=ProviderOverrideSource.AGENT_RUN,
+        resource_id=spec.name,
+    )
 
     actor_id = resolve_actor_id(spec, require_principal())
     deleted_count = 0
@@ -493,8 +514,11 @@ async def delete_session(name: str, session_id: str) -> dict:
     store = _get_store()
     spec = await resolve_agent_spec(store, name, require_principal())
 
-    if spec.provider_overrides:
-        set_provider_overrides(spec.provider_overrides)
+    apply_filtered_provider_overrides(
+        spec.provider_overrides,
+        source=ProviderOverrideSource.AGENT_RUN,
+        resource_id=spec.name,
+    )
 
     actor_id = resolve_actor_id(spec, require_principal())
     try:
@@ -585,8 +609,11 @@ async def get_session_history(name: str, session_id: str) -> SessionHistoryRespo
     store = _get_store()
     spec = await resolve_agent_spec(store, name, require_principal())
 
-    if spec.provider_overrides:
-        set_provider_overrides(spec.provider_overrides)
+    apply_filtered_provider_overrides(
+        spec.provider_overrides,
+        source=ProviderOverrideSource.AGENT_RUN,
+        resource_id=spec.name,
+    )
 
     actor_id = resolve_actor_id(spec, require_principal())
     messages: list[dict[str, str]] = []

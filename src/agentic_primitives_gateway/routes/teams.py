@@ -294,9 +294,12 @@ async def list_team_runs(name: str) -> dict:
 
 
 async def _require_run_owner(team_run_id: str) -> None:
-    """Raise 403 if the current principal does not own the run."""
+    """Raise 403 unless the current principal owns the run."""
+    principal = require_principal()
+    if principal.is_admin:
+        return
     owner = await _bg.get_owner_async(team_run_id)
-    if owner and owner != require_principal().id and not require_principal().is_admin:
+    if owner is None or owner != principal.id:
         raise HTTPException(status_code=403, detail="Forbidden")
 
 

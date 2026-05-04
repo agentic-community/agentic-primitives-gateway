@@ -443,6 +443,191 @@ class TestIdentityAdminGating:
 # ── Observability: cross-user query restriction ──────────────────────
 
 
+# ── X-Provider-* override: admin-only ───────────────────────────────
+
+
+class TestProviderOverrideAllowlist:
+    """``X-Provider-*`` overrides are filtered against a universal allow-list.
+
+    The allow-list applies to every caller regardless of scope.  Admins
+    have no legitimate runtime reason to flip identity or policy
+    backends (those are operator decisions done at startup or in
+    shadow deployments), and the invariant "trust-sensitive primitives
+    cannot be overridden at request time" is easier to reason about
+    when it's universal.
+
+    The allow-list also applies to ``spec.provider_overrides`` on
+    agent specs — otherwise a non-admin agent owner could re-inject
+    a stripped override via the spec field.
+    """
+
+    def _with_backend(self, principal):
+        from agentic_primitives_gateway.auth.base import AuthBackend
+
+        class FixedBackend(AuthBackend):
+            async def authenticate(self, request):
+                return principal
+
+        prev = getattr(app.state, "auth_backend", None)
+        app.state.auth_backend = FixedBackend()
+        return prev
+
+    def _install_no_relay_identity_backend(self):
+        from agentic_primitives_gateway.models.enums import Primitive
+        from agentic_primitives_gateway.primitives.identity.noop import NoopIdentityProvider
+        from agentic_primitives_gateway.registry import registry
+
+        class _NoRelayStub(NoopIdentityProvider):
+            async def supports_user_relay(self) -> bool:
+                return False
+
+        prim = registry.get_primitive(Primitive.IDENTITY)
+        prev = prim.get()
+        prim._providers[prim.default_name] = _NoRelayStub()  # type: ignore[assignment]
+        return prim, prev
+
+    def _install_shadow_relay_backend(self, prim) -> None:
+        """Register a second identity backend that always relays."""
+        from agentic_primitives_gateway.primitives.identity.noop import NoopIdentityProvider
+
+        class _AlwaysRelay(NoopIdentityProvider):
+            async def supports_user_relay(self) -> bool:
+                return True
+
+        prim._providers["noop-shadow"] = _AlwaysRelay()  # type: ignore[assignment]
+
+    def test_admin_also_cannot_override_identity_backend(self) -> None:
+        """Admin has no bypass — the allow-list is universal."""
+        prev_backend = self._with_backend(_admin())
+        prim, prev_provider = self._install_no_relay_identity_backend()
+        self._install_shadow_relay_backend(prim)
+        try:
+            c = TestClient(app, raise_server_exceptions=False)
+            resp = c.post(
+                "/api/v1/identity/token",
+                json={"credential_provider": "test", "workload_token": "tok"},
+                headers={"X-Provider-Identity": "noop-shadow"},
+            )
+            assert resp.status_code == 200
+        finally:
+            prim._providers.pop("noop-shadow", None)
+            prim._providers[prim.default_name] = prev_provider  # type: ignore[assignment]
+            app.state.auth_backend = prev_backend
+
+    def test_memory_override_is_preserved_for_any_caller(self) -> None:
+        """Non-trust-sensitive overrides are honoured regardless of scope."""
+        from agentic_primitives_gateway.context import get_provider_override
+
+        captured: dict[str, str | None] = {}
+
+        @app.get("/__test_override_probe__")
+        async def probe():
+            captured["memory"] = get_provider_override("memory")
+            captured["identity"] = get_provider_override("identity")
+            return {"ok": True}
+
+        prev_backend = self._with_backend(_user("alice"))
+        try:
+            c = TestClient(app, raise_server_exceptions=False)
+            c.get(
+                "/__test_override_probe__",
+                headers={
+                    "X-Provider-Memory": "some-memory-backend",
+                    "X-Provider-Identity": "noop-shadow",
+                },
+            )
+            # Memory override survives — routing preference.
+            assert captured["memory"] == "some-memory-backend"
+            # Identity override is stripped.
+            assert captured["identity"] is None
+        finally:
+            app.state.auth_backend = prev_backend
+            app.router.routes = [r for r in app.router.routes if getattr(r, "path", None) != "/__test_override_probe__"]
+
+    def test_admin_memory_override_is_also_preserved(self) -> None:
+        from agentic_primitives_gateway.context import get_provider_override
+
+        captured: dict[str, str | None] = {}
+
+        @app.get("/__test_admin_override_probe__")
+        async def probe():
+            captured["memory"] = get_provider_override("memory")
+            captured["identity"] = get_provider_override("identity")
+            captured["policy"] = get_provider_override("policy")
+            return {"ok": True}
+
+        prev_backend = self._with_backend(_admin())
+        try:
+            c = TestClient(app, raise_server_exceptions=False)
+            c.get(
+                "/__test_admin_override_probe__",
+                headers={
+                    "X-Provider-Memory": "some-memory-backend",
+                    "X-Provider-Identity": "noop-shadow",
+                    "X-Provider-Policy": "noop",
+                },
+            )
+            assert captured["memory"] == "some-memory-backend"
+            assert captured["identity"] is None
+            assert captured["policy"] is None
+        finally:
+            app.state.auth_backend = prev_backend
+            app.router.routes = [
+                r for r in app.router.routes if getattr(r, "path", None) != "/__test_admin_override_probe__"
+            ]
+
+    def test_default_provider_override_is_stripped(self) -> None:
+        from agentic_primitives_gateway.context import get_provider_override
+
+        captured: dict[str, str | None] = {}
+
+        @app.get("/__test_default_override_probe__")
+        async def probe():
+            captured["identity"] = get_provider_override("identity")
+            captured["memory"] = get_provider_override("memory")
+            return {"ok": True}
+
+        prev_backend = self._with_backend(_user("alice"))
+        try:
+            c = TestClient(app, raise_server_exceptions=False)
+            c.get(
+                "/__test_default_override_probe__",
+                headers={"X-Provider": "some-default-backend"},
+            )
+            # Default stripped → neither primitive sees an override.
+            assert captured["identity"] is None
+            assert captured["memory"] is None
+        finally:
+            app.state.auth_backend = prev_backend
+            app.router.routes = [
+                r for r in app.router.routes if getattr(r, "path", None) != "/__test_default_override_probe__"
+            ]
+
+    def test_spec_provider_overrides_are_also_filtered(self) -> None:
+        from agentic_primitives_gateway.auth.access import (
+            ProviderOverrideSource,
+            apply_filtered_provider_overrides,
+        )
+        from agentic_primitives_gateway.context import get_provider_override, set_provider_overrides
+
+        set_provider_overrides({})
+        apply_filtered_provider_overrides(
+            {
+                "memory": "some-mem-backend",
+                "identity": "noop-shadow",
+                "policy": "noop",
+            },
+            source=ProviderOverrideSource.TEST,
+            resource_id="agent-x",
+        )
+        assert get_provider_override("memory") == "some-mem-backend"
+        assert get_provider_override("identity") is None
+        assert get_provider_override("policy") is None
+
+
+# ── Observability: cross-user query restriction ──────────────────────
+
+
 class TestObservabilityCrossUserQuery:
     """Observability list_sessions restricts user_id for non-admins."""
 
@@ -533,5 +718,131 @@ class TestCodeInterpreterListSessionsFiltering:
             sessions = resp.json()["sessions"]
             session_ids = [s["session_id"] for s in sessions]
             assert "bob-ci" not in session_ids
+        finally:
+            app.state.auth_backend = prev
+
+
+# ── Memory pools: transitive-through-agents ACL ──────────────────────
+
+
+class TestMemoryPoolTransitiveACL:
+    """Unscoped shared-pool endpoints require transitive access.
+
+    The gateway enforces pool-level access by walking specs visible
+    to the caller: if some agent or team the caller can access declares
+    the pool, the caller gets read/write REST parity with what they could
+    already do via the agent-tool surface.  Delete is stricter.
+    """
+
+    def _stores(self, tmp_path):
+        """Wire real stores into the module-level slots used by routes."""
+        from agentic_primitives_gateway.agents.file_store import FileAgentStore, FileTeamStore
+        from agentic_primitives_gateway.routes.agents import set_agent_store
+        from agentic_primitives_gateway.routes.teams import set_team_store
+
+        agent_store = FileAgentStore(path=str(tmp_path / "agents.json"))
+        team_store = FileTeamStore(path=str(tmp_path / "teams.json"))
+        team_store.bind_agent_store(agent_store)
+        set_agent_store(agent_store)
+        set_team_store(team_store)
+        return agent_store, team_store
+
+    def _fixed_backend(self, principal):
+        from agentic_primitives_gateway.auth.base import AuthBackend
+
+        class FixedBackend(AuthBackend):
+            async def authenticate(self, request):
+                return principal
+
+        prev = getattr(app.state, "auth_backend", None)
+        app.state.auth_backend = FixedBackend()
+        return prev
+
+    def _create_agent(self, client, owner_id: str, pool: str, shared_with=None):
+        """POST a spec that declares ``pool`` in shared_namespaces."""
+        payload = {
+            "name": f"agent-{owner_id}",
+            "model": "noop/stub",
+            "primitives": {"memory": {"shared_namespaces": [pool]}},
+            "shared_with": shared_with or [],
+        }
+        # owner_id flows from the authenticated principal; caller injects
+        # the right backend before invoking this helper.
+        resp = client.post("/api/v1/agents", json=payload)
+        assert resp.status_code == 201, resp.text
+        return resp.json()
+
+    def test_bob_without_any_declaring_agent_denied(self, tmp_path) -> None:
+        """Orphan-pool case: bob has no agent that declares pool-p."""
+        self._stores(tmp_path)
+        prev = self._fixed_backend(_user("bob"))
+        try:
+            c = TestClient(app, raise_server_exceptions=False)
+            resp = c.post("/api/v1/memory/pool-p", json={"key": "k1", "content": "v"})
+            assert resp.status_code == 403
+        finally:
+            app.state.auth_backend = prev
+
+    def test_bob_owns_agent_declaring_pool_allowed_read_write(self, tmp_path) -> None:
+        self._stores(tmp_path)
+        prev = self._fixed_backend(_user("bob"))
+        try:
+            c = TestClient(app, raise_server_exceptions=False)
+            self._create_agent(c, owner_id="bob", pool="pool-p")
+            assert c.post("/api/v1/memory/pool-p", json={"key": "k", "content": "v"}).status_code == 201
+            assert c.get("/api/v1/memory/pool-p/k").status_code == 200
+            assert c.get("/api/v1/memory/pool-p").status_code == 200
+            assert c.post("/api/v1/memory/pool-p/search", json={"query": "x"}).status_code == 200
+        finally:
+            app.state.auth_backend = prev
+
+    def test_bob_sharee_allowed_read_write_denied_delete(self, tmp_path) -> None:
+        """Bob reads/writes via alice's shared agent; delete requires ownership."""
+        self._stores(tmp_path)
+
+        # Alice creates an agent that declares pool-p and shares with *.
+        prev_alice = self._fixed_backend(_user("alice"))
+        try:
+            c_alice = TestClient(app, raise_server_exceptions=False)
+            self._create_agent(c_alice, owner_id="alice", pool="pool-p", shared_with=["*"])
+            # Bob writes a key first so the delete call has something to target.
+            # We use alice's client here because she owns the agent, but the
+            # important thing is bob's ACL on pool-p, not who seeded the data.
+            c_alice.post("/api/v1/memory/pool-p", json={"key": "k1", "content": "v"})
+        finally:
+            app.state.auth_backend = prev_alice
+
+        prev_bob = self._fixed_backend(_user("bob"))
+        try:
+            c_bob = TestClient(app, raise_server_exceptions=False)
+            # Read/write parity with the tool surface — all four ops.
+            assert c_bob.post("/api/v1/memory/pool-p", json={"key": "k2", "content": "v"}).status_code == 201
+            assert c_bob.get("/api/v1/memory/pool-p/k1").status_code == 200
+            assert c_bob.get("/api/v1/memory/pool-p").status_code == 200
+            assert c_bob.post("/api/v1/memory/pool-p/search", json={"query": "x"}).status_code == 200
+            # Delete is stricter — sharee cannot wipe the owner's data.
+            assert c_bob.delete("/api/v1/memory/pool-p/k1").status_code == 403
+        finally:
+            app.state.auth_backend = prev_bob
+
+    def test_admin_bypasses_all_checks(self, tmp_path) -> None:
+        self._stores(tmp_path)
+        prev = self._fixed_backend(_admin())
+        try:
+            c = TestClient(app, raise_server_exceptions=False)
+            # No agent declares this pool; admin still gets through.
+            assert c.post("/api/v1/memory/pool-p", json={"key": "k", "content": "v"}).status_code == 201
+            assert c.delete("/api/v1/memory/pool-p/k").status_code == 204
+        finally:
+            app.state.auth_backend = prev
+
+    def test_user_scoped_namespace_unaffected(self, tmp_path) -> None:
+        """User-scoped ``:u:{self}`` namespaces skip the transitive check."""
+        self._stores(tmp_path)
+        prev = self._fixed_backend(_user("bob"))
+        try:
+            c = TestClient(app, raise_server_exceptions=False)
+            ns = "agent:whatever:u:bob"
+            assert c.post(f"/api/v1/memory/{ns}", json={"key": "k", "content": "v"}).status_code == 201
         finally:
             app.state.auth_backend = prev
