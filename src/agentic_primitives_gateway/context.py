@@ -129,6 +129,11 @@ def set_provider_overrides(overrides: dict[str, str]) -> None:
     _provider_overrides.set(overrides)
 
 
+def get_provider_overrides() -> dict[str, str]:
+    """Return a snapshot of the currently-active provider overrides."""
+    return dict(_provider_overrides.get())
+
+
 def get_provider_override(primitive: str) -> str | None:
     overrides = _provider_overrides.get()
     return overrides.get(primitive) or overrides.get("default")
@@ -148,6 +153,33 @@ def _server_credentials_allowed() -> bool:
     from agentic_primitives_gateway.models.enums import ServerCredentialMode
 
     return mode in (ServerCredentialMode.FALLBACK, ServerCredentialMode.ALWAYS)
+
+
+def _emit_server_credentials_used(service: str) -> None:
+    """Emit ``provider.server_credentials_used`` for non-admin callers.
+
+    Admin callers are deliberately excluded — ambient-cred use by admins
+    is the expected operator path.  The event exists to surface the
+    "backend sees one shared principal" state for non-admin requests, so
+    audit consumers can tell when per-user isolation has collapsed.
+    """
+    principal = get_authenticated_principal()
+    if principal is not None and principal.is_admin:
+        return
+
+    from agentic_primitives_gateway.audit.emit import emit_audit_event
+    from agentic_primitives_gateway.audit.models import AuditAction, AuditOutcome, ResourceType
+    from agentic_primitives_gateway.config import settings
+
+    mode = settings.allow_server_credentials
+    mode_str = str(mode.value) if hasattr(mode, "value") else str(mode)
+    emit_audit_event(
+        action=AuditAction.PROVIDER_SERVER_CREDENTIALS_USED,
+        outcome=AuditOutcome.SUCCESS,
+        resource_type=ResourceType.CREDENTIAL,
+        resource_id=service,
+        metadata={"service": service, "mode": mode_str},
+    )
 
 
 def get_boto3_session(default_region: str = "us-east-1") -> Any:
@@ -170,6 +202,7 @@ def get_boto3_session(default_region: str = "us-east-1") -> Any:
         )
 
     if _server_credentials_allowed():
+        _emit_server_credentials_used("aws")
         return boto3.Session(region_name=default_region)
 
     raise ValueError(
@@ -184,41 +217,80 @@ def get_service_credentials_or_defaults(
     service: str,
     defaults: dict[str, str | None],
 ) -> dict[str, str | None]:
-    """Get service credentials from context, with optional server-side defaults.
+    """Resolve service config by mode of ``allow_server_credentials``.
 
-    Args:
-        service: Service name (e.g., 'langfuse').
-        defaults: Server-configured default values for this service.
+    Three modes, three rules — no per-key classification, no silent
+    merge paths that mix caller and operator values except in the one
+    mode that is explicitly defined as "allow mixing":
 
-    Returns:
-        Merged credentials (client overrides server defaults).
-
-    Raises:
-        ValueError: If no client credentials and server fallback is disabled,
-            and the defaults contain required values that are None.
+    * ``NEVER`` — caller supplies the entire shape.  ``defaults`` is
+      **not consulted for values**.  We do return a dict keyed on
+      ``defaults.keys()`` so providers that use bracket access don't
+      explode on a missing key; caller-supplied values land on their
+      keys, everything else is ``None``.  If ``client_creds`` is empty
+      we raise — the gateway has no credentials at all and the caller
+      has to know that up-front rather than see a cryptic backend
+      error.
+    * ``ALWAYS`` — operator controls credentials.  Caller-supplied
+      values are ignored entirely; we return ``dict(defaults)``
+      unchanged.  A non-admin caller under this mode triggers the
+      ``provider.server_credentials_used`` event so the degraded
+      state is auditable.
+    * ``FALLBACK`` — merge, caller wins on leaves.  The only mode
+      where mixing is allowed.  If any key in ``defaults`` was filled
+      from the operator side (i.e. the caller didn't supply a truthy
+      value for it), emit ``provider.server_credentials_used`` once.
     """
-    client_creds = get_service_credentials(service) or {}
+    from agentic_primitives_gateway.models.enums import ServerCredentialMode
 
-    # Client credentials take priority
-    merged = dict(defaults)
-    merged.update({k: v for k, v in client_creds.items() if v})
+    client_creds: dict[str, str] = {k: v for k, v in (get_service_credentials(service) or {}).items() if v}
+    mode = _resolve_server_credential_mode()
 
-    # If we got credentials from the client, always allow
-    if client_creds:
-        return merged
+    if mode == ServerCredentialMode.ALWAYS:
+        _emit_server_credentials_used(service)
+        return dict(defaults)
 
-    # No client credentials — check if server fallback is allowed
-    if _server_credentials_allowed():
-        return merged
+    if mode == ServerCredentialMode.NEVER:
+        if not client_creds:
+            raise ValueError(
+                f"No {service} credentials provided in request headers and server "
+                f"credential fallback is disabled. Either pass credentials via "
+                f"X-Cred-{service.capitalize()}-* headers from the client, or enable "
+                f"server credentials with allow_server_credentials: fallback in the server config."
+            )
+        # Preserve the shape of ``defaults`` so providers using
+        # bracket access (``cfg["realm"]``) don't raise ``KeyError``
+        # when the caller omits a key.  ``None`` is the signal "not
+        # configured", which providers should already be prepared to
+        # reject on downstream use.
+        shape_preserving: dict[str, str | None] = dict.fromkeys(defaults)
+        shape_preserving.update(client_creds)
+        return shape_preserving
 
-    # Check if the server defaults actually have values
-    has_defaults = any(v for v in defaults.values() if v)
-    if has_defaults:
-        raise ValueError(
-            f"No {service} credentials provided in request headers and server "
-            f"credential fallback is disabled. Either pass credentials via "
-            f"X-Cred-{service.capitalize()}-* headers from the client, or enable "
-            f"server credentials with allow_server_credentials: true in the server config."
-        )
-
+    # FALLBACK — merge with caller winning.  Track which keys the
+    # operator filled so the audit event fires at the right granularity.
+    merged: dict[str, str | None] = dict(defaults)
+    merged.update(client_creds)
+    server_filled = [k for k, v in defaults.items() if v and k not in client_creds]
+    if server_filled:
+        _emit_server_credentials_used(service)
     return merged
+
+
+def _resolve_server_credential_mode() -> Any:
+    """Read ``allow_server_credentials`` and normalise to the enum.
+
+    ``settings.allow_server_credentials`` can be either a bool (legacy)
+    or a :class:`ServerCredentialMode` value.  The three-mode semantics
+    of this module treat a bool as ``ALWAYS`` (``True``) or ``NEVER``
+    (``False``); there is no bool equivalent of ``FALLBACK``.  Config
+    validation converts bools at load time for shipped configs, but
+    we defend here in case an operator sets a bool programmatically.
+    """
+    from agentic_primitives_gateway.config import settings
+    from agentic_primitives_gateway.models.enums import ServerCredentialMode
+
+    mode = settings.allow_server_credentials
+    if isinstance(mode, bool):
+        return ServerCredentialMode.ALWAYS if mode else ServerCredentialMode.NEVER
+    return mode

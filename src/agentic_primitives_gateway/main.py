@@ -172,6 +172,49 @@ def _warn_replica_unsafe_config() -> None:
         )
 
 
+def _warn_server_credentials_with_real_auth() -> None:
+    """Log a warning when real auth is configured but server creds are shared.
+
+    The combination ``auth.backend in {"jwt","api_key"}`` (multi-user) +
+    ``allow_server_credentials in {"fallback","always"}`` (shared backend
+    creds) means per-user isolation at the backend collapses to a single
+    gateway principal whenever a caller doesn't present their own creds.
+    That's a legitimate operator choice (e.g. "vend one Langfuse project
+    across users"), but it's worth surfacing at startup so operators
+    don't assume the multi-user auth story extends into backend ACLs.
+    No warning under ``noop`` auth (single-user dev mode) or under
+    ``never`` (the safer default we ship).
+    """
+    from agentic_primitives_gateway.models.enums import ServerCredentialMode
+
+    auth_backend = settings.auth.backend
+    if auth_backend == "noop":
+        return  # single-user dev mode — shared creds are expected
+
+    mode = settings.allow_server_credentials
+    if isinstance(mode, bool):
+        uses_shared = mode
+        mode_label = "true" if mode else "false"
+    else:
+        uses_shared = mode in (ServerCredentialMode.FALLBACK, ServerCredentialMode.ALWAYS)
+        mode_label = str(mode.value)
+
+    if not uses_shared:
+        return  # never / false — no ambient creds ever attach
+
+    logger.warning(
+        "Server-credential warning: auth.backend=%r is multi-user, but "
+        "allow_server_credentials=%r lets the gateway fall back to its own "
+        "backend credentials when callers don't present their own.  When "
+        "that fallback fires, the backend sees one shared gateway principal "
+        "for all users — per-user isolation at the backend collapses.  This "
+        "is a supported configuration, but verify it matches your operator "
+        "intent (e.g. a single shared Langfuse project vs. per-user keys).",
+        auth_backend,
+        mode_label,
+    )
+
+
 def _build_audit_router() -> AuditRouter | None:
     """Construct the process-wide ``AuditRouter`` from ``settings.audit``.
 
@@ -216,6 +259,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logger.info("agentic-primitives-gateway build=%s", BUILD_REF)
     registry.initialize()
     _warn_replica_unsafe_config()
+    _warn_server_credentials_with_real_auth()
 
     # Start the audit router before anything else so emits from the rest of
     # the startup path land on sinks.

@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 
 from agentic_primitives_gateway.audit.emit import audit_mutation
 from agentic_primitives_gateway.audit.models import AuditAction, ResourceType
+from agentic_primitives_gateway.auth.access import require_pool_access, require_pool_delete
 from agentic_primitives_gateway.models.enums import Primitive
 from agentic_primitives_gateway.models.memory import (
     AddStrategyRequest,
@@ -35,14 +36,63 @@ router = APIRouter(
 )
 
 
+_USER_SCOPE_MARKER = ":u:"
+
+
 def _check_actor(actor_id: str) -> None:
     """Validate the caller owns this actor_id."""
     require_user_scoped(actor_id, require_principal())
 
 
 def _check_namespace(namespace: str) -> None:
-    """Validate the caller owns this namespace."""
+    """User-scope check for ``:u:{id}`` namespaces.
+
+    This only covers private per-user namespaces.  Unscoped (shared)
+    namespaces skip this and must be additionally guarded by
+    :func:`_check_pool_access` on each pool route.
+    """
     require_user_scoped(namespace, require_principal())
+
+
+async def _check_pool_access(namespace: str, *, for_delete: bool = False) -> None:
+    """Gate unscoped shared-pool access via transitive-through-agents ACL.
+
+    User-scoped namespaces (``…:u:{id}``) are handled upstream by
+    :func:`_check_namespace` — we only need the transitive check on
+    unscoped names, which is where the REST bypass previously lived.
+    ``for_delete`` switches to the stricter owner-only rule.
+
+    Admins short-circuit *before* we touch the agent/team stores so
+    unit tests that exercise the routes without initializing the
+    stores still pass — the noop auth backend treats tests as admin.
+    Non-admin callers require the stores to be initialized; if they
+    aren't, we fail closed with a 503 rather than let access slip
+    through.
+    """
+    if _USER_SCOPE_MARKER in namespace:
+        return
+    principal = require_principal()
+    if principal.is_admin:
+        return
+    from agentic_primitives_gateway.routes.agents import _get_store as _get_agent_store
+    from agentic_primitives_gateway.routes.teams import _get_store as _get_team_store
+
+    try:
+        agent_store = _get_agent_store()
+        team_store = _get_team_store()
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Pool access control unavailable: agent/team stores not initialized",
+        ) from exc
+
+    check = require_pool_delete if for_delete else require_pool_access
+    await check(
+        namespace,
+        principal=principal,
+        agent_store=agent_store,
+        team_store=team_store,
+    )
 
 
 # ── Namespace discovery ──────────────────────────────────────────────
@@ -340,6 +390,7 @@ async def delete_strategy(memory_id: str, strategy_id: str) -> Response:
 @router.post("/{namespace}", response_model=MemoryRecord, status_code=201)
 async def store_memory(namespace: str, request: StoreMemoryRequest) -> MemoryRecord:
     _check_namespace(namespace)
+    await _check_pool_access(namespace)
     async with audit_mutation(
         AuditAction.MEMORY_RECORD_WRITE,
         resource_type=ResourceType.MEMORY,
@@ -356,6 +407,7 @@ async def store_memory(namespace: str, request: StoreMemoryRequest) -> MemoryRec
 @router.get("/{namespace}/{key}", response_model=MemoryRecord)
 async def retrieve_memory(namespace: str, key: str) -> MemoryRecord:
     _check_namespace(namespace)
+    await _check_pool_access(namespace)
     record = await registry.memory.retrieve(namespace=namespace, key=key)
     if record is None:
         raise HTTPException(status_code=404, detail="Memory not found")
@@ -369,6 +421,7 @@ async def list_memories(
     offset: int = Query(default=0, ge=0),
 ) -> ListMemoryResponse:
     _check_namespace(namespace)
+    await _check_pool_access(namespace)
     records = await registry.memory.list_memories(namespace=namespace, limit=limit, offset=offset)
     return ListMemoryResponse(records=records, total=len(records))
 
@@ -376,6 +429,7 @@ async def list_memories(
 @router.post("/{namespace}/search", response_model=SearchMemoryResponse)
 async def search_memories(namespace: str, request: SearchMemoryRequest) -> SearchMemoryResponse:
     _check_namespace(namespace)
+    await _check_pool_access(namespace)
     results = await registry.memory.search(
         namespace=namespace,
         query=request.query,
@@ -388,6 +442,7 @@ async def search_memories(namespace: str, request: SearchMemoryRequest) -> Searc
 @router.delete("/{namespace}/{key}")
 async def delete_memory(namespace: str, key: str) -> Response:
     _check_namespace(namespace)
+    await _check_pool_access(namespace, for_delete=True)
     async with audit_mutation(
         AuditAction.MEMORY_RECORD_DELETE,
         resource_type=ResourceType.MEMORY,
