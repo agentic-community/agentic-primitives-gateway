@@ -111,14 +111,28 @@ def apply_provider_overrides(spec: AgentSpec) -> dict[str, str]:
     the saved state so restore_provider_overrides can put it back after the
     sub-agent finishes. This ensures the coordinator resumes with its own
     providers.
+
+    The merged result is run through the universal override allow-list
+    (``auth.access.filter_allowed_provider_overrides``) before being
+    applied — spec-level overrides are a user-editable field and must
+    not re-inject a key the header-level gate already strips.
     """
+    from agentic_primitives_gateway.auth.access import (
+        ProviderOverrideSource,
+        apply_filtered_provider_overrides,
+    )
+
     prev: dict[str, str] = {}
     for prim in Primitive:
         val = get_provider_override(prim)
         if val:
             prev[prim] = val
     if spec.provider_overrides:
-        set_provider_overrides({**prev, **spec.provider_overrides})
+        apply_filtered_provider_overrides(
+            {**prev, **spec.provider_overrides},
+            source=ProviderOverrideSource.SUB_AGENT_DELEGATION,
+            resource_id=spec.name,
+        )
     return prev
 
 

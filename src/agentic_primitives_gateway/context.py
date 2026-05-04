@@ -129,6 +129,11 @@ def set_provider_overrides(overrides: dict[str, str]) -> None:
     _provider_overrides.set(overrides)
 
 
+def get_provider_overrides() -> dict[str, str]:
+    """Return a snapshot of the currently-active provider overrides."""
+    return dict(_provider_overrides.get())
+
+
 def get_provider_override(primitive: str) -> str | None:
     overrides = _provider_overrides.get()
     return overrides.get(primitive) or overrides.get("default")

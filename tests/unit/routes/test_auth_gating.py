@@ -443,6 +443,191 @@ class TestIdentityAdminGating:
 # ── Observability: cross-user query restriction ──────────────────────
 
 
+# ── X-Provider-* override: admin-only ───────────────────────────────
+
+
+class TestProviderOverrideAllowlist:
+    """``X-Provider-*`` overrides are filtered against a universal allow-list.
+
+    The allow-list applies to every caller regardless of scope.  Admins
+    have no legitimate runtime reason to flip identity or policy
+    backends (those are operator decisions done at startup or in
+    shadow deployments), and the invariant "trust-sensitive primitives
+    cannot be overridden at request time" is easier to reason about
+    when it's universal.
+
+    The allow-list also applies to ``spec.provider_overrides`` on
+    agent specs — otherwise a non-admin agent owner could re-inject
+    a stripped override via the spec field.
+    """
+
+    def _with_backend(self, principal):
+        from agentic_primitives_gateway.auth.base import AuthBackend
+
+        class FixedBackend(AuthBackend):
+            async def authenticate(self, request):
+                return principal
+
+        prev = getattr(app.state, "auth_backend", None)
+        app.state.auth_backend = FixedBackend()
+        return prev
+
+    def _install_no_relay_identity_backend(self):
+        from agentic_primitives_gateway.models.enums import Primitive
+        from agentic_primitives_gateway.primitives.identity.noop import NoopIdentityProvider
+        from agentic_primitives_gateway.registry import registry
+
+        class _NoRelayStub(NoopIdentityProvider):
+            async def supports_user_relay(self) -> bool:
+                return False
+
+        prim = registry.get_primitive(Primitive.IDENTITY)
+        prev = prim.get()
+        prim._providers[prim.default_name] = _NoRelayStub()  # type: ignore[assignment]
+        return prim, prev
+
+    def _install_shadow_relay_backend(self, prim) -> None:
+        """Register a second identity backend that always relays."""
+        from agentic_primitives_gateway.primitives.identity.noop import NoopIdentityProvider
+
+        class _AlwaysRelay(NoopIdentityProvider):
+            async def supports_user_relay(self) -> bool:
+                return True
+
+        prim._providers["noop-shadow"] = _AlwaysRelay()  # type: ignore[assignment]
+
+    def test_admin_also_cannot_override_identity_backend(self) -> None:
+        """Admin has no bypass — the allow-list is universal."""
+        prev_backend = self._with_backend(_admin())
+        prim, prev_provider = self._install_no_relay_identity_backend()
+        self._install_shadow_relay_backend(prim)
+        try:
+            c = TestClient(app, raise_server_exceptions=False)
+            resp = c.post(
+                "/api/v1/identity/token",
+                json={"credential_provider": "test", "workload_token": "tok"},
+                headers={"X-Provider-Identity": "noop-shadow"},
+            )
+            assert resp.status_code == 200
+        finally:
+            prim._providers.pop("noop-shadow", None)
+            prim._providers[prim.default_name] = prev_provider  # type: ignore[assignment]
+            app.state.auth_backend = prev_backend
+
+    def test_memory_override_is_preserved_for_any_caller(self) -> None:
+        """Non-trust-sensitive overrides are honoured regardless of scope."""
+        from agentic_primitives_gateway.context import get_provider_override
+
+        captured: dict[str, str | None] = {}
+
+        @app.get("/__test_override_probe__")
+        async def probe():
+            captured["memory"] = get_provider_override("memory")
+            captured["identity"] = get_provider_override("identity")
+            return {"ok": True}
+
+        prev_backend = self._with_backend(_user("alice"))
+        try:
+            c = TestClient(app, raise_server_exceptions=False)
+            c.get(
+                "/__test_override_probe__",
+                headers={
+                    "X-Provider-Memory": "some-memory-backend",
+                    "X-Provider-Identity": "noop-shadow",
+                },
+            )
+            # Memory override survives — routing preference.
+            assert captured["memory"] == "some-memory-backend"
+            # Identity override is stripped.
+            assert captured["identity"] is None
+        finally:
+            app.state.auth_backend = prev_backend
+            app.router.routes = [r for r in app.router.routes if getattr(r, "path", None) != "/__test_override_probe__"]
+
+    def test_admin_memory_override_is_also_preserved(self) -> None:
+        from agentic_primitives_gateway.context import get_provider_override
+
+        captured: dict[str, str | None] = {}
+
+        @app.get("/__test_admin_override_probe__")
+        async def probe():
+            captured["memory"] = get_provider_override("memory")
+            captured["identity"] = get_provider_override("identity")
+            captured["policy"] = get_provider_override("policy")
+            return {"ok": True}
+
+        prev_backend = self._with_backend(_admin())
+        try:
+            c = TestClient(app, raise_server_exceptions=False)
+            c.get(
+                "/__test_admin_override_probe__",
+                headers={
+                    "X-Provider-Memory": "some-memory-backend",
+                    "X-Provider-Identity": "noop-shadow",
+                    "X-Provider-Policy": "noop",
+                },
+            )
+            assert captured["memory"] == "some-memory-backend"
+            assert captured["identity"] is None
+            assert captured["policy"] is None
+        finally:
+            app.state.auth_backend = prev_backend
+            app.router.routes = [
+                r for r in app.router.routes if getattr(r, "path", None) != "/__test_admin_override_probe__"
+            ]
+
+    def test_default_provider_override_is_stripped(self) -> None:
+        from agentic_primitives_gateway.context import get_provider_override
+
+        captured: dict[str, str | None] = {}
+
+        @app.get("/__test_default_override_probe__")
+        async def probe():
+            captured["identity"] = get_provider_override("identity")
+            captured["memory"] = get_provider_override("memory")
+            return {"ok": True}
+
+        prev_backend = self._with_backend(_user("alice"))
+        try:
+            c = TestClient(app, raise_server_exceptions=False)
+            c.get(
+                "/__test_default_override_probe__",
+                headers={"X-Provider": "some-default-backend"},
+            )
+            # Default stripped → neither primitive sees an override.
+            assert captured["identity"] is None
+            assert captured["memory"] is None
+        finally:
+            app.state.auth_backend = prev_backend
+            app.router.routes = [
+                r for r in app.router.routes if getattr(r, "path", None) != "/__test_default_override_probe__"
+            ]
+
+    def test_spec_provider_overrides_are_also_filtered(self) -> None:
+        from agentic_primitives_gateway.auth.access import (
+            ProviderOverrideSource,
+            apply_filtered_provider_overrides,
+        )
+        from agentic_primitives_gateway.context import get_provider_override, set_provider_overrides
+
+        set_provider_overrides({})
+        apply_filtered_provider_overrides(
+            {
+                "memory": "some-mem-backend",
+                "identity": "noop-shadow",
+                "policy": "noop",
+            },
+            source=ProviderOverrideSource.TEST,
+            resource_id="agent-x",
+        )
+        assert get_provider_override("memory") == "some-mem-backend"
+        assert get_provider_override("identity") is None
+        assert get_provider_override("policy") is None
+
+
+# ── Observability: cross-user query restriction ──────────────────────
+
+
 class TestObservabilityCrossUserQuery:
     """Observability list_sessions restricts user_id for non-admins."""
 
