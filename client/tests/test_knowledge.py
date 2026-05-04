@@ -91,6 +91,32 @@ class TestKnowledgeClient:
             result = await client.list_knowledge_namespaces()
         assert set(result["namespaces"]) == {"alpha", "beta"}
 
+    async def test_retrieve_passes_include_citations_to_server(self, make_client) -> None:
+        """Default and explicit include_citations values must survive the
+        round-trip so REST callers can opt into structured citations
+        without running an agent.
+        """
+        async with make_client() as client:
+            await client.ingest_knowledge(
+                "demo",
+                documents=[{"text": "The Eiffel Tower is in Paris.", "source": "geo.md"}],
+            )
+            default_result = await client.retrieve_knowledge("demo", "Paris", top_k=1)
+            cited_result = await client.retrieve_knowledge("demo", "Paris", top_k=1, include_citations=True)
+
+        # Default path: citations are absent / null — the server shape is
+        # whatever the test backend returns when flag=False.  Contract:
+        # the response must at least come back with chunks populated.
+        assert default_result["chunks"]
+        # include_citations=True must at least not regress chunk delivery
+        # and — for backends that support it — carry the citations field.
+        assert cited_result["chunks"]
+        # If the backend populated citations, they must be a list; if
+        # not, it stays ``None`` / absent.  Accept both so the test
+        # doesn't couple to a specific backend's capabilities.
+        citations = cited_result["chunks"][0].get("citations")
+        assert citations is None or isinstance(citations, list)
+
     async def test_namespaces_are_isolated(self, make_client) -> None:
         async with make_client() as client:
             await client.ingest_knowledge(

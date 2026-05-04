@@ -30,10 +30,11 @@ from agentic_primitives_gateway.agents.tools import (
     execute_tool,
     to_llm_tools,
 )
+from agentic_primitives_gateway.agents.tools.context import pop_current_artifact_structured
 from agentic_primitives_gateway.audit.emit import emit_audit_event
 from agentic_primitives_gateway.audit.models import AuditAction, AuditOutcome, ResourceType
 from agentic_primitives_gateway.context import get_authenticated_principal
-from agentic_primitives_gateway.models.agents import AgentSpec, ChatResponse, ToolArtifact
+from agentic_primitives_gateway.models.agents import AgentSpec, ChatResponse, PrimitiveConfig, ToolArtifact
 from agentic_primitives_gateway.primitives.browser.context import (
     reset_browser_session_id,
     set_browser_session_id,
@@ -43,7 +44,11 @@ from agentic_primitives_gateway.primitives.code_interpreter.context import (
     set_code_interpreter_session_id,
 )
 from agentic_primitives_gateway.primitives.knowledge.context import (
+    reset_citation_counter,
+    reset_knowledge_inline_citations,
     reset_knowledge_namespace,
+    restore_citation_counter,
+    set_knowledge_inline_citations,
     set_knowledge_namespace,
 )
 from agentic_primitives_gateway.primitives.memory.context import (
@@ -389,10 +394,16 @@ class AgentRunner:
         # Install contextvars before building the tool list so any early
         # reads inside handlers (unusual but possible) see the correct
         # values.  ``_finalize`` resets these via the captured tokens.
+        inline_citations = bool(
+            spec.primitives.get("knowledge", PrimitiveConfig()).options.get("inline_citations", False)
+        )
         cv_tokens: dict[str, Any] = {
             "memory_ns": set_memory_namespace(memory_ns),
             "memory_pools": set_memory_pools(pool_map),
             "knowledge_ns": set_knowledge_namespace(knowledge_ns),
+            "knowledge_inline": set_knowledge_inline_citations(inline_citations),
+            # Reset the citation counter so each run starts at [0].
+            "knowledge_citation_counter": reset_citation_counter(),
         }
 
         tools = build_tool_list(
@@ -478,23 +489,31 @@ class AgentRunner:
 
         async def _exec_one(
             tc: dict[str, Any], *, _tools: list[ToolDefinition] = ctx.tools
-        ) -> tuple[str, str, dict[str, Any], str]:
+        ) -> tuple[str, str, dict[str, Any], str, dict[str, Any] | None]:
             t_name, t_input = tc["name"], tc.get("input", {})
             t_id = tc.get("id", uuid.uuid4().hex[:8])
             logger.info("Agent[%s] executing tool: %s", ctx.spec.name, t_name)
+            structured: dict[str, Any] | None = None
             try:
                 res = await execute_tool(t_name, t_input, _tools)
+                # Each tool call runs in its own asyncio.Task so contextvars
+                # are copied — the structured payload the handler set only
+                # lives on this task's copy.  Read + reset it here before
+                # the task completes.
+                structured = pop_current_artifact_structured()
             except Exception as e:
                 res = f"Error: {type(e).__name__}: {e}"
                 logger.warning("Tool %s failed: %s", t_name, e)
-            return t_id, t_name, t_input, res
+            return t_id, t_name, t_input, res, structured
 
         results = await asyncio.gather(*[_exec_one(tc) for tc in tool_calls])
 
         tool_results: list[dict[str, Any]] = []
-        for t_id, t_name, t_input, result in results:
+        for t_id, t_name, t_input, result, structured in results:
             ctx.tools_called.append(t_name)
-            ctx.artifacts.append(ToolArtifact(tool_name=t_name, tool_input=t_input, output=result))
+            ctx.artifacts.append(
+                ToolArtifact(tool_name=t_name, tool_input=t_input, output=result, structured=structured)
+            )
             tool_results.append({"tool_use_id": t_id, "content": result})
 
         ctx.messages.append({"role": "user", "tool_results": tool_results})
@@ -519,21 +538,25 @@ class AgentRunner:
         await self._ensure_sessions_for_tools(ctx, tool_calls)
 
         event_queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
-        result_map: dict[str, tuple[str, dict[str, Any], str]] = {}
+        result_map: dict[str, tuple[str, dict[str, Any], str, dict[str, Any] | None]] = {}
 
         async def _exec_one(
             tc: dict[str, Any],
             *,
             _tools: list[ToolDefinition] = ctx.tools,
             _queue: asyncio.Queue[dict[str, Any] | None] = event_queue,
-            _rmap: dict[str, tuple[str, dict[str, Any], str]] = result_map,
+            _rmap: dict[str, tuple[str, dict[str, Any], str, dict[str, Any] | None]] = result_map,
         ) -> None:
             t_name, t_input = tc["name"], tc.get("input", {})
             t_id = tc.get("id", uuid.uuid4().hex[:8])
 
             result = await self._execute_single_tool_streaming(t_name, t_input, _tools, _queue, ctx.depth)
+            # Same reason as ``_exec_tools_parallel``: the contextvar is
+            # per-Task, so we must pop it here while still inside the
+            # tool's task.
+            structured = pop_current_artifact_structured()
 
-            _rmap[t_id] = (t_name, t_input, result)
+            _rmap[t_id] = (t_name, t_input, result, structured)
             await _queue.put(
                 {
                     "type": "tool_call_result",
@@ -542,6 +565,7 @@ class AgentRunner:
                     "result": result[:500],
                     "full_result": result,
                     "tool_input": t_input,
+                    "structured": structured,
                 }
             )
             await _queue.put(None)  # signal done
@@ -563,9 +587,11 @@ class AgentRunner:
         for tc in tool_calls:
             t_id = tc.get("id", "")
             if t_id in result_map:
-                t_name, t_input, result = result_map[t_id]
+                t_name, t_input, result, structured = result_map[t_id]
                 ctx.tools_called.append(t_name)
-                ctx.artifacts.append(ToolArtifact(tool_name=t_name, tool_input=t_input, output=result))
+                ctx.artifacts.append(
+                    ToolArtifact(tool_name=t_name, tool_input=t_input, output=result, structured=structured)
+                )
                 tool_results.append({"tool_use_id": t_id, "content": result})
 
         ctx.messages.append({"role": "user", "tool_results": tool_results})
@@ -709,24 +735,38 @@ class AgentRunner:
         if "knowledge_ns" in tokens:
             with contextlib.suppress(Exception):
                 reset_knowledge_namespace(tokens["knowledge_ns"])
+        if "knowledge_inline" in tokens:
+            with contextlib.suppress(Exception):
+                reset_knowledge_inline_citations(tokens["knowledge_inline"])
+        if "knowledge_citation_counter" in tokens:
+            # Restore the parent's citation counter (important when a
+            # sub-agent delegated in inline mode — the parent's next turn
+            # must continue at its pre-delegation count).
+            with contextlib.suppress(Exception):
+                restore_citation_counter(tokens["knowledge_citation_counter"])
         # Session contextvars are reset inside ``_cleanup_sessions``
         # so the reset happens atomically with the provider-side
         # ``stop_session`` call.
 
     @staticmethod
     def _serialize_artifacts(artifacts: list[ToolArtifact]) -> list[dict[str, Any]]:
-        """Convert ToolArtifacts to dicts for the SSE done event."""
+        """Convert ToolArtifacts to dicts for the SSE done event.
+
+        ``structured`` is included only when the handler attached a
+        payload so default artifacts stay compact on the wire.
+        """
         result = []
         for a in artifacts:
             ti = a.tool_input or {}
-            result.append(
-                {
-                    "tool_name": a.tool_name,
-                    "code": ti.get("code", ""),
-                    "language": ti.get("language", "python"),
-                    "output": a.output,
-                }
-            )
+            entry: dict[str, Any] = {
+                "tool_name": a.tool_name,
+                "code": ti.get("code", ""),
+                "language": ti.get("language", "python"),
+                "output": a.output,
+            }
+            if a.structured is not None:
+                entry["structured"] = a.structured
+            result.append(entry)
         return result
 
     # ── Checkpointing ────────────────────────────────────────────────

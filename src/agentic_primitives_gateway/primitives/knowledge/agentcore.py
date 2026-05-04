@@ -19,6 +19,7 @@ from typing import Any
 
 from agentic_primitives_gateway.context import get_boto3_session, get_service_credentials
 from agentic_primitives_gateway.models.knowledge import (
+    Citation,
     DocumentInfo,
     IngestDocument,
     IngestResult,
@@ -29,6 +30,64 @@ from agentic_primitives_gateway.primitives._sync import SyncRunnerMixin
 from agentic_primitives_gateway.primitives.knowledge.base import KnowledgeProvider
 
 logger = logging.getLogger(__name__)
+
+
+def _build_agentcore_citations(
+    item: dict[str, Any],
+    location: dict[str, Any],
+    metadata: dict[str, Any],
+    text: str,
+) -> list[Citation]:
+    """Build structured citations from a Bedrock KB retrieval result.
+
+    Bedrock KB ``retrievalResults`` carry a ``location`` block with
+    per-source-type URIs (S3, Confluence, SharePoint, Salesforce, Web)
+    and a free-form ``metadata`` dict operators attach at ingest.  We
+    surface the most useful fields into named Citation slots and copy
+    the rest of ``metadata`` as passthrough so the UI can render
+    provider-specific keys without the ABC knowing about them.
+    """
+    source = metadata.get("source")
+    uri: str | None = None
+
+    # Walk the common location shapes.  Bedrock uses different key names
+    # per source type so we try each in priority order rather than
+    # assuming the S3 shape.
+    for loc_key, uri_key in (
+        ("s3Location", "uri"),
+        ("webLocation", "url"),
+        ("confluenceLocation", "url"),
+        ("salesforceLocation", "url"),
+        ("sharePointLocation", "url"),
+    ):
+        loc = location.get(loc_key) if isinstance(location, dict) else None
+        if isinstance(loc, dict) and loc.get(uri_key):
+            uri = str(loc[uri_key])
+            break
+
+    if not source and uri:
+        source = uri
+
+    page_value = metadata.get("x-amz-bedrock-kb-document-page-number") or metadata.get("page")
+    page_str = str(page_value) if page_value is not None else None
+
+    snippet = text[:200] if text else None
+
+    # metadata passthrough minus fields we already surfaced
+    passthrough = {
+        k: v for k, v in metadata.items() if k not in {"source", "page", "x-amz-bedrock-kb-document-page-number"}
+    }
+
+    return [
+        Citation(
+            source=str(source) if source else None,
+            uri=uri,
+            page=page_str,
+            span=None,
+            snippet=snippet,
+            metadata=passthrough,
+        )
+    ]
 
 
 class AgentCoreKnowledgeProvider(SyncRunnerMixin, KnowledgeProvider):
@@ -141,6 +200,8 @@ class AgentCoreKnowledgeProvider(SyncRunnerMixin, KnowledgeProvider):
         query: str,
         top_k: int = 10,
         filters: dict[str, Any] | None = None,
+        *,
+        include_citations: bool = False,
     ) -> list[RetrievedChunk]:
         kb_id = self._resolve_knowledge_base_id()
         client = self._runtime_client()
@@ -173,6 +234,7 @@ class AgentCoreKnowledgeProvider(SyncRunnerMixin, KnowledgeProvider):
             s3 = location.get("s3Location", {}) if isinstance(location, dict) else {}
             if s3.get("uri"):
                 metadata.setdefault("source", s3["uri"])
+            citations = _build_agentcore_citations(item, location, metadata, text) if include_citations else None
             chunks.append(
                 RetrievedChunk(
                     chunk_id=f"{namespace}:{idx}",
@@ -180,6 +242,7 @@ class AgentCoreKnowledgeProvider(SyncRunnerMixin, KnowledgeProvider):
                     text=text,
                     score=float(item.get("score", 0.0) or 0.0),
                     metadata=metadata,
+                    citations=citations,
                 )
             )
         return chunks

@@ -136,6 +136,7 @@ async def retrieve(namespace: str, request: RetrieveRequest) -> RetrieveResponse
         query=request.query,
         top_k=request.top_k,
         filters=request.filters,
+        include_citations=request.include_citations,
     )
     return RetrieveResponse(chunks=chunks)
 

@@ -734,11 +734,24 @@ class AgenticPlatformClient:
         query: str,
         top_k: int = 10,
         filters: dict[str, Any] | None = None,
+        include_citations: bool = False,
     ) -> dict[str, Any]:
-        """Retrieve ranked chunks from the knowledge base (no synthesis)."""
+        """Retrieve ranked chunks from the knowledge base (no synthesis).
+
+        Set ``include_citations=True`` to ask the provider to populate
+        structured source references (``citations`` per chunk: source,
+        page, URI, span, and a passthrough metadata dict).  Providers
+        that cannot produce citations leave the field ``None``; the
+        default keeps the response compact.
+        """
         resp = await self._post(
             f"/api/v1/knowledge/{namespace}/retrieve",
-            json={"query": query, "top_k": top_k, "filters": filters or {}},
+            json={
+                "query": query,
+                "top_k": top_k,
+                "filters": filters or {},
+                "include_citations": include_citations,
+            },
         )
         self._raise_for_status(resp)
         return self._json_dict(resp)

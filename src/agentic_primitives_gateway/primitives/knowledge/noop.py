@@ -37,6 +37,8 @@ class NoopKnowledgeProvider(KnowledgeProvider):
         query: str,
         top_k: int = 10,
         filters: dict[str, Any] | None = None,
+        *,
+        include_citations: bool = False,
     ) -> list[RetrievedChunk]:
         logger.debug("noop knowledge retrieve: ns=%s query=%s", namespace, query)
         return []

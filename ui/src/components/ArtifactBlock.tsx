@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
-import type { StreamArtifact } from "../api/types";
+import type { KnowledgeSearchStructured, RetrievedChunkView, StreamArtifact } from "../api/types";
 import { CODE_THEME } from "../lib/theme";
 
 export default function ArtifactBlock({ artifact }: { artifact: StreamArtifact }) {
@@ -8,6 +8,8 @@ export default function ArtifactBlock({ artifact }: { artifact: StreamArtifact }
   const label = artifact.tool_name.startsWith("call_")
     ? `${artifact.tool_name.replace("call_", "")} output`
     : artifact.tool_name;
+
+  const knowledge = isKnowledgeSearch(artifact) ? (artifact.structured as unknown as KnowledgeSearchStructured) : null;
 
   return (
     <div className="rounded-lg border border-indigo-200 dark:border-indigo-900/50 overflow-hidden">
@@ -20,6 +22,11 @@ export default function ArtifactBlock({ artifact }: { artifact: StreamArtifact }
         <span className={`transition-transform text-[10px] ${open ? "rotate-90" : ""}`} aria-hidden="true">&#9654;</span>
         <span className="font-medium">{label}</span>
         {artifact.code && <span className="text-indigo-400 dark:text-indigo-500 font-mono">{artifact.language}</span>}
+        {knowledge && (
+          <span className="text-indigo-400 dark:text-indigo-500">
+            {knowledge.chunks.length} source{knowledge.chunks.length === 1 ? "" : "s"}
+          </span>
+        )}
       </button>
       {open && (
         <div className="border-t border-indigo-200 dark:border-indigo-900/50">
@@ -35,11 +42,96 @@ export default function ArtifactBlock({ artifact }: { artifact: StreamArtifact }
               </SyntaxHighlighter>
             </div>
           )}
-          {artifact.output && (
+          {knowledge ? (
+            <KnowledgeSourcesPanel structured={knowledge} />
+          ) : artifact.output && (
             <div className="border-t border-indigo-100 dark:border-indigo-900/30 bg-gray-50 dark:bg-gray-900 px-3 py-2">
               <p className="text-[10px] font-medium uppercase tracking-wider text-gray-400 dark:text-gray-500 mb-1">Output</p>
               <pre className="text-[11px] text-gray-600 dark:text-gray-400 whitespace-pre-wrap max-h-48 overflow-auto">{artifact.output}</pre>
             </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function isKnowledgeSearch(artifact: StreamArtifact): boolean {
+  if (!artifact.structured) return false;
+  const kind = (artifact.structured as Record<string, unknown>).kind;
+  return kind === "knowledge_search";
+}
+
+function KnowledgeSourcesPanel({ structured }: { structured: KnowledgeSearchStructured }) {
+  if (structured.chunks.length === 0) {
+    return (
+      <div className="bg-gray-50 dark:bg-gray-900 px-3 py-2">
+        <p className="text-[11px] text-gray-500 dark:text-gray-400">No sources returned for "{structured.query}".</p>
+      </div>
+    );
+  }
+  return (
+    <div className="bg-gray-50 dark:bg-gray-900 px-3 py-2 space-y-2">
+      <p className="text-[10px] font-medium uppercase tracking-wider text-gray-400 dark:text-gray-500">
+        Sources ({structured.chunks.length}) · <span className="font-normal normal-case">{structured.namespace}</span>
+      </p>
+      <div className="space-y-1.5">
+        {structured.chunks.map((chunk, i) => (
+          <ChunkCard key={chunk.chunk_id || i} chunk={chunk} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ChunkCard({ chunk }: { chunk: RetrievedChunkView }) {
+  const [expanded, setExpanded] = useState(false);
+  const citation = chunk.citations?.[0];
+  const headerSource = citation?.source || (chunk.metadata?.source as string | undefined) || chunk.document_id || "(unnamed)";
+  const page = citation?.page;
+  const uri = citation?.uri;
+  const citationIndex = chunk.citation_index;
+  const anchorId = citationIndex !== undefined ? `citation-${citationIndex}` : undefined;
+
+  return (
+    <div id={anchorId} className="rounded border border-indigo-100 dark:border-indigo-900/40 bg-white dark:bg-gray-950 scroll-mt-16">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left"
+        aria-expanded={expanded}
+      >
+        <span className={`transition-transform text-[9px] ${expanded ? "rotate-90" : ""}`} aria-hidden="true">&#9654;</span>
+        {citationIndex !== undefined && (
+          <span className="inline-flex items-center justify-center h-4 min-w-[1rem] rounded-full bg-indigo-100 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 text-[9px] font-semibold px-1 tabular-nums">
+            {citationIndex}
+          </span>
+        )}
+        <span className="text-[10px] font-mono text-indigo-600 dark:text-indigo-400 tabular-nums">
+          {chunk.score.toFixed(2)}
+        </span>
+        <span className="flex-1 truncate text-[11px] text-gray-700 dark:text-gray-300" title={headerSource}>
+          {headerSource}
+        </span>
+        {page && (
+          <span className="text-[10px] text-gray-500 dark:text-gray-400 font-mono">p.{page}</span>
+        )}
+      </button>
+      {expanded && (
+        <div className="border-t border-indigo-100 dark:border-indigo-900/40 px-2.5 py-2 space-y-2">
+          <pre className="text-[11px] text-gray-600 dark:text-gray-400 whitespace-pre-wrap max-h-48 overflow-auto">{chunk.text}</pre>
+          {uri && (
+            <div className="text-[10px] text-gray-500 dark:text-gray-400 break-all">
+              <span className="font-medium">URI: </span>
+              <span className="font-mono">{uri}</span>
+            </div>
+          )}
+          {chunk.metadata && Object.keys(chunk.metadata).length > 0 && (
+            <details className="text-[10px] text-gray-500 dark:text-gray-400">
+              <summary className="cursor-pointer select-none">Metadata</summary>
+              <pre className="mt-1 font-mono whitespace-pre-wrap break-all">
+                {JSON.stringify(chunk.metadata, null, 2)}
+              </pre>
+            </details>
           )}
         </div>
       )}

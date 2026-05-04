@@ -22,6 +22,7 @@ Label conventions:
 from __future__ import annotations
 
 import functools
+import inspect
 from typing import Any
 
 from agentic_primitives_gateway import metrics
@@ -57,8 +58,64 @@ def _emit(
     )
 
 
+def _apply_metadata_denylist(chunks: Any, denylist: list[str]) -> None:
+    """Strip denylisted keys from each chunk's ``metadata`` in place.
+
+    Applied uniformly at the wrapper boundary so REST callers and agent
+    tools see the same scrubbed shape.  Empty / None denylist is a no-op.
+    The denylist is matched against top-level keys only — nested dicts
+    are not recursed to keep the behavior predictable for operators.
+    """
+    if not denylist or not chunks:
+        return
+    deny_set = set(denylist)
+    for chunk in chunks:
+        meta = getattr(chunk, "metadata", None)
+        if not isinstance(meta, dict) or not meta:
+            continue
+        for key in deny_set.intersection(meta.keys()):
+            meta.pop(key, None)
+        # Citations carry their own metadata dict; scrub those too.
+        citations = getattr(chunk, "citations", None) or []
+        for citation in citations:
+            cmeta = getattr(citation, "metadata", None)
+            if isinstance(cmeta, dict) and cmeta:
+                for key in deny_set.intersection(cmeta.keys()):
+                    cmeta.pop(key, None)
+
+
+def _get_metadata_denylist() -> list[str]:
+    """Read the metadata denylist from settings.
+
+    Imported lazily so the audit wrapper stays importable from the ABC
+    without pulling in the full settings graph on module load.
+    """
+    try:
+        from agentic_primitives_gateway.config import settings
+
+        return list(getattr(settings, "knowledge", None).metadata_denylist or [])  # type: ignore[union-attr]
+    except Exception:
+        return []
+
+
 def wrap_retrieve(func: Any) -> Any:
-    """Wrap a coroutine ``retrieve`` with audit + metrics."""
+    """Wrap a coroutine ``retrieve`` with audit + metrics + metadata scrubbing.
+
+    The wrapper is backward-compatible with subclasses that haven't yet
+    adopted the ``include_citations`` kwarg: if the wrapped function
+    doesn't declare it (detected via ``inspect.signature``), the flag is
+    dropped on the call to ``func`` but still recorded in the audit
+    event metadata.  Every in-tree provider declares it; the fallback
+    exists so out-of-tree providers aren't force-broken by the ABC
+    change.
+    """
+    try:
+        func_sig = inspect.signature(func)
+        func_accepts_include_citations = "include_citations" in func_sig.parameters or any(
+            p.kind == inspect.Parameter.VAR_KEYWORD for p in func_sig.parameters.values()
+        )
+    except (TypeError, ValueError):
+        func_accepts_include_citations = False
 
     @functools.wraps(func)
     async def wrapper(
@@ -67,11 +124,16 @@ def wrap_retrieve(func: Any) -> Any:
         query: str,
         top_k: int = 10,
         filters: dict[str, Any] | None = None,
+        *,
+        include_citations: bool = False,
     ) -> Any:
         provider = _provider_label(self)
         store_type = _store_type(self)
         try:
-            chunks = await func(self, namespace, query, top_k, filters)
+            if func_accepts_include_citations:
+                chunks = await func(self, namespace, query, top_k, filters, include_citations=include_citations)
+            else:
+                chunks = await func(self, namespace, query, top_k, filters)
         except Exception as exc:
             _emit(
                 AuditAction.KNOWLEDGE_RETRIEVE,
@@ -85,6 +147,11 @@ def wrap_retrieve(func: Any) -> Any:
                 },
             )
             raise
+
+        # Apply the operator-configured metadata denylist uniformly before
+        # any downstream consumer (REST response, agent tool, audit
+        # metadata) sees it.  Same scrubbing for every caller.
+        _apply_metadata_denylist(chunks, _get_metadata_denylist())
 
         chunk_count = len(chunks) if chunks is not None else 0
         top_score = 0.0
@@ -108,6 +175,7 @@ def wrap_retrieve(func: Any) -> Any:
                 "top_k": top_k,
                 "chunk_count": chunk_count,
                 "top_score": round(top_score, 4),
+                "include_citations": include_citations,
             },
         )
         return chunks

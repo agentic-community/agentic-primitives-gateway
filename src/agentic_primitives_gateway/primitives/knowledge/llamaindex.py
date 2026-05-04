@@ -32,6 +32,7 @@ import uuid
 from typing import Any
 
 from agentic_primitives_gateway.models.knowledge import (
+    Citation,
     DocumentInfo,
     IngestDocument,
     IngestResult,
@@ -46,6 +47,59 @@ logger = logging.getLogger(__name__)
 
 _NAMESPACE_METADATA_KEY = "_apg_namespace"
 _SOURCE_METADATA_KEY = "_apg_source"
+
+
+def _build_llamaindex_citations(node: Any, node_metadata: dict[str, Any], text: str) -> list[Citation]:
+    """Build structured citations from a LlamaIndex node.
+
+    LlamaIndex node metadata commonly carries ``page_label`` /
+    ``page_number`` (from PDF readers) and ``file_path`` / ``file_name``
+    (from file-based readers).  We surface the most useful fields into
+    named Citation slots and dump the whole dict into ``metadata`` so
+    provider-specific fields (element IDs, bounding boxes) still reach
+    the UI.  Character offsets (``start_char_idx`` / ``end_char_idx``)
+    are mapped to ``span`` when present — LlamaIndex populates these for
+    many node-parser outputs.
+    """
+    source = (
+        node_metadata.get(_SOURCE_METADATA_KEY)
+        or node_metadata.get("source")
+        or node_metadata.get("file_path")
+        or node_metadata.get("file_name")
+    )
+    uri = node_metadata.get("url") or node_metadata.get("uri")
+    page = node_metadata.get("page_label") or node_metadata.get("page_number")
+    page_str = str(page) if page is not None else None
+
+    start = getattr(node, "start_char_idx", None)
+    end = getattr(node, "end_char_idx", None)
+    span: tuple[int, int] | None = None
+    if isinstance(start, int) and isinstance(end, int):
+        span = (start, end)
+
+    # Snippet is a short preview of the chunk text, primarily useful
+    # when the UI wants to render a compact citation tile without the
+    # full chunk body.  200 chars keeps it short; the full text stays on
+    # the parent ``RetrievedChunk.text``.
+    snippet = text[:200] if text else None
+
+    passthrough = {
+        k: v
+        for k, v in node_metadata.items()
+        if not k.startswith("_apg_")
+        and k not in {"source", "file_path", "file_name", "url", "uri", "page_label", "page_number"}
+    }
+
+    return [
+        Citation(
+            source=str(source) if source else None,
+            uri=str(uri) if uri else None,
+            page=page_str,
+            span=span,
+            snippet=snippet,
+            metadata=passthrough,
+        )
+    ]
 
 
 def _require_llama_index() -> tuple[Any, Any, Any, Any, Any]:
@@ -251,6 +305,8 @@ class LlamaIndexKnowledgeProvider(SyncRunnerMixin, KnowledgeProvider):
         query: str,
         top_k: int = 10,
         filters: dict[str, Any] | None = None,
+        *,
+        include_citations: bool = False,
     ) -> list[RetrievedChunk]:
         _, _, _, _, (MetadataFilter, MetadataFilters) = _require_llama_index()
         index = self._get_index()
@@ -283,13 +339,16 @@ class LlamaIndexKnowledgeProvider(SyncRunnerMixin, KnowledgeProvider):
             if node_metadata.get(_SOURCE_METADATA_KEY):
                 clean_metadata.setdefault("source", node_metadata[_SOURCE_METADATA_KEY])
             score = float(getattr(node_with_score, "score", 0.0) or 0.0)
+            text = getattr(node, "text", "") or ""
+            citations = _build_llamaindex_citations(node, node_metadata, text) if include_citations else None
             chunks.append(
                 RetrievedChunk(
                     chunk_id=str(getattr(node, "id_", "")),
                     document_id=str(doc_id or ""),
-                    text=getattr(node, "text", "") or "",
+                    text=text,
                     score=score,
                     metadata=clean_metadata,
+                    citations=citations,
                 )
             )
         return chunks

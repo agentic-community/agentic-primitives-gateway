@@ -129,6 +129,39 @@ export interface StreamArtifact {
   code: string;
   language: string;
   output: string;
+  // Optional tool-specific sideband payload.  Handlers attach this when
+  // they have a richer UI rendering than plain-text output — e.g.
+  // ``knowledge_search`` with ``include_sources=true`` emits a
+  // ``KnowledgeSearchStructured`` payload.  The renderer discriminates
+  // on ``tool_name``.
+  structured?: Record<string, unknown>;
+}
+
+export interface KnowledgeCitation {
+  source?: string | null;
+  uri?: string | null;
+  page?: string | null;
+  span?: [number, number] | null;
+  snippet?: string | null;
+  metadata?: Record<string, unknown>;
+}
+
+export interface RetrievedChunkView {
+  chunk_id: string;
+  document_id: string;
+  text: string;
+  score: number;
+  metadata?: Record<string, unknown>;
+  citations?: KnowledgeCitation[] | null;
+  citation_index?: number;
+}
+
+export interface KnowledgeSearchStructured {
+  kind: "knowledge_search";
+  query: string;
+  namespace: string;
+  chunks: RetrievedChunkView[];
+  inline?: boolean;
 }
 
 // Tool catalog types

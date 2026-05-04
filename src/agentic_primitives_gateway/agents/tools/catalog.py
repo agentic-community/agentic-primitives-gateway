@@ -554,13 +554,18 @@ _TOOL_CATALOG: dict[str, list[ToolDefinition]] = {
     "knowledge": [
         ToolDefinition(
             name="search_knowledge",
-            description="Search the agent's knowledge base (RAG) and return the most relevant chunks with relevance scores and sources. Use this when you need grounded facts from an ingested corpus.",
+            description="Search the agent's knowledge base (RAG) and return the most relevant chunks with relevance scores and sources. Use this when you need grounded facts from an ingested corpus. Set include_sources=true when the user will want to see where each answer came from (page, URI, section) — the UI renders the citations; the model's prompt is unchanged.",
             primitive="knowledge",
             input_schema={
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": "What to search for."},
                     "top_k": {"type": "integer", "description": "Maximum results to return.", "default": 5},
+                    "include_sources": {
+                        "type": "boolean",
+                        "description": "When true, structured citations (source, page, URI, span) are attached to the tool result so the UI can render them. Default false to keep tool output compact.",
+                        "default": False,
+                    },
                 },
                 "required": ["query"],
             },

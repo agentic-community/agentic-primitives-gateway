@@ -53,6 +53,39 @@ Response (200):
 ]}
 ```
 
+#### Structured citations
+
+Pass `include_citations: true` to ask the provider for structured source references (`source`, `uri`, `page`, `span`, plus a passthrough `metadata` dict).  Providers that cannot produce citations leave the field `null`.  The default is `false` so the common path stays compact.
+
+```bash
+curl -X POST http://localhost:8000/api/v1/knowledge/support-corpus/retrieve \
+  -H 'Content-Type: application/json' \
+  -d '{"query": "refunds?", "top_k": 2, "include_citations": true}'
+```
+
+Each chunk gains a `citations` list when supported:
+
+```json
+{"chunks": [
+  {
+    "chunk_id": "…", "document_id": "ab12…", "text": "Our refund policy is 30 days from purchase.", "score": 0.87,
+    "metadata": {"topic": "refunds", "source": "faq.md"},
+    "citations": [{"source": "faq.md", "uri": null, "page": "3", "span": [0, 47], "snippet": "Our refund policy…", "metadata": {}}]
+  }
+]}
+```
+
+#### Metadata scrubbing
+
+`RetrievedChunk.metadata` is operator-controlled and flows verbatim to callers (same trust model as `MemoryRecord.metadata`).  Operators who want to strip specific keys before they leave the gateway — e.g. internal bucket identifiers or ingest-pipeline bookkeeping — set `knowledge.metadata_denylist` in config:
+
+```yaml
+knowledge:
+  metadata_denylist: ["internal_ingest_id", "pipeline_stage"]
+```
+
+The denylist is applied uniformly in `primitives/knowledge/_audit.wrap_retrieve`, so REST and the agent `search_knowledge` tool both see the same scrubbed shape.  Top-level keys only — nested structures are not recursed.  Citation metadata is scrubbed with the same list.
+
 ### Native retrieve-and-generate
 
 Optional — only backends that support native synthesis implement this; unsupported backends return **501**.
@@ -83,6 +116,28 @@ agents:
 ```
 
 The agent will call `search_knowledge(query, top_k)` and receive scored chunks with source metadata.
+
+### Source citations in the UI
+
+`search_knowledge` accepts an optional `include_sources: true` argument.  When the LLM opts in, the handler attaches structured chunks (text, score, metadata, structured `citations`) to the tool's `ToolArtifact.structured` sideband.  The web UI renders them as collapsible source cards in the tool-call panel.  The text given to the LLM is unchanged — token cost stays the same.
+
+### Inline citation markers
+
+For answers that need per-claim attribution (Perplexity-style), enable `inline_citations` on the agent spec:
+
+```yaml
+agents:
+  specs:
+    support-bot:
+      primitives:
+        knowledge:
+          enabled: true
+          namespace: "support-corpus"
+          options:
+            inline_citations: true
+```
+
+The tool output prepends each chunk with a globally-unique `[N]` marker and includes a one-line instruction telling the model to cite claims with those markers.  Multiple `search_knowledge` calls in the same turn use contiguous ranges of indices (no collisions).  The UI rewrites `[N]` in the assistant's streamed tokens into clickable pills linked to the corresponding chunk card.
 
 ## Audit + metrics
 

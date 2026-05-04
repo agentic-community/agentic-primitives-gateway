@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useAutoScroll } from "../hooks/useAutoScroll";
 import { Link, useParams } from "react-router-dom";
 import { api, isCredentialError } from "../api/client";
-import type { StreamArtifact, StreamEvent } from "../api/types";
+import type { KnowledgeSearchStructured, RetrievedChunkView, StreamArtifact, StreamEvent } from "../api/types";
 import { useAuth } from "../auth/AuthProvider";
 import ArtifactBlock from "../components/ArtifactBlock";
 import ChatInput from "../components/ChatInput";
@@ -28,6 +28,27 @@ interface Turn {
 }
 
 const MEMORY_TOOLS = new Set(["remember", "forget", "recall", "search_memory", "list_memories"]);
+
+function collectInlineCitations(artifacts: StreamArtifact[]): Map<number, RetrievedChunkView> {
+  // Build a citation_index → chunk map by scanning every knowledge_search
+  // artifact that ran in inline mode.  Multiple searches in the same turn
+  // contribute to the same map because the server reserves globally-unique
+  // indices via ``claim_citation_indices``.
+  const map = new Map<number, RetrievedChunkView>();
+  for (const artifact of artifacts) {
+    if (!artifact.structured) continue;
+    const kind = (artifact.structured as Record<string, unknown>).kind;
+    if (kind !== "knowledge_search") continue;
+    const s = artifact.structured as unknown as KnowledgeSearchStructured;
+    if (!s.inline) continue;
+    for (const chunk of s.chunks) {
+      if (typeof chunk.citation_index === "number") {
+        map.set(chunk.citation_index, chunk);
+      }
+    }
+  }
+  return map;
+}
 
 function sessionsKey(userId: string, agentName: string) {
   return `agent-sessions:${userId}:${agentName}`;
@@ -448,7 +469,7 @@ export default function AgentChat() {
             assistantContent: event.response,
             toolsCalled: event.tools_called,
             turnsUsed: event.turns_used,
-            artifacts: (event.artifacts ?? []).filter((a: StreamArtifact) => a.code || a.output),
+            artifacts: (event.artifacts ?? []).filter((a: StreamArtifact) => a.code || a.output || a.structured),
             done: true,
           })),
         );
@@ -578,7 +599,11 @@ export default function AgentChat() {
             )}
             {turn.assistantContent ? (
               <>
-                <ChatMessage role="assistant" content={turn.assistantContent} />
+                <ChatMessage
+                  role="assistant"
+                  content={turn.assistantContent}
+                  citationsByIndex={collectInlineCitations(turn.artifacts)}
+                />
                 {turn.artifacts.length > 0 && (
                   <div className="mr-12 space-y-1.5">
                     {turn.artifacts.map((a, idx) => (

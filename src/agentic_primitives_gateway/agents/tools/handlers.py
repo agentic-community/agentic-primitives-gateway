@@ -22,7 +22,11 @@ from agentic_primitives_gateway.models.agents import AgentSpec, PrimitiveConfig
 from agentic_primitives_gateway.models.tasks import TaskNote
 from agentic_primitives_gateway.primitives.browser.context import get_browser_session_id
 from agentic_primitives_gateway.primitives.code_interpreter.context import get_code_interpreter_session_id
-from agentic_primitives_gateway.primitives.knowledge.context import get_knowledge_namespace
+from agentic_primitives_gateway.primitives.knowledge.context import (
+    claim_citation_indices,
+    get_knowledge_inline_citations,
+    get_knowledge_namespace,
+)
 from agentic_primitives_gateway.primitives.memory.context import (
     get_memory_namespace,
     get_memory_pools,
@@ -135,15 +139,79 @@ async def memory_list(limit: int = 20) -> str:
 # ── Knowledge (RAG / retrieval) ──────────────────────────────────────
 
 
-async def knowledge_search(query: str, top_k: int = 5) -> str:
+async def knowledge_search(query: str, top_k: int = 5, include_sources: bool = False) -> str:
+    """Retrieve chunks from the agent's knowledge base.
+
+    ``include_sources`` is a per-call opt-in for rich citations: when
+    ``True`` the handler asks the provider to populate
+    ``RetrievedChunk.citations`` and attaches the structured chunks to
+    the surrounding ``ToolArtifact.structured`` sideband.
+
+    **Inline-citations mode** (agent-spec opt-in via the
+    ``knowledge_inline_citations`` contextvar, set by the runner from
+    ``primitives.knowledge.inline_citations`` on the spec): the handler
+    prepends each chunk with a globally-unique ``[N]`` marker and
+    instructs the LLM — via the tool result text — to cite claims with
+    those markers.  The UI renders ``[N]`` as pills linked to the
+    structured chunks in the artifact panel.  Inline mode implies
+    ``include_sources=True`` so the structured payload is always
+    available for the UI to resolve markers against.
+    """
     namespace = _require_knowledge_namespace()
-    chunks = await registry.knowledge.retrieve(namespace=namespace, query=query, top_k=top_k)
+    inline = get_knowledge_inline_citations()
+    want_structured = include_sources or inline
+
+    chunks = await registry.knowledge.retrieve(
+        namespace=namespace,
+        query=query,
+        top_k=top_k,
+        include_citations=want_structured,
+    )
+
+    # In inline mode we reserve a contiguous range of citation indices
+    # up-front so the marker on each chunk is stable between the LLM
+    # text and the structured payload the UI resolves against.
+    base_index = claim_citation_indices(len(chunks)) if inline else 0
+
+    if want_structured:
+        from agentic_primitives_gateway.agents.tools.context import set_current_artifact_structured
+
+        structured_chunks: list[dict[str, Any]] = []
+        for offset, c in enumerate(chunks):
+            entry = c.model_dump(exclude_none=True)
+            if inline:
+                entry["citation_index"] = base_index + offset
+            structured_chunks.append(entry)
+
+        set_current_artifact_structured(
+            {
+                "kind": "knowledge_search",
+                "query": query,
+                "namespace": namespace,
+                "chunks": structured_chunks,
+                "inline": inline,
+            }
+        )
+
     if not chunks:
         return "No relevant knowledge found."
-    lines = []
-    for c in chunks:
+
+    lines: list[str] = []
+    if inline:
+        # Give the LLM explicit instructions so it uses the markers.
+        # This lives in the tool result text (not the system prompt) so
+        # it's scoped to this specific call — agents that don't enable
+        # inline citations never see it.
+        lines.append(
+            "Each result is tagged with a [N] marker. When you cite information from a result, "
+            "write the [N] marker immediately after the claim so the UI can link it back to the source."
+        )
+    for offset, c in enumerate(chunks):
         source = c.metadata.get("source") if isinstance(c.metadata, dict) else None
-        prefix = f"[{c.score:.2f}] "
+        prefix = ""
+        if inline:
+            prefix += f"[{base_index + offset}] "
+        prefix += f"[{c.score:.2f}] "
         if source:
             prefix += f"({source}) "
         lines.append(f"- {prefix}{c.text}")

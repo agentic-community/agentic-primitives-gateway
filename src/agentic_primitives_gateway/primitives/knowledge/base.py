@@ -68,7 +68,18 @@ class KnowledgeProvider(ABC):
         query: str,
         top_k: int = 10,
         filters: dict[str, Any] | None = None,
-    ) -> list[RetrievedChunk]: ...
+        *,
+        include_citations: bool = False,
+    ) -> list[RetrievedChunk]:
+        """Retrieve chunks for ``query`` within ``namespace``.
+
+        When ``include_citations`` is ``True``, providers that can produce
+        structured source references populate ``RetrievedChunk.citations``
+        (page, URI, span, etc.).  Providers without citation support
+        leave the field ``None``; callers must tolerate that.  The flag
+        is opt-in so the default retrieve path stays lightweight.
+        """
+        ...
 
     @abstractmethod
     async def delete(self, namespace: str, document_id: str) -> bool: ...
