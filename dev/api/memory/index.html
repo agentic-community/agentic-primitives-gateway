@@ -14,7 +14,7 @@
         <link rel="prev" href="../overview/">
       
       
-        <link rel="next" href="../identity/">
+        <link rel="next" href="../knowledge/">
       
       
         
@@ -2475,6 +2475,152 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5_11" >
+        
+          
+          <label class="md-nav__link" for="__nav_5_11" id="__nav_5_11_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Knowledge
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_11_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_11">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Knowledge
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../primitives/knowledge/noop/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Noop
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../primitives/knowledge/llamaindex/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    LlamaIndex
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../primitives/knowledge/agentcore/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AgentCore
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -2667,6 +2813,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#metadata-scrubbing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Metadata scrubbing
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -2731,6 +2888,34 @@
   
 </nav>
       
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../knowledge/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Knowledge
+  
+
+    
+  </span>
+  
+  
+
+      </a>
     </li>
   
 
@@ -3200,6 +3385,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#metadata-scrubbing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Metadata scrubbing
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -3339,6 +3535,14 @@
 <a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">&quot;Content-Type: application/json&quot;</span><span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">&#39;{&quot;query&quot;: &quot;user preferences&quot;, &quot;top_k&quot;: 5}&#39;</span>
 </code></pre></div>
+<h3 id="metadata-scrubbing">Metadata scrubbing<a class="headerlink" href="#metadata-scrubbing" title="Permanent link">&para;</a></h3>
+<p><code>MemoryRecord.metadata</code> is operator-controlled — it's whatever was passed to <code>store()</code>.  That means it flows verbatim to every read caller: REST (<code>GET /{namespace}/{key}</code>, <code>GET /{namespace}</code>, <code>POST /{namespace}/search</code>) and the agent memory tools (<code>recall</code>, <code>search_memory</code>, <code>list_memories</code>).</p>
+<p>Operators who want to strip specific keys before they leave the gateway — e.g. internal bookkeeping that was convenient to store alongside the record but shouldn't reach clients — add them to the cross-primitive <code>metadata_denylists</code> config keyed by <code>memory</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nt">metadata_denylists</span><span class="p">:</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">memory</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;audit_trail_id&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;ingest_pipeline&quot;</span><span class="p p-Indicator">]</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">  </span><span class="nt">knowledge</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;internal_bucket_arn&quot;</span><span class="p p-Indicator">]</span>
+</code></pre></div>
+<p>The denylist is applied uniformly in <code>primitives/memory/_audit.py</code> wrappers installed by <code>MemoryProvider.__init_subclass__</code>, so every read path (<code>retrieve</code>, <code>search</code>, <code>list_memories</code>) sees the same scrubbed shape regardless of backend.  Top-level keys only — nested structures are not recursed.  The write path (<code>store</code>) is <strong>not</strong> scrubbed: the denylist filters on the way out, not on the way in, so operators can still persist fields they want to hide from clients.</p>
 <h2 id="conversation-events">Conversation Events<a class="headerlink" href="#conversation-events" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
