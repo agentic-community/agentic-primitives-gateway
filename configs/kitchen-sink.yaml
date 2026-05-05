@@ -299,6 +299,32 @@ agents:
   # storage growth.
   max_versions_per_identity: 50
   specs:
+    support-bot:
+      model: "us.anthropic.claude-sonnet-4-20250514-v1:0"
+      description: "Grounded Q&A bot with inline knowledge citations"
+      system_prompt: |
+        You are a support bot.  For every factual question, call
+        search_knowledge with include_sources=true, then ground your
+        answer in the returned chunks.  Each result is tagged with a
+        [N] marker — write the marker immediately after any claim
+        that came from it so the UI can link the claim to the source.
+        If the knowledge base doesn't cover the question, say so;
+        do not invent facts.
+      # Ingest documents into ``support-corpus`` before chatting.
+      # Kitchen-sink defaults the knowledge backend to ``noop`` so
+      # this spec returns "no relevant knowledge" until the operator
+      # flips ``providers.knowledge.default`` to ``llamaindex-simple``
+      # / ``llamaindex-falkordb`` / ``agentcore`` and ingests a corpus.
+      primitives:
+        knowledge:
+          enabled: true
+          namespace: "support-corpus"
+          options:
+            inline_citations: true
+      max_turns: 20
+      hooks:
+        auto_memory: false
+        auto_trace: false
     research-assistant:
       model: "us.anthropic.claude-sonnet-4-20250514-v1:0"
       description: "A research assistant with long-term memory"

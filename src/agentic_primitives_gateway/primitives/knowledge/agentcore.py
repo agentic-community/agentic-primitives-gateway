@@ -132,9 +132,13 @@ class AgentCoreKnowledgeProvider(SyncRunnerMixin, KnowledgeProvider):
         if self._default_kb_id:
             return self._default_kb_id
         raise ValueError(
-            "AgentCore knowledge_base_id is required.  Provide it via: "
-            "(1) client header X-Cred-Agentcore-Knowledgebase-Id, or "
-            "(2) knowledge_base_id in the server provider config. "
+            "AgentCore knowledge_base_id is required.  Provide it via one of: "
+            "(1) per-user OIDC attribute apg.agentcore.knowledgebase_id (resolved "
+            "into the X-Cred-Agentcore-Knowledgebase-Id header for each request); "
+            "(2) knowledge_base_id in the provider config (AGENTCORE_KB_ID env var "
+            "in shipped configs); "
+            "(3) define multiple named AgentCore backends in providers.knowledge.backends "
+            "and pin one from an agent spec via spec.provider_overrides.knowledge. "
             "Create a Knowledge Base in the AWS console first."
         )
 
@@ -171,9 +175,14 @@ class AgentCoreKnowledgeProvider(SyncRunnerMixin, KnowledgeProvider):
         """
         data_source_id = self._resolve_data_source_id()
         if not data_source_id:
+            # Same operator-scope resolution shape as the KB id.
             raise NotImplementedError(
-                "AgentCoreKnowledgeProvider.ingest requires data_source_id "
-                "(config or X-Cred-Agentcore-Data-Source-Id) to trigger a sync. "
+                "AgentCoreKnowledgeProvider.ingest requires data_source_id. "
+                "Provide it via one of: "
+                "(1) per-user OIDC attribute apg.agentcore.data_source_id "
+                "(resolved into X-Cred-Agentcore-Data-Source-Id per request); "
+                "(2) data_source_id in the provider config; "
+                "(3) a named AgentCore backend pinned via spec.provider_overrides.knowledge. "
                 "Upload documents to the KB's backing store (e.g. S3) separately."
             )
         kb_id = self._resolve_knowledge_base_id()
