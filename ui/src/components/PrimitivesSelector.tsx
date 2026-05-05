@@ -47,6 +47,20 @@ export default function PrimitivesSelector({
     onChange(next);
   };
 
+  const setKnowledgeOption = (key: string, val: unknown) => {
+    // Primitive-specific option writer.  Kept narrow on purpose — the
+    // kiro review pushed back on building a generic options editor,
+    // and we only need this one surface today (knowledge.inline_citations).
+    // If another primitive adds a meaningful option, copy this helper
+    // rather than prematurely generalising.
+    const next = { ...value };
+    const config = next["knowledge"];
+    if (!config) return;
+    const nextOptions = { ...(config.options ?? {}), [key]: val };
+    next["knowledge"] = { ...config, options: nextOptions };
+    onChange(next);
+  };
+
   const updateSharedNamespaces = (text: string) => {
     const next = { ...value };
     const config = next["memory"];
@@ -239,6 +253,30 @@ export default function PrimitivesSelector({
                       </div>
                     </label>
                   ))}
+                </div>
+              )}
+
+              {/* Knowledge primitive options */}
+              {name === "knowledge" && enabled && isOpen && (
+                <div className="px-3 pb-2 pl-8">
+                  <p className="text-[11px] text-gray-500 dark:text-gray-400 mb-1 font-medium">Options</p>
+                  <label className="flex items-start gap-2 cursor-pointer group">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(config?.options?.inline_citations)}
+                      onChange={(e) => setKnowledgeOption("inline_citations", e.target.checked)}
+                      className="rounded border-gray-300 dark:border-gray-600 text-indigo-600 focus:ring-indigo-500 h-3.5 w-3.5 mt-0.5"
+                    />
+                    <div className="min-w-0">
+                      <span className="text-xs font-mono text-gray-700 dark:text-gray-300">
+                        inline_citations
+                      </span>
+                      <p className="text-[11px] text-gray-400 dark:text-gray-500 leading-tight">
+                        Tag each retrieved chunk with a [N] marker and instruct the model to cite
+                        claims with them. UI renders pills linked to source cards.
+                      </p>
+                    </div>
+                  </label>
                 </div>
               )}
 

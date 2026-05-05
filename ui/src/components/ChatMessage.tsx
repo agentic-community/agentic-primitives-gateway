@@ -112,11 +112,30 @@ function CitationPill({ index, chunk }: { index: number; chunk: RetrievedChunkVi
   const source = citation?.source || (chunk.metadata?.source as string | undefined) || chunk.document_id;
   const page = citation?.page;
   const label = page ? `${source} · p.${page}` : source || `source ${index}`;
+
+  // Custom click: dispatch a window event the citation card listens for,
+  // then scroll once the card has rendered.  Going through an event
+  // (rather than just the ``href`` fragment) lets the target card pop
+  // itself open even if the user had manually collapsed the panel —
+  // otherwise the browser scrolls to an element that isn't in layout
+  // and nothing visible happens.
+  const handleClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
+    e.preventDefault();
+    window.dispatchEvent(new CustomEvent("apg:citation-click", { detail: { index } }));
+    // Defer the scroll so the listener has a tick to expand the card
+    // (state update + re-render) before the browser measures layout.
+    window.setTimeout(() => {
+      const el = document.getElementById(`citation-${index}`);
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 30);
+  };
+
   return (
     <a
       href={`#citation-${index}`}
+      onClick={handleClick}
       title={label}
-      className="inline-flex items-center justify-center align-baseline mx-0.5 h-[1.4em] min-w-[1.4em] rounded-full bg-indigo-100 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 text-[0.7em] font-semibold no-underline hover:bg-indigo-200 dark:hover:bg-indigo-900 transition-colors px-1"
+      className="inline-flex items-center justify-center align-baseline mx-0.5 h-[1.4em] min-w-[1.4em] rounded-full bg-indigo-100 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 text-[0.7em] font-semibold no-underline hover:bg-indigo-200 dark:hover:bg-indigo-900 transition-colors px-1 cursor-pointer"
     >
       {index}
     </a>

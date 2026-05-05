@@ -1,15 +1,41 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import type { KnowledgeSearchStructured, RetrievedChunkView, StreamArtifact } from "../api/types";
 import { CODE_THEME } from "../lib/theme";
 
+interface CitationClickDetail {
+  index: number;
+}
+
 export default function ArtifactBlock({ artifact }: { artifact: StreamArtifact }) {
-  const [open, setOpen] = useState(false);
   const label = artifact.tool_name.startsWith("call_")
     ? `${artifact.tool_name.replace("call_", "")} output`
     : artifact.tool_name;
 
   const knowledge = isKnowledgeSearch(artifact) ? (artifact.structured as unknown as KnowledgeSearchStructured) : null;
+  // Default inline-citation artifacts to open so the ``#citation-N``
+  // anchors from inline pills have something to scroll to.  Without
+  // this, the ChunkCard carrying the target id isn't in the DOM and
+  // the pill click appears to do nothing.
+  const [open, setOpen] = useState(Boolean(knowledge?.inline));
+
+  // If a user collapses the panel and then clicks a pill that targets
+  // one of *our* chunks, pop back open so the scroll lands on a
+  // rendered card.  Listening on the window keeps this decoupled from
+  // the chat page — any CitationPill anywhere dispatches the same event.
+  useEffect(() => {
+    if (!knowledge || knowledge.chunks.length === 0) return;
+    const ourIndices = new Set(
+      knowledge.chunks.map((c) => c.citation_index).filter((i): i is number => typeof i === "number"),
+    );
+    if (ourIndices.size === 0) return;
+    const listener = (e: Event) => {
+      const detail = (e as CustomEvent<CitationClickDetail>).detail;
+      if (detail && ourIndices.has(detail.index)) setOpen(true);
+    };
+    window.addEventListener("apg:citation-click", listener);
+    return () => window.removeEventListener("apg:citation-click", listener);
+  }, [knowledge]);
 
   return (
     <div className="rounded-lg border border-indigo-200 dark:border-indigo-900/50 overflow-hidden">
@@ -85,16 +111,44 @@ function KnowledgeSourcesPanel({ structured }: { structured: KnowledgeSearchStru
 }
 
 function ChunkCard({ chunk }: { chunk: RetrievedChunkView }) {
-  const [expanded, setExpanded] = useState(false);
   const citation = chunk.citations?.[0];
   const headerSource = citation?.source || (chunk.metadata?.source as string | undefined) || chunk.document_id || "(unnamed)";
   const page = citation?.page;
   const uri = citation?.uri;
   const citationIndex = chunk.citation_index;
   const anchorId = citationIndex !== undefined ? `citation-${citationIndex}` : undefined;
+  // Inline-citation chunks default to expanded so jumping from a pill
+  // lands on a readable card; non-inline cards stay collapsed to keep
+  // the panel compact.
+  const [expanded, setExpanded] = useState(citationIndex !== undefined);
+
+  // Also pop open if the user clicks a pill for *this specific chunk*
+  // after having manually collapsed it — we want consistent behavior
+  // regardless of prior UI state.  A short flash confirms the landing.
+  const [flash, setFlash] = useState(false);
+  useEffect(() => {
+    if (citationIndex === undefined) return;
+    const listener = (e: Event) => {
+      const detail = (e as CustomEvent<CitationClickDetail>).detail;
+      if (detail?.index === citationIndex) {
+        setExpanded(true);
+        setFlash(true);
+        window.setTimeout(() => setFlash(false), 1200);
+      }
+    };
+    window.addEventListener("apg:citation-click", listener);
+    return () => window.removeEventListener("apg:citation-click", listener);
+  }, [citationIndex]);
 
   return (
-    <div id={anchorId} className="rounded border border-indigo-100 dark:border-indigo-900/40 bg-white dark:bg-gray-950 scroll-mt-16">
+    <div
+      id={anchorId}
+      className={`rounded border bg-white dark:bg-gray-950 scroll-mt-16 transition-colors duration-300 ${
+        flash
+          ? "border-indigo-500 ring-2 ring-indigo-400/50"
+          : "border-indigo-100 dark:border-indigo-900/40"
+      }`}
+    >
       <button
         onClick={() => setExpanded(!expanded)}
         className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left"

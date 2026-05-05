@@ -3,6 +3,11 @@ export interface PrimitiveConfig {
   tools: string[] | null;
   namespace: string | null;
   shared_namespaces: string[] | null;
+  // Primitive-specific behaviour flags (e.g. ``{inline_citations: true}``
+  // on the knowledge primitive).  The server accepts this as a
+  // free-form dict so API-first users aren't constrained; the UI only
+  // surfaces controls for options it recognises.
+  options?: Record<string, unknown>;
 }
 
 export interface HooksConfig {
