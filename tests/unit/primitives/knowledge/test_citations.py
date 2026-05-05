@@ -143,7 +143,7 @@ def denylist_patch() -> Generator[MagicMock]:
     affects knowledge lookups — if other primitives pull the same
     helper concurrently in the future, their tests won't collide.
     """
-    with patch("agentic_primitives_gateway.primitives.knowledge._audit._get_metadata_denylist") as m:
+    with patch("agentic_primitives_gateway.primitives.knowledge._audit.get_denylist") as m:
         m.return_value = []
         yield m
 

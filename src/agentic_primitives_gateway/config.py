@@ -404,19 +404,6 @@ class LoggingConfig(BaseModel):
     sanitize: bool = True
 
 
-class KnowledgeConfig(BaseModel):
-    """Cross-provider knowledge primitive settings.
-
-    ``metadata_denylist`` is applied uniformly in the audit wrapper
-    (``primitives/knowledge/_audit.wrap_retrieve``) so both REST callers
-    (``POST /api/v1/knowledge/{ns}/retrieve``) and the agent
-    ``knowledge_search`` tool see the same scrubbed shape.  Top-level
-    keys only — nested structures are not recursed.
-    """
-
-    metadata_denylist: list[str] = Field(default_factory=list)
-
-
 # Well-known audit sink aliases → dotted class paths
 AUDIT_SINK_ALIASES: dict[str, str] = {
     "noop": "agentic_primitives_gateway.audit.sinks.noop.NoopAuditSink",
@@ -448,7 +435,11 @@ class Settings(BaseSettings):
     governance: GovernanceConfig = GovernanceConfig()
     audit: AuditConfig = AuditConfig()
     logging: LoggingConfig = LoggingConfig()
-    knowledge: KnowledgeConfig = KnowledgeConfig()
+    # Single, extensible denylist map keyed by primitive name.  New
+    # primitives that adopt the scrubbing pattern add a key here
+    # without touching Settings.  See ``primitives/_metadata_scrub.py``
+    # and the per-primitive ``_audit.py`` wrappers that consume it.
+    metadata_denylists: dict[str, list[str]] = Field(default_factory=dict)
 
     @staticmethod
     def config_file_path() -> str | None:

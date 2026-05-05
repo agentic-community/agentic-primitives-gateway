@@ -12,7 +12,32 @@ class MemoryProvider(ABC):
     Memory providers handle storage, retrieval, and search of agent memories.
     Implementations may use frameworks like mem0 or langmem on top of vector
     stores like Milvus or Weaviate.
+
+    The ABC auto-wraps ``retrieve`` / ``search`` / ``list_memories`` on
+    every subclass via ``__init_subclass__`` to strip operator-configured
+    ``memory.metadata_denylist`` keys from ``MemoryRecord.metadata``
+    before the response leaves the provider.  Subclasses do not scrub
+    themselves — the enrichment is inherited.  Same pattern as
+    ``KnowledgeProvider``; see ``primitives/_metadata_scrub.py``.
     """
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        # Local import — avoids a top-level cycle between the ABC and
+        # the settings graph, which imports later than primitives.
+        from agentic_primitives_gateway.primitives.memory._audit import (
+            wrap_list_memories,
+            wrap_retrieve,
+            wrap_search,
+        )
+
+        own = cls.__dict__
+        if "retrieve" in own:
+            cls.retrieve = wrap_retrieve(own["retrieve"])  # type: ignore[method-assign]
+        if "search" in own:
+            cls.search = wrap_search(own["search"])  # type: ignore[method-assign]
+        if "list_memories" in own:
+            cls.list_memories = wrap_list_memories(own["list_memories"])  # type: ignore[method-assign]
 
     @abstractmethod
     async def store(

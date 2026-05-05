@@ -35,6 +35,20 @@ curl -X POST http://localhost:8000/api/v1/memory/my-namespace/search \
   -d '{"query": "user preferences", "top_k": 5}'
 ```
 
+### Metadata scrubbing
+
+`MemoryRecord.metadata` is operator-controlled — it's whatever was passed to `store()`.  That means it flows verbatim to every read caller: REST (`GET /{namespace}/{key}`, `GET /{namespace}`, `POST /{namespace}/search`) and the agent memory tools (`recall`, `search_memory`, `list_memories`).
+
+Operators who want to strip specific keys before they leave the gateway — e.g. internal bookkeeping that was convenient to store alongside the record but shouldn't reach clients — add them to the cross-primitive `metadata_denylists` config keyed by `memory`:
+
+```yaml
+metadata_denylists:
+  memory: ["audit_trail_id", "ingest_pipeline"]
+  knowledge: ["internal_bucket_arn"]
+```
+
+The denylist is applied uniformly in `primitives/memory/_audit.py` wrappers installed by `MemoryProvider.__init_subclass__`, so every read path (`retrieve`, `search`, `list_memories`) sees the same scrubbed shape regardless of backend.  Top-level keys only — nested structures are not recursed.  The write path (`store`) is **not** scrubbed: the denylist filters on the way out, not on the way in, so operators can still persist fields they want to hide from clients.
+
 ## Conversation Events
 
 | Method | Path | Description |

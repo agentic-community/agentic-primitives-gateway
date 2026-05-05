@@ -77,14 +77,15 @@ Each chunk gains a `citations` list when supported:
 
 #### Metadata scrubbing
 
-`RetrievedChunk.metadata` is operator-controlled and flows verbatim to callers (same trust model as `MemoryRecord.metadata`).  Operators who want to strip specific keys before they leave the gateway — e.g. internal bucket identifiers or ingest-pipeline bookkeeping — set `knowledge.metadata_denylist` in config:
+`RetrievedChunk.metadata` is operator-controlled and flows verbatim to callers (same trust model as `MemoryRecord.metadata`).  Operators who want to strip specific keys before they leave the gateway — e.g. internal bucket identifiers or ingest-pipeline bookkeeping — add them to the single `metadata_denylists` config dict keyed by primitive name:
 
 ```yaml
-knowledge:
-  metadata_denylist: ["internal_ingest_id", "pipeline_stage"]
+metadata_denylists:
+  knowledge: ["internal_ingest_id", "pipeline_stage"]
+  memory: ["audit_trail_id"]
 ```
 
-The denylist is applied uniformly in `primitives/knowledge/_audit.wrap_retrieve`, so REST and the agent `search_knowledge` tool both see the same scrubbed shape.  Top-level keys only — nested structures are not recursed.  Citation metadata is scrubbed with the same list.
+The denylist is applied uniformly in `primitives/knowledge/_audit.wrap_retrieve`, so REST and the agent `search_knowledge` tool both see the same scrubbed shape.  Top-level keys only — nested structures are not recursed.  Citation metadata is scrubbed with the same list.  The same `metadata_denylists` dict drives scrubbing for every primitive that opts into the pattern (see [Memory API](memory.md#metadata-scrubbing)).
 
 ### Native retrieve-and-generate
 

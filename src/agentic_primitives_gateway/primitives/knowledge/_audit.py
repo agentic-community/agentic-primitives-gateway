@@ -28,6 +28,7 @@ from typing import Any
 from agentic_primitives_gateway import metrics
 from agentic_primitives_gateway.audit.emit import emit_audit_event
 from agentic_primitives_gateway.audit.models import AuditAction, AuditOutcome, ResourceType
+from agentic_primitives_gateway.primitives._metadata_scrub import apply_metadata_denylist, get_denylist
 
 
 def _provider_label(instance: Any) -> str:
@@ -58,44 +59,24 @@ def _emit(
     )
 
 
-def _apply_metadata_denylist(chunks: Any, denylist: list[str]) -> None:
-    """Strip denylisted keys from each chunk's ``metadata`` in place.
+def _extract_chunk_metadata(chunk: Any) -> list[dict[str, Any]]:
+    """Yield every ``metadata`` dict the denylist should touch on a chunk.
 
-    Applied uniformly at the wrapper boundary so REST callers and agent
-    tools see the same scrubbed shape.  Empty / None denylist is a no-op.
-    The denylist is matched against top-level keys only — nested dicts
-    are not recursed to keep the behavior predictable for operators.
+    Covers the chunk's own ``metadata`` plus each citation's
+    ``metadata`` passthrough — otherwise operators could still leak via
+    the Citation escape hatch.  Non-dict metadata (Pydantic defaults
+    are always dict, but subclass surprises exist) and empty citation
+    lists are naturally skipped.
     """
-    if not denylist or not chunks:
-        return
-    deny_set = set(denylist)
-    for chunk in chunks:
-        meta = getattr(chunk, "metadata", None)
-        if not isinstance(meta, dict) or not meta:
-            continue
-        for key in deny_set.intersection(meta.keys()):
-            meta.pop(key, None)
-        # Citations carry their own metadata dict; scrub those too.
-        citations = getattr(chunk, "citations", None) or []
-        for citation in citations:
-            cmeta = getattr(citation, "metadata", None)
-            if isinstance(cmeta, dict) and cmeta:
-                for key in deny_set.intersection(cmeta.keys()):
-                    cmeta.pop(key, None)
-
-
-def _get_metadata_denylist() -> list[str]:
-    """Read the metadata denylist from settings.
-
-    Imported lazily so the audit wrapper stays importable from the ABC
-    without pulling in the full settings graph on module load.
-    """
-    try:
-        from agentic_primitives_gateway.config import settings
-
-        return list(getattr(settings, "knowledge", None).metadata_denylist or [])  # type: ignore[union-attr]
-    except Exception:
-        return []
+    out: list[dict[str, Any]] = []
+    meta = getattr(chunk, "metadata", None)
+    if isinstance(meta, dict):
+        out.append(meta)
+    for citation in getattr(chunk, "citations", None) or []:
+        cmeta = getattr(citation, "metadata", None)
+        if isinstance(cmeta, dict):
+            out.append(cmeta)
+    return out
 
 
 def wrap_retrieve(func: Any) -> Any:
@@ -151,7 +132,7 @@ def wrap_retrieve(func: Any) -> Any:
         # Apply the operator-configured metadata denylist uniformly before
         # any downstream consumer (REST response, agent tool, audit
         # metadata) sees it.  Same scrubbing for every caller.
-        _apply_metadata_denylist(chunks, _get_metadata_denylist())
+        apply_metadata_denylist(chunks, get_denylist("knowledge"), extract=_extract_chunk_metadata)
 
         chunk_count = len(chunks) if chunks is not None else 0
         top_score = 0.0
