@@ -82,6 +82,7 @@ class TestCheckpointSaveLoad:
             actor_id="test-agent:u:alice",
             trace_id="trace-1",
             memory_ns="agent:test-agent:u:alice",
+            knowledge_ns="test-corpus",
             depth=0,
             prev_overrides={},
             messages=[{"role": "user", "content": "hello"}],
@@ -117,6 +118,7 @@ class TestCheckpointSaveLoad:
             actor_id="test-agent:u:alice",
             trace_id="trace-1",
             memory_ns="agent:test-agent:u:alice",
+            knowledge_ns="test-corpus",
             depth=0,
             prev_overrides={},
             content="done",
@@ -141,12 +143,39 @@ class TestCheckpointSaveLoad:
             actor_id="test-agent:u:alice",
             trace_id="t",
             memory_ns="ns",
+            knowledge_ns="test-corpus",
             depth=0,
             prev_overrides={},
         )
         # Should not raise
         await runner._checkpoint(ctx, "hello")
         await runner._delete_checkpoint(ctx)
+
+    @pytest.mark.asyncio
+    async def test_checkpoint_round_trips_knowledge_ns(self):
+        """knowledge_ns survives checkpoint serialization verbatim."""
+        store = InMemoryCheckpointStore()
+        runner = AgentRunner()
+        runner.set_checkpoint_store(store)
+
+        set_authenticated_principal(_ALICE)
+        spec = _make_spec()
+        ctx = _RunContext(
+            spec=spec,
+            session_id="sess-k",
+            actor_id="test-agent:u:alice",
+            trace_id="trace-k",
+            memory_ns="agent:test-agent:u:alice",
+            knowledge_ns="support-kb-v2",
+            depth=0,
+            prev_overrides={},
+            content="",
+        )
+
+        await runner._checkpoint(ctx, "hello")
+        data = await store.load("alice:sess-k")
+        assert data is not None
+        assert data["knowledge_ns"] == "support-kb-v2"
 
     @pytest.mark.asyncio
     async def test_checkpoint_requires_principal(self):
@@ -162,6 +191,7 @@ class TestCheckpointSaveLoad:
             actor_id="test-agent:u:alice",
             trace_id="t",
             memory_ns="ns",
+            knowledge_ns="test-corpus",
             depth=0,
             prev_overrides={},
         )
@@ -188,6 +218,7 @@ class TestResume:
             "session_id": "sess-1",
             "actor_id": "test-agent:u:alice",
             "memory_ns": "agent:test-agent:u:alice",
+            "knowledge_ns": "knowledge:system:test-agent",
             "trace_id": "trace-1",
             "depth": 0,
             "prev_overrides": {},
@@ -220,6 +251,54 @@ class TestResume:
 
         # Checkpoint should be deleted after successful resume
         assert await store.load("alice:sess-1") is None
+
+    @pytest.mark.asyncio
+    async def test_resume_reinstalls_knowledge_contextvar(self):
+        """Checkpoints with ``knowledge_ns`` reinstall the contextvar on resume."""
+        from agentic_primitives_gateway.primitives.knowledge.context import get_knowledge_namespace
+
+        store = InMemoryCheckpointStore()
+        runner = AgentRunner()
+        runner.set_checkpoint_store(store)
+
+        agent_store = AsyncMock()
+        agent_store.resolve_qualified = AsyncMock(return_value=_make_spec())
+        runner.set_store(agent_store)
+
+        await store.save(
+            "alice:sess-kb",
+            {
+                "spec_name": "test-agent",
+                "session_id": "sess-kb",
+                "actor_id": "test-agent:u:alice",
+                "memory_ns": "agent:test-agent:u:alice",
+                "knowledge_ns": "docs-corpus",
+                "trace_id": "trace-kb",
+                "depth": 0,
+                "prev_overrides": {},
+                "session_ids": {},
+                "messages": [{"role": "user", "content": "hi"}],
+                "turns_used": 1,
+                "tools_called": [],
+                "content": "",
+                "original_message": "hi",
+                "principal": {"id": "alice", "type": "user", "groups": ["engineering"], "scopes": []},
+            },
+        )
+
+        observed_knowledge_ns: list[str | None] = []
+
+        async def _capture(_: dict) -> dict:
+            observed_knowledge_ns.append(get_knowledge_namespace())
+            return {"content": "resumed", "stop_reason": "end_turn"}
+
+        with patch("agentic_primitives_gateway.agents.runner.registry") as mock_registry:
+            mock_registry.llm.route_request = _capture
+            mock_registry.memory.create_event = AsyncMock()
+            mock_registry.observability.ingest_trace = AsyncMock()
+            await runner.resume("alice:sess-kb")
+
+        assert observed_knowledge_ns == ["docs-corpus"]
 
     @pytest.mark.asyncio
     async def test_resume_lock_prevents_double_recovery(self):

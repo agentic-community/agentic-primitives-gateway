@@ -175,6 +175,14 @@ _DEFAULTS: dict[str, dict[str, Any]] = {
             }
         },
     },
+    Primitive.KNOWLEDGE: {
+        "default": "noop",
+        "backends": {
+            "noop": {
+                "backend": "agentic_primitives_gateway.primitives.knowledge.noop.NoopKnowledgeProvider",
+            }
+        },
+    },
 }
 
 
@@ -189,6 +197,7 @@ class ProvidersConfig(BaseModel):
     policy: PrimitiveProvidersConfig = PrimitiveProvidersConfig(**_DEFAULTS[Primitive.POLICY])
     evaluations: PrimitiveProvidersConfig = PrimitiveProvidersConfig(**_DEFAULTS[Primitive.EVALUATIONS])
     tasks: PrimitiveProvidersConfig = PrimitiveProvidersConfig(**_DEFAULTS[Primitive.TASKS])
+    knowledge: PrimitiveProvidersConfig = PrimitiveProvidersConfig(**_DEFAULTS[Primitive.KNOWLEDGE])
 
 
 class SeedPolicyConfig(BaseModel):
@@ -426,6 +435,11 @@ class Settings(BaseSettings):
     governance: GovernanceConfig = GovernanceConfig()
     audit: AuditConfig = AuditConfig()
     logging: LoggingConfig = LoggingConfig()
+    # Single, extensible denylist map keyed by primitive name.  New
+    # primitives that adopt the scrubbing pattern add a key here
+    # without touching Settings.  See ``primitives/_metadata_scrub.py``
+    # and the per-primitive ``_audit.py`` wrappers that consume it.
+    metadata_denylists: dict[str, list[str]] = Field(default_factory=dict)
 
     @staticmethod
     def config_file_path() -> str | None:

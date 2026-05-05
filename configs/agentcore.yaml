@@ -25,6 +25,17 @@ providers:
           region: "${AWS_REGION:=us-east-1}"
           memory_id: "${AGENTCORE_MEMORY_ID:=}"
 
+  knowledge:
+    default: "agentcore"
+    backends:
+      agentcore:
+        backend: "agentic_primitives_gateway.primitives.knowledge.agentcore.AgentCoreKnowledgeProvider"
+        config:
+          region: "${AWS_REGION:=us-east-1}"
+          knowledge_base_id: "${AGENTCORE_KB_ID:=}"
+          data_source_id: "${AGENTCORE_KB_DATA_SOURCE_ID:=}"
+          default_model_arn: "${AGENTCORE_KB_MODEL_ARN:=}"
+
   identity:
     default: "agentcore"
     backends:
@@ -107,6 +118,47 @@ agents:
     config:
       redis_url: "${REDIS_URL:=redis://localhost:6379/0}"
   specs:
+    support-bot:
+      model: "us.anthropic.claude-sonnet-4-20250514-v1:0"
+      description: "Grounded Q&A bot with inline knowledge citations"
+      system_prompt: |
+        You are a support bot.  For every factual question, call
+        search_knowledge with include_sources=true, then ground your
+        answer in the returned chunks.  Each result is tagged with a
+        [N] marker — write the marker immediately after any claim
+        that came from it so the UI can link the claim to the source.
+        If the knowledge base doesn't cover the question, say so;
+        do not invent facts.
+      # Uses the default ``agentcore`` knowledge backend.  Bedrock KB
+      # id resolution is **operator-scope**, consistent with every
+      # other primitive that addresses a backing resource (memory_id,
+      # Langfuse project keys, Milvus collections, etc.) — there is
+      # no agent-spec-level ``knowledge_base_id`` field by design.
+      # To pin this agent to a specific KB, pick one:
+      #   1. Set AGENTCORE_KB_ID in the environment (used by
+      #      providers.knowledge.backends.default.config.knowledge_base_id
+      #      above) — single-KB deployments.
+      #   2. Vend per-user KB ids as OIDC attribute
+      #      apg.agentcore.knowledgebase_id so each user hits their
+      #      own KB via the same spec — multi-tenant deployments.
+      #   3. Define multiple named AgentCore backends in
+      #      providers.knowledge.backends (e.g. ``agentcore-support``,
+      #      ``agentcore-engineering``) and add
+      #      ``provider_overrides: {knowledge: agentcore-support}``
+      #      on this spec — multi-KB single-tenant deployments.
+      # The ``namespace`` field below is a logical tag (embedded in
+      # ingestion-job descriptions and chunk IDs); it does NOT
+      # address the KB.
+      primitives:
+        knowledge:
+          enabled: true
+          namespace: "support-corpus"
+          options:
+            inline_citations: true
+      max_turns: 20
+      hooks:
+        auto_memory: false
+        auto_trace: true
     research-assistant:
       model: "us.anthropic.claude-sonnet-4-20250514-v1:0"
       description: "A research assistant with long-term memory and web browsing"

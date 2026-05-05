@@ -118,15 +118,15 @@ See the [Configuration Guide](https://agentic-community.github.io/agentic-primit
 |  +--+-------+-------+-------+-------+--------+-------+------+-------+ |
 +-----+-------+-------+-------+-------+--------+-------+------+---------+
       |       |       |       |       |        |       |      |
- +----v---+ +-v-------+ +v------+ +v----+ +v-----+ +v------+ +v------+ +v------+ +v----------+
- | Memory | |Identity | |Code   | |Brwsr| |Obsrv.| | LLM   | |Policy | | Evals | |  Tools   |
- |--------| |---------| |Interp | |-----| |------| |-------| |-------| |-------| |----------|
- | Noop   | |Noop     | |Noop   | |Noop | |Noop  | |Noop   | |Noop   | |Noop   | | Noop     |
- | InMem  | |AgntCore | |AgntCr | |Agnt | |Lang  | |Bedrock| |Agnt   | |Agnt   | | AgntCore |
- | Mem0   | |Keycloak | |Juptyr | |Core | |fuse  | |Convrs | |Core   | |Core   | | MCP      |
- | Agnt   | |Entra    | |       | |Seln | |Agnt  | |OpenAI | |       | |       | | Registry |
- | Core   | |Okta     | |       | |Grid | |Core  | |Compat | |       | |       | |          |
- +--------+ +---------+ +-------+ +-----+ +------+ +-------+ +-------+ +-------+ +----------+
+ +----v---+ +-v-------+ +v------+ +v----+ +v-----+ +v------+ +v------+ +v------+ +v----------+ +v-----------+
+ | Memory | |Identity | |Code   | |Brwsr| |Obsrv.| | LLM   | |Policy | | Evals | |  Tools   | | Knowledge  |
+ |--------| |---------| |Interp | |-----| |------| |-------| |-------| |-------| |----------| |------------|
+ | Noop   | |Noop     | |Noop   | |Noop | |Noop  | |Noop   | |Noop   | |Noop   | | Noop     | | Noop       |
+ | InMem  | |AgntCore | |AgntCr | |Agnt | |Lang  | |Bedrock| |Agnt   | |Agnt   | | AgntCore | | LlamaIndex |
+ | Mem0   | |Keycloak | |Juptyr | |Core | |fuse  | |Convrs | |Core   | |Core   | | MCP      | | +FalkorDB  |
+ | Agnt   | |Entra    | |       | |Seln | |Agnt  | |OpenAI | |       | |       | | Registry | | AgntCore   |
+ | Core   | |Okta     | |       | |Grid | |Core  | |Compat | |       | |       | |          | |            |
+ +--------+ +---------+ +-------+ +-----+ +------+ +-------+ +-------+ +-------+ +----------+ +------------+
 
  Governance fan-out (from AuditRouter)
  +-------------+  +--------+  +----------------+  +---------------+
@@ -147,6 +147,7 @@ See the [Configuration Guide](https://agentic-community.github.io/agentic-primit
 | **Tools** | Tool registration, discovery, and invocation (MCP) | Noop, AgentCore, MCP Registry |
 | **Policy** | Cedar policy engine and policy CRUD | Noop, AgentCore |
 | **Evaluations** | LLM-as-a-judge evaluator management and evaluation | Noop, Langfuse, AgentCore |
+| **Knowledge** | RAG / graph retrieval over an ingested corpus, with optional native retrieve-and-generate | Noop, LlamaIndex (vector + FalkorDB graph), AgentCore Knowledge Bases |
 
 See the [Primitives Guide](https://agentic-community.github.io/agentic-primitives-gateway/concepts/primitives/) for details on each primitive and its backends.
 

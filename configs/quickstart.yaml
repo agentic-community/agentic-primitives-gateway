@@ -37,8 +37,51 @@ providers:
         backend: "agentic_primitives_gateway.primitives.memory.in_memory.InMemoryProvider"
         config: {}
 
+  knowledge:
+    default: "llamaindex"
+    backends:
+      llamaindex:
+        backend: "agentic_primitives_gateway.primitives.knowledge.llamaindex.LlamaIndexKnowledgeProvider"
+        config:
+          store_type: vector
+          # SimpleVectorStore in-memory; SimpleDocstore keeps nodes in-process.
+          # No external services required — great for dev + CI.
+          embed_model:
+            provider: bedrock
+            config:
+              model_name: amazon.titan-embed-text-v2:0
+          llm:
+            backend_name: bedrock
+            model: us.anthropic.claude-sonnet-4-20250514-v1:0
+
 agents:
   specs:
+    support-bot:
+      model: "us.anthropic.claude-sonnet-4-20250514-v1:0"
+      description: "Grounded Q&A bot with inline knowledge citations"
+      system_prompt: |
+        You are a support bot.  For every factual question, call
+        search_knowledge with include_sources=true, then ground your
+        answer in the returned chunks.  Each result is tagged with a
+        [N] marker — write the marker immediately after any claim
+        that came from it so the UI can link the claim to the source.
+        If the knowledge base doesn't cover the question, say so;
+        do not invent facts.
+      # Ingest documents into the ``support-corpus`` namespace before
+      # chatting, e.g.:
+      #   curl -X POST localhost:8000/api/v1/knowledge/support-corpus/documents \
+      #     -H 'Content-Type: application/json' \
+      #     -d '{"documents":[{"text":"Refunds are accepted within 30 days.","source":"faq.md"}]}'
+      primitives:
+        knowledge:
+          enabled: true
+          namespace: "support-corpus"
+          options:
+            inline_citations: true
+      max_turns: 20
+      hooks:
+        auto_memory: false
+        auto_trace: false
     assistant:
       model: "us.anthropic.claude-sonnet-4-20250514-v1:0"
       description: "A helpful assistant with memory"

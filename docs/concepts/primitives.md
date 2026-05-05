@@ -16,6 +16,7 @@ The nine infrastructure primitives that recur across every agent system.
 | **Policy** | Cedar policy engine and policy CRUD, optional generation | Noop, AgentCore                                                              |
 | **Evaluations** | LLM-as-a-judge evaluators, online eval configs | Noop, AgentCore                                                              |
 | **Tasks** | Shared task board for team coordination | Noop, InMemory, Redis                                                        |
+| **Knowledge** | RAG / graph retrieval over a bulk-indexed corpus, with optional native retrieve-and-generate | Noop, LlamaIndex (vector + FalkorDB graph), AgentCore Knowledge Bases        |
 
 ## How Providers Work
 

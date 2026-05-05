@@ -8,12 +8,20 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class PrimitiveConfig(BaseModel):
-    """Per-primitive configuration within an agent spec."""
+    """Per-primitive configuration within an agent spec.
+
+    ``options`` is a primitive-specific free-form dict for behaviour
+    flags that don't warrant a top-level field on every primitive.
+    Example: ``options: {"inline_citations": true}`` on the knowledge
+    primitive enables ``[N]`` citation markers in tool output.  Other
+    primitives ignore options they don't recognise.
+    """
 
     enabled: bool = True
     tools: list[str] | None = None
     namespace: str | None = None
     shared_namespaces: list[str] | None = None
+    options: dict[str, Any] = Field(default_factory=dict)
 
 
 class HooksConfig(BaseModel):
@@ -81,11 +89,20 @@ class ChatRequest(BaseModel):
 
 
 class ToolArtifact(BaseModel):
-    """A tool call input/output pair captured during agent execution."""
+    """A tool call input/output pair captured during agent execution.
+
+    ``structured`` is an optional tool-specific sideband payload the
+    handler can attach when it has richer data than the plain-text
+    ``output`` that goes to the LLM.  It's rendered by the UI when
+    the tool has a dedicated renderer (e.g. ``knowledge_search``
+    emits chunk/citation lists here) and ignored otherwise.  The
+    shape is tool-specific; the UI discriminates on ``tool_name``.
+    """
 
     tool_name: str
     tool_input: dict[str, Any] = Field(default_factory=dict)
     output: str = ""
+    structured: dict[str, Any] | None = None
 
 
 class ChatResponse(BaseModel):

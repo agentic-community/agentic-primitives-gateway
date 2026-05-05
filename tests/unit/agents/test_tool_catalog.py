@@ -59,6 +59,21 @@ class TestBuildToolList:
         assert "remember" in names
         assert "search_memory" not in names
 
+    def test_knowledge_tool_included_when_enabled(self) -> None:
+        """``knowledge.enabled: true`` puts ``search_knowledge`` on the list.
+
+        Knowledge follows the same gating rule as every other primitive:
+        include if enabled on the spec.  The actual corpus namespace is
+        resolved at run time by the runner and lives in a contextvar
+        that the handler reads.
+        """
+        tools = build_tool_list({"knowledge": PrimitiveConfig(enabled=True)})
+        assert [t.name for t in tools] == ["search_knowledge"]
+
+    def test_knowledge_skipped_when_disabled(self) -> None:
+        tools = build_tool_list({"knowledge": PrimitiveConfig(enabled=False)})
+        assert tools == []
+
 
 class TestExecuteTool:
     async def test_execute_known_tool(self) -> None:

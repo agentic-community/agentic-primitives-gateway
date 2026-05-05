@@ -78,6 +78,10 @@ def _init_registry() -> None:
                 "backend": "agentic_primitives_gateway.primitives.tasks.noop.NoopTasksProvider",
                 "config": {},
             },
+            "knowledge": {
+                "backend": "agentic_primitives_gateway.primitives.knowledge.noop.NoopKnowledgeProvider",
+                "config": {},
+            },
         }
     )
     registry.initialize(test_settings)

@@ -281,10 +281,10 @@ async def get_agent_tools(name: str, owner: str | None = None) -> AgentToolsResp
     )
 
     # Build the tool list (same as the runner does).  Per-primitive
-    # context (memory namespace, session IDs, team_run_id) comes from
-    # contextvars at call time — for an introspection endpoint that
-    # never actually dispatches a tool, leaving the contextvars unset
-    # is correct.
+    # context (memory namespace, knowledge namespace, session IDs,
+    # team_run_id) comes from contextvars at call time — for an
+    # introspection endpoint that never actually dispatches a tool,
+    # leaving the contextvars unset is correct.
     tools = build_tool_list(
         spec.primitives,
         agent_store=_store,

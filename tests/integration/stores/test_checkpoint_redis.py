@@ -222,6 +222,7 @@ class TestAgentCheckpointIntegration:
             actor_id="integ-agent:u:alice",
             trace_id="trace-integ",
             memory_ns="agent:integ-agent:u:alice",
+            knowledge_ns="test-corpus",
             depth=0,
             prev_overrides={},
             messages=[{"role": "user", "content": "test message"}],

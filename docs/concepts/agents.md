@@ -52,8 +52,9 @@ Each primitive entry supports:
 |-------|-------------|---------|
 | `enabled` | Whether the primitive is active | `true` |
 | `tools` | Specific tools to allow; `null` includes all | `null` |
-| `namespace` | Memory namespace (memory primitive only); supports `{agent_name}`, `{session_id}` placeholders | `null` |
+| `namespace` | Namespace for memory or knowledge; supports `{agent_name}`, `{session_id}` placeholders | `null` |
 | `shared_namespaces` | Shared memory pool names (memory primitive only) | `null` |
+| `options` | Primitive-specific behaviour flags (e.g. `knowledge.options.inline_citations`) | `{}` |
 
 ### Complete Example: All Primitives
 
@@ -79,6 +80,13 @@ agents:
           enabled: true
           namespace: "agent:{agent_name}:{session_id}"
           # Tools: remember, recall, search_memory, forget, list_memories
+
+        knowledge:
+          enabled: true
+          namespace: "support-corpus"
+          options:
+            inline_citations: true
+          # Tools: search_knowledge
 
         browser:
           enabled: true
@@ -170,6 +178,7 @@ Each enabled primitive provides tools to the LLM:
 | Primitive | Tools |
 |-----------|-------|
 | **memory** | `remember`, `recall`, `search_memory`, `forget`, `list_memories` |
+| **knowledge** | `search_knowledge` |
 | **code_interpreter** | `execute_code` |
 | **browser** | `navigate`, `read_page`, `click`, `type_text`, `screenshot`, `evaluate_js` |
 | **tools** | `search_tools`, `invoke_tool` |
@@ -244,6 +253,29 @@ The meta-agent assesses the task, creates tailored specialists with focused syst
 `delegate_to` works with any agent — pre-existing or just created. Sub-agent streaming events are forwarded to the UI in real time, showing the same activity panels as static delegation.
 
 See [Agent Delegation Guide](../guides/agent-delegation.md) for more details.
+
+## Knowledge Citations
+
+When the `knowledge` primitive is enabled, agents get a `search_knowledge` tool that accepts an `include_sources: bool` argument.  When the LLM passes `true`, the handler asks the provider to populate structured citations (source, URI, page, span) and attaches them to the tool's artifact as a UI-only sideband — the model's plain-text output stays compact so token cost doesn't shift.  The web UI renders source cards below the assistant message whenever the sideband is present.
+
+### Inline citation markers
+
+For per-claim attribution, enable inline citations on the knowledge primitive:
+
+```yaml
+primitives:
+  knowledge:
+    enabled: true
+    namespace: "support-corpus"
+    options:
+      inline_citations: true
+```
+
+With inline mode on, `search_knowledge` tool output prepends each chunk with a globally-unique `[N]` marker and includes a one-line instruction telling the model to cite claims with those markers.  Multiple `search_knowledge` calls in the same turn use contiguous ranges of indices (no collisions — the runner reserves per-call ranges on a per-run counter).  The UI rewrites `[N]` in the assistant's streamed tokens into clickable pills linked to the corresponding chunk card.
+
+The toggle is also exposed in the agent edit form under the knowledge primitive's options row.  Default is off.
+
+See the [Knowledge API reference](../api/knowledge.md#source-citations-in-the-ui) for REST-level details and the provider-specific citation fields each backend populates.
 
 ## Shared Memory Pools
 
