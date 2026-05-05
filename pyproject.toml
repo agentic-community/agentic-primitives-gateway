@@ -14,12 +14,7 @@ requires-python = ">=3.13"
 dependencies = [
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.34.0",
-    # Upper-bound pydantic: point releases re-pin ``pydantic-core`` exactly
-    # (e.g. 2.12.5 → core==2.46.2).  Floating past a minor can pull in a
-    # core that a transitive dep has already pinned to a neighbouring
-    # patch version, breaking app start with ``SystemError: incompatible
-    # pydantic-core version``.  Widen deliberately when bumping.
-    "pydantic>=2.10.0,<2.13.0",
+    "pydantic>=2.13.0,<2.14.0",
     "pydantic-settings>=2.0.0",
     "pyyaml>=6.0",
     "prometheus-client>=0.20.0",
