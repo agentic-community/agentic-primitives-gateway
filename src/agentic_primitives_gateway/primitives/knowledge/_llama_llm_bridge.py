@@ -18,13 +18,21 @@ caller pinned with ``X-Provider-Llm``.
 The bridge is imported lazily from ``llamaindex.py`` so the LlamaIndex
 dependency is optional — installing just the core gateway doesn't
 require ``llama-index-core``.
+
+Refactor note: when a second framework bridge lands (LangChain
+``BaseChatModel``, Strands ``Model``, etc.), this file should move to
+``primitives/_bridges/llamaindex.py``, parallel to ``_sync.py`` and
+``_metadata_scrub.py``.
 """
 
 from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncGenerator, Generator
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from agentic_primitives_gateway.primitives.llm.base import LLMProvider
 
 # Import guard: if llama-index-core isn't installed, the whole module is
 # importable but instantiating ``GatewayLlamaLLM`` raises with a clear
@@ -73,7 +81,6 @@ def _build_model_request(
     prompt: str,
     *,
     model: str | None,
-    backend_name: str | None,
     max_tokens: int,
     temperature: float | None,
 ) -> dict[str, Any]:
@@ -86,11 +93,33 @@ def _build_model_request(
         request["model"] = model
     if temperature is not None:
         request["temperature"] = temperature
-    if backend_name:
-        # Mirrors X-Provider-Llm pass-through: lets a knowledge backend
-        # pin a specific gateway LLM backend for synthesis.
-        request["_provider_override"] = backend_name
     return request
+
+
+def _resolve_llm_provider(backend_name: str | None) -> LLMProvider:
+    """Return the gateway LLM provider to use for this synthesis call.
+
+    When ``backend_name`` is set (from ``llm.backend_name`` in the
+    LlamaIndex knowledge provider config), resolve that named backend
+    explicitly — this bypasses the ``_provider_overrides`` contextvar
+    set from ``X-Provider-Llm`` headers so a backend's pinned synthesis
+    model doesn't accidentally hop to whatever the caller routed.
+    When unset, fall through to the normal request-scoped resolution
+    (contextvar-driven).
+
+    The deferred import keeps ``_llama_llm_bridge.py`` importable
+    without pulling in the whole registry graph at module load.
+    """
+    from typing import cast
+
+    from agentic_primitives_gateway.primitives.llm.base import LLMProvider
+    from agentic_primitives_gateway.registry import registry
+
+    if backend_name:
+        from agentic_primitives_gateway.models.enums import Primitive
+
+        return cast(LLMProvider, registry.get_primitive(Primitive.LLM).get(name=backend_name))
+    return registry.llm
 
 
 class GatewayLlamaLLM(CustomLLM):  # type: ignore[misc,valid-type]
@@ -194,18 +223,14 @@ class GatewayLlamaLLM(CustomLLM):  # type: ignore[misc,valid-type]
     # ── Internals ──────────────────────────────────────────────────────
 
     async def _call_llm(self, prompt: str) -> dict[str, Any]:
-        # Deferred import — the registry pulls the whole provider stack,
-        # so we don't want it evaluated at module import.
-        from agentic_primitives_gateway.registry import registry
-
+        provider = _resolve_llm_provider(self._backend_name)
         request = _build_model_request(
             prompt,
             model=self._model,
-            backend_name=self._backend_name,
             max_tokens=self._max_tokens,
             temperature=self._temperature,
         )
-        return await registry.llm.route_request(request)
+        return await provider.route_request(request)
 
     async def _stream_llm(self, prompt: str) -> list[str]:
         chunks: list[str] = []
@@ -214,16 +239,14 @@ class GatewayLlamaLLM(CustomLLM):  # type: ignore[misc,valid-type]
         return chunks
 
     async def _stream_llm_async(self, prompt: str) -> AsyncGenerator[str]:
-        from agentic_primitives_gateway.registry import registry
-
+        provider = _resolve_llm_provider(self._backend_name)
         request = _build_model_request(
             prompt,
             model=self._model,
-            backend_name=self._backend_name,
             max_tokens=self._max_tokens,
             temperature=self._temperature,
         )
-        async for event in registry.llm.route_request_stream(request):
+        async for event in provider.route_request_stream(request):
             if isinstance(event, dict) and event.get("type") == "content_delta":
                 delta = event.get("delta", "")
                 if delta:

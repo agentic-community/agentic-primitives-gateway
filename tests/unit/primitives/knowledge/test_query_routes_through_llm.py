@@ -85,13 +85,27 @@ class TestQueryRoutesThroughLLMPrimitive:
         assert "messages" in sent_request
         assert sent_request["messages"], "registry.llm call must include prompt messages"
 
-    async def test_query_propagates_backend_name_as_provider_override(
+    async def test_query_resolves_pinned_backend_by_name(
         self, provider: LlamaIndexKnowledgeProvider, mock_embed_settings: None
     ) -> None:
-        """When ``llm.backend_name`` is configured, the bridge must pin
-        that backend via ``_provider_override`` — the same pin users get
-        from the ``X-Provider-Llm`` header.
+        """When ``llm.backend_name`` is configured, the bridge must
+        resolve that named backend explicitly from the registry — NOT
+        stuff the name into the request payload (where nothing reads
+        it) and fall through to ``registry.llm`` (which resolves via
+        the ``_provider_overrides`` contextvar from ``X-Provider-Llm``).
+
+        The difference matters: the contextvar path is caller-driven
+        (whatever the HTTP request asked for), whereas
+        ``llm.backend_name`` is a *knowledge-backend-operator* decision
+        that should pin the synthesis model regardless of the caller's
+        header.  An earlier version of this bridge silently dropped the
+        pin — the operator's config did nothing.
+
+        This test pins the real behavior: with ``backend_name`` set,
+        ``registry.get_primitive("llm").get(name=backend_name)`` is the
+        entry point; ``registry.llm`` is not invoked.
         """
+        from agentic_primitives_gateway.models.enums import Primitive
         from agentic_primitives_gateway.models.knowledge import IngestDocument
 
         pinned = LlamaIndexKnowledgeProvider(
@@ -106,9 +120,57 @@ class TestQueryRoutesThroughLLMPrimitive:
             captured.append(req)
             return {"content": "ok", "usage": {}}
 
+        pinned_provider = AsyncMock()
+        pinned_provider.route_request = _capture
+
+        # registry.get_primitive("llm").get(name=...) is the resolution
+        # path under test.  registry.llm is the fallback path that would
+        # be taken if the bug regressed — the default=None side-effect
+        # below will fail loudly if that happens.
         with patch("agentic_primitives_gateway.registry.registry") as mock_registry:
-            mock_registry.llm.route_request = _capture
+            mock_primitive = mock_registry.get_primitive.return_value
+            mock_primitive.get.return_value = pinned_provider
+            # Guard against regression: if the bridge falls through to
+            # registry.llm.route_request, the AsyncMock returns a
+            # MagicMock whose .get() would silently pass — so we make
+            # that path raise instead.
+            mock_registry.llm.route_request.side_effect = AssertionError(
+                "pinned backend bypass regressed — route_request hit the default provider"
+            )
             await pinned.query("ns", "q", top_k=1)
 
-        assert captured, "registry.llm.route_request was not called"
-        assert captured[0].get("_provider_override") == "my-pinned-backend"
+        # The registry resolver was called with the pinned name.
+        mock_registry.get_primitive.assert_called_with(Primitive.LLM)
+        mock_primitive.get.assert_called_with(name="my-pinned-backend")
+
+        # The request that actually went through is clean — no more
+        # dead ``_provider_override`` key polluting the payload.
+        assert captured, "pinned provider's route_request was not called"
+        assert "_provider_override" not in captured[0]
+
+    async def test_query_without_backend_name_uses_default_resolution(
+        self, provider: LlamaIndexKnowledgeProvider, mock_embed_settings: None
+    ) -> None:
+        """Contract symmetry: when the operator DIDN'T pin a backend,
+        the bridge falls through to the normal request-scoped
+        resolution (``registry.llm``) so ``X-Provider-Llm`` headers
+        and config defaults keep working as they do for every other
+        LLM call path.  Regression here would break per-request
+        provider overrides for RAG synthesis.
+        """
+        from agentic_primitives_gateway.models.knowledge import IngestDocument
+
+        await provider.ingest("ns", [IngestDocument(text="hello")])
+
+        mock_llm = AsyncMock(return_value={"content": "ok", "usage": {}})
+
+        with patch("agentic_primitives_gateway.registry.registry") as mock_registry:
+            mock_registry.llm.route_request = mock_llm
+            # If the bridge incorrectly hits get_primitive path even
+            # without a backend_name, this guard fires.
+            mock_registry.get_primitive.side_effect = AssertionError(
+                "unset backend_name must fall through to registry.llm, not get_primitive"
+            )
+            await provider.query("ns", "q", top_k=1)
+
+        assert mock_llm.await_count >= 1, "default path must route through registry.llm"
