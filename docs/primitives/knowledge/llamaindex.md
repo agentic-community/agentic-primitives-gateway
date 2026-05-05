@@ -34,12 +34,19 @@ providers:
 | `vector_store.provider` | `simple` | `simple` (in-memory), `pinecone`, `pgvector`, `milvus`, `weaviate` |
 | `graph_store.provider` | – | `falkordb`, `neo4j` |
 | `embed_model.provider` | – | `bedrock`, `openai`, `huggingface` |
-| `llm.backend_name` | – | Gateway LLM backend name to pin for `query()` synthesis |
-| `llm.model` | – | Model string passed through `registry.llm.route_request` |
+| `llm.backend_name` | `providers.llm.default` | Gateway LLM backend name to pin for `query()` synthesis.  Optional — falls back to the LLM primitive's operator-declared default. |
+| `llm.model` | – | Model string forwarded to the resolved LLM backend's `route_request`. |
 
 ## LLM routing through the gateway
 
-`query()` (retrieve-and-generate) routes its synthesis call through `registry.llm` via the `GatewayLlamaLLM` adapter in `primitives/knowledge/_llama_llm_bridge.py`.  This means LlamaIndex's internal completion inherits everything the gateway's LLM primitive already does: provider routing (`X-Provider-Llm`), per-user OIDC-resolved credentials, LLM audit events (`llm.generate`), and token accounting (`gateway_llm_tokens_total`).
+`query()` (retrieve-and-generate) routes its synthesis call through the gateway's LLM primitive via the `GatewayLlamaLLM` adapter in `primitives/knowledge/_llama_llm_bridge.py`.  Synthesis therefore inherits per-user OIDC-resolved credentials, LLM audit events (`llm.generate`), and token accounting (`gateway_llm_tokens_total`).
+
+**Synthesis LLM selection is operator-scope.**  The bridge resolves the synthesis backend in this order and explicitly bypasses the request-scoped `X-Provider-Llm` contextvar:
+
+1. `llm.backend_name` on this knowledge config, if set.
+2. `providers.llm.default` — the LLM primitive's operator-declared default.
+
+That matches LlamaIndex's own idiom of `llm or Settings.llm` (see `RetrieverQueryEngine`, `as_query_engine`), where the gateway's `providers.llm.default` plays the role of `Settings.llm`.  Callers cannot redirect RAG synthesis via `X-Provider-Llm` — that header routes *caller-facing* LLM calls (chat completions, tool calls).  Routing synthesis per-request would let callers silently change which LLM handles an operator-configured RAG path.
 
 **Embeddings still use an external model** — the gateway has no `embeddings` primitive yet, so `embed_model` points directly at Bedrock / OpenAI / HuggingFace.
 

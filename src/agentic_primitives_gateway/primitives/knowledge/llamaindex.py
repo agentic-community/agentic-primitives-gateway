@@ -18,8 +18,12 @@ Provider config example (in-memory dev default)::
         provider: bedrock
         config:
           model_name: amazon.titan-embed-text-v2:0
-      llm:                         # optional — used ONLY by query(); defaults to registry.llm
-        backend_name: bedrock      # pins a gateway LLM backend
+      llm:                         # optional — used ONLY by query()
+        backend_name: bedrock      # pins a gateway LLM backend; falls
+                                   # back to providers.llm.default when
+                                   # unset (X-Provider-Llm contextvar is
+                                   # intentionally bypassed — synthesis
+                                   # is operator-scope, not caller-routable)
         model: us.anthropic.claude-sonnet-4-20250514-v1:0
         max_tokens: 2048
 """

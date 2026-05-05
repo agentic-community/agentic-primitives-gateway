@@ -99,27 +99,37 @@ def _build_model_request(
 def _resolve_llm_provider(backend_name: str | None) -> LLMProvider:
     """Return the gateway LLM provider to use for this synthesis call.
 
-    When ``backend_name`` is set (from ``llm.backend_name`` in the
-    LlamaIndex knowledge provider config), resolve that named backend
-    explicitly — this bypasses the ``_provider_overrides`` contextvar
-    set from ``X-Provider-Llm`` headers so a backend's pinned synthesis
-    model doesn't accidentally hop to whatever the caller routed.
-    When unset, fall through to the normal request-scoped resolution
-    (contextvar-driven).
+    RAG synthesis is an operator-scope concern — the operator
+    configures the knowledge backend and, implicitly or explicitly,
+    its synthesis LLM.  Callers should not be able to redirect it
+    via the ``X-Provider-Llm`` header (that header is for caller-
+    facing LLM calls like chat completions, not for internal knowledge
+    synthesis).  Both branches below therefore bypass the
+    ``_provider_overrides`` contextvar:
+
+    - ``backend_name`` set (``llm.backend_name`` in the knowledge
+      config) → resolve that named backend.
+    - ``backend_name`` unset → fall back to the LLM primitive's
+      operator-declared default (``providers.llm.default``).  This
+      mirrors LlamaIndex's own idiom of ``llm or Settings.llm``.
 
     The deferred import keeps ``_llama_llm_bridge.py`` importable
     without pulling in the whole registry graph at module load.
     """
     from typing import cast
 
+    from agentic_primitives_gateway.models.enums import Primitive
     from agentic_primitives_gateway.primitives.llm.base import LLMProvider
     from agentic_primitives_gateway.registry import registry
 
-    if backend_name:
-        from agentic_primitives_gateway.models.enums import Primitive
-
-        return cast(LLMProvider, registry.get_primitive(Primitive.LLM).get(name=backend_name))
-    return registry.llm
+    llm_providers = registry.get_primitive(Primitive.LLM)
+    # Explicitly pass a name (either the pin or the operator-declared
+    # default) so ``_PrimitiveProviders.get`` skips the contextvar
+    # lookup branch.  ``registry.llm`` would have consulted the
+    # contextvar first and silently hopped to whatever the caller
+    # routed via ``X-Provider-Llm``.
+    name = backend_name or llm_providers.default_name
+    return cast(LLMProvider, llm_providers.get(name=name))
 
 
 class GatewayLlamaLLM(CustomLLM):  # type: ignore[misc,valid-type]
