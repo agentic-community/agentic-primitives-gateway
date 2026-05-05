@@ -33,6 +33,23 @@ providers:
 | `ingest` | Starts a data-source sync job. Upload documents to the backing store (e.g. S3) separately. |
 | `delete`, `list_documents` | Not implemented. AgentCore KBs don't expose per-document delete / list via the runtime API — delete from the backing store and re-sync. |
 
+## Structured citations
+
+When `retrieve()` is called with `include_citations=True`, each chunk carries a `citations: list[Citation]` populated from the KB `location` block and metadata:
+
+| Citation field | Source |
+|----------------|--------|
+| `source` | `metadata.source` (defaults to the location URI when unset) |
+| `uri` | First URI found in `location.s3Location.uri` / `webLocation.url` / `confluenceLocation.url` / `salesforceLocation.url` / `sharePointLocation.url` |
+| `page` | `metadata.x-amz-bedrock-kb-document-page-number` or `metadata.page` |
+| `span` | Not populated — Bedrock KB does not surface character offsets on retrieve results |
+| `snippet` | First 200 chars of the chunk text |
+| `metadata` | Remaining KB metadata, with surfaced fields removed |
+
+Default behaviour (flag off) leaves `chunk.citations = None`.
+
+The `query()` path (native retrieve-and-generate) already returns KB citations natively via its `citations[].retrievedReferences` payload — those are surfaced into `QueryResponse.chunks` unchanged.
+
 ## Install
 
 ```bash

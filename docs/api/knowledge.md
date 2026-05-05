@@ -124,7 +124,7 @@ The agent will call `search_knowledge(query, top_k)` and receive scored chunks w
 
 ### Inline citation markers
 
-For answers that need per-claim attribution (Perplexity-style), enable `inline_citations` on the agent spec:
+For answers that need per-claim attribution, enable `inline_citations` on the agent spec:
 
 ```yaml
 agents:

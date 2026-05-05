@@ -74,6 +74,21 @@ curl -X POST http://localhost:8000/api/v1/knowledge/demo/query \
   -d '{"question":"What is in Paris?"}'
 ```
 
+## Structured citations
+
+When `retrieve()` is called with `include_citations=True` (REST: `{"include_citations": true}` in the body; agent tool: `search_knowledge(..., include_sources=true)`), each returned chunk carries a `citations: list[Citation]` populated from LlamaIndex node metadata:
+
+| Citation field | Source |
+|----------------|--------|
+| `source` | `_apg_source` marker, or `metadata.source`, or `metadata.file_path`, or `metadata.file_name` |
+| `uri` | `metadata.url` or `metadata.uri` when present |
+| `page` | `metadata.page_label` or `metadata.page_number` (common for PDF readers) |
+| `span` | `(node.start_char_idx, node.end_char_idx)` when LlamaIndex populated them during node parsing |
+| `snippet` | First 200 chars of the chunk text |
+| `metadata` | Remaining node metadata, with the fields above and internal `_apg_*` markers stripped |
+
+Default behaviour (flag off) leaves `chunk.citations = None` — the common path stays compact.
+
 ## Observability
 
 Knowledge-specific metrics are emitted automatically (labels bounded by provider/store_type taxonomy):
