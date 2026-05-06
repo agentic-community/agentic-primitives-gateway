@@ -16,7 +16,46 @@ class EvaluationsProvider(ABC):
       scores from input/output data. The provider does the scoring.
     - **scores**: Record, retrieve, and manage pre-computed scores. The caller
       provides the scores.
+
+    The ABC auto-wraps evaluator CRUD, score CRUD, and online-config CRUD
+    on every subclass via ``__init_subclass__`` to emit
+    ``evaluator.create`` / ``evaluator.update`` / ``evaluator.delete`` /
+    ``evaluator.score.create`` / ``evaluator.score.delete`` /
+    ``evaluator.online_config.create`` / ``evaluator.online_config.delete``
+    audit events at the provider boundary.
     """
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        from agentic_primitives_gateway.primitives.evaluations._audit import (
+            wrap_create_evaluator,
+            wrap_create_online_evaluation_config,
+            wrap_create_score,
+            wrap_delete_evaluator,
+            wrap_delete_online_evaluation_config,
+            wrap_delete_score,
+            wrap_update_evaluator,
+        )
+
+        own = cls.__dict__
+        if "create_evaluator" in own:
+            cls.create_evaluator = wrap_create_evaluator(own["create_evaluator"])  # type: ignore[method-assign]
+        if "update_evaluator" in own:
+            cls.update_evaluator = wrap_update_evaluator(own["update_evaluator"])  # type: ignore[method-assign]
+        if "delete_evaluator" in own:
+            cls.delete_evaluator = wrap_delete_evaluator(own["delete_evaluator"])  # type: ignore[method-assign]
+        if "create_score" in own:
+            cls.create_score = wrap_create_score(own["create_score"])  # type: ignore[method-assign]
+        if "delete_score" in own:
+            cls.delete_score = wrap_delete_score(own["delete_score"])  # type: ignore[method-assign]
+        if "create_online_evaluation_config" in own:
+            cls.create_online_evaluation_config = wrap_create_online_evaluation_config(  # type: ignore[method-assign]
+                own["create_online_evaluation_config"]
+            )
+        if "delete_online_evaluation_config" in own:
+            cls.delete_online_evaluation_config = wrap_delete_online_evaluation_config(  # type: ignore[method-assign]
+                own["delete_online_evaluation_config"]
+            )
 
     # ── Evaluator CRUD ─────────────────────────────────────────────────
 

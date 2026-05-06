@@ -24,7 +24,57 @@ class IdentityProvider(ABC):
     **Control plane (optional, default ``NotImplementedError``):**
         - CRUD for credential providers (``create_credential_provider``, etc.).
         - CRUD for workload identities (``create_workload_identity``, etc.).
+
+    The ABC auto-wraps the data-plane reads (``get_token`` /
+    ``get_api_key``) and control-plane mutations on every subclass via
+    ``__init_subclass__`` to emit ``credential.read`` /
+    ``identity.credential_provider.*`` / ``identity.workload.*`` audit
+    events at the provider boundary.  Token / API-key values are never
+    logged — only the credential provider name and outcome.
     """
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        from agentic_primitives_gateway.primitives.identity._audit import (
+            wrap_create_credential_provider,
+            wrap_create_workload_identity,
+            wrap_delete_credential_provider,
+            wrap_delete_workload_identity,
+            wrap_get_api_key,
+            wrap_get_token,
+            wrap_update_credential_provider,
+            wrap_update_workload_identity,
+        )
+
+        own = cls.__dict__
+        if "get_token" in own:
+            cls.get_token = wrap_get_token(own["get_token"])  # type: ignore[method-assign]
+        if "get_api_key" in own:
+            cls.get_api_key = wrap_get_api_key(own["get_api_key"])  # type: ignore[method-assign]
+        if "create_credential_provider" in own:
+            cls.create_credential_provider = wrap_create_credential_provider(  # type: ignore[method-assign]
+                own["create_credential_provider"]
+            )
+        if "update_credential_provider" in own:
+            cls.update_credential_provider = wrap_update_credential_provider(  # type: ignore[method-assign]
+                own["update_credential_provider"]
+            )
+        if "delete_credential_provider" in own:
+            cls.delete_credential_provider = wrap_delete_credential_provider(  # type: ignore[method-assign]
+                own["delete_credential_provider"]
+            )
+        if "create_workload_identity" in own:
+            cls.create_workload_identity = wrap_create_workload_identity(  # type: ignore[method-assign]
+                own["create_workload_identity"]
+            )
+        if "update_workload_identity" in own:
+            cls.update_workload_identity = wrap_update_workload_identity(  # type: ignore[method-assign]
+                own["update_workload_identity"]
+            )
+        if "delete_workload_identity" in own:
+            cls.delete_workload_identity = wrap_delete_workload_identity(  # type: ignore[method-assign]
+                own["delete_workload_identity"]
+            )
 
     # ── Data plane — runtime token operations ─────────────────────
 

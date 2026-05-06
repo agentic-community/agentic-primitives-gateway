@@ -26,18 +26,51 @@ class MemoryProvider(ABC):
         # Local import — avoids a top-level cycle between the ABC and
         # the settings graph, which imports later than primitives.
         from agentic_primitives_gateway.primitives.memory._audit import (
+            wrap_add_strategy,
+            wrap_create_event,
+            wrap_create_memory_resource,
+            wrap_delete,
+            wrap_delete_event,
+            wrap_delete_memory_resource,
+            wrap_delete_strategy,
+            wrap_fork_conversation,
             wrap_list_memories,
             wrap_retrieve,
             wrap_search,
+            wrap_store,
         )
 
         own = cls.__dict__
+        # Read-path scrub
         if "retrieve" in own:
             cls.retrieve = wrap_retrieve(own["retrieve"])  # type: ignore[method-assign]
         if "search" in own:
             cls.search = wrap_search(own["search"])  # type: ignore[method-assign]
         if "list_memories" in own:
             cls.list_memories = wrap_list_memories(own["list_memories"])  # type: ignore[method-assign]
+        # Write-path specific audit events
+        if "store" in own:
+            cls.store = wrap_store(own["store"])  # type: ignore[method-assign]
+        if "delete" in own:
+            cls.delete = wrap_delete(own["delete"])  # type: ignore[method-assign]
+        if "create_event" in own:
+            cls.create_event = wrap_create_event(own["create_event"])  # type: ignore[method-assign]
+        if "delete_event" in own:
+            cls.delete_event = wrap_delete_event(own["delete_event"])  # type: ignore[method-assign]
+        if "fork_conversation" in own:
+            cls.fork_conversation = wrap_fork_conversation(own["fork_conversation"])  # type: ignore[method-assign]
+        if "create_memory_resource" in own:
+            cls.create_memory_resource = wrap_create_memory_resource(  # type: ignore[method-assign]
+                own["create_memory_resource"]
+            )
+        if "delete_memory_resource" in own:
+            cls.delete_memory_resource = wrap_delete_memory_resource(  # type: ignore[method-assign]
+                own["delete_memory_resource"]
+            )
+        if "add_strategy" in own:
+            cls.add_strategy = wrap_add_strategy(own["add_strategy"])  # type: ignore[method-assign]
+        if "delete_strategy" in own:
+            cls.delete_strategy = wrap_delete_strategy(own["delete_strategy"])  # type: ignore[method-assign]
 
     @abstractmethod
     async def store(
