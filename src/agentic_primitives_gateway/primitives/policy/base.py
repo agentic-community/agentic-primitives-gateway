@@ -8,7 +8,39 @@ class PolicyProvider(ABC):
     """Abstract base class for policy providers.
 
     Manages policy engines, policies, and optional policy generation.
+
+    The ABC auto-wraps the mutating engine + policy methods on every
+    subclass via ``__init_subclass__`` to emit ``policy.create`` /
+    ``policy.update`` / ``policy.delete`` audit events at the provider
+    boundary.  Policy bodies are not written to metadata; only the IDs
+    and body length.
     """
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        from agentic_primitives_gateway.primitives.policy._audit import (
+            wrap_create_policy,
+            wrap_create_policy_engine,
+            wrap_delete_policy,
+            wrap_delete_policy_engine,
+            wrap_update_policy,
+        )
+
+        own = cls.__dict__
+        if "create_policy_engine" in own:
+            cls.create_policy_engine = wrap_create_policy_engine(  # type: ignore[method-assign]
+                own["create_policy_engine"]
+            )
+        if "delete_policy_engine" in own:
+            cls.delete_policy_engine = wrap_delete_policy_engine(  # type: ignore[method-assign]
+                own["delete_policy_engine"]
+            )
+        if "create_policy" in own:
+            cls.create_policy = wrap_create_policy(own["create_policy"])  # type: ignore[method-assign]
+        if "update_policy" in own:
+            cls.update_policy = wrap_update_policy(own["update_policy"])  # type: ignore[method-assign]
+        if "delete_policy" in own:
+            cls.delete_policy = wrap_delete_policy(own["delete_policy"])  # type: ignore[method-assign]
 
     # ── Policy engines ────────────────────────────────────────────────
 

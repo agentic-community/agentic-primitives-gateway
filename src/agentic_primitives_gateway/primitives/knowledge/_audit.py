@@ -50,6 +50,11 @@ def _emit(
     namespace: str,
     metadata: dict[str, Any],
 ) -> None:
+    # ``layer=primitive`` distinguishes this provider-boundary event
+    # from the route-layer ``audit_mutation`` event that carries the
+    # same action + request_id.  See tools/_audit.py::_emit for the
+    # full rationale.
+    metadata.setdefault("layer", "primitive")
     emit_audit_event(
         action=action,
         outcome=outcome,

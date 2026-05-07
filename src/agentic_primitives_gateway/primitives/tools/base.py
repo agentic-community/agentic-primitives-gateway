@@ -9,7 +9,33 @@ class ToolsProvider(ABC):
 
     Supports MCP-compatible tool registries like AgentCore Gateway
     and MCP Gateway Registry.
+
+    The ABC auto-wraps ``invoke_tool``, ``register_tool``,
+    ``delete_tool``, and ``register_server`` on every subclass via
+    ``__init_subclass__`` to emit ``tool.call`` / ``tool.register`` /
+    ``tool.delete`` / ``tool.server.register`` audit events at the
+    provider boundary.  Subclasses do not emit these themselves — the
+    enrichment is inherited.
     """
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        from agentic_primitives_gateway.primitives.tools._audit import (
+            wrap_delete_tool,
+            wrap_invoke_tool,
+            wrap_register_server,
+            wrap_register_tool,
+        )
+
+        own = cls.__dict__
+        if "invoke_tool" in own:
+            cls.invoke_tool = wrap_invoke_tool(own["invoke_tool"])  # type: ignore[method-assign]
+        if "register_tool" in own:
+            cls.register_tool = wrap_register_tool(own["register_tool"])  # type: ignore[method-assign]
+        if "delete_tool" in own:
+            cls.delete_tool = wrap_delete_tool(own["delete_tool"])  # type: ignore[method-assign]
+        if "register_server" in own:
+            cls.register_server = wrap_register_server(own["register_server"])  # type: ignore[method-assign]
 
     @abstractmethod
     async def register_tool(self, tool_def: dict[str, Any]) -> None: ...

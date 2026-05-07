@@ -48,7 +48,7 @@ def _emit_llm_event(
     if total:
         metrics.LLM_TOKENS.labels(model=model or "unknown", kind="total").inc(total)
 
-    metadata: dict[str, Any] = {"model": model}
+    metadata: dict[str, Any] = {"model": model, "layer": "primitive"}
     if input_tokens is not None:
         metadata["input_tokens"] = input_tokens
     if output_tokens is not None:
