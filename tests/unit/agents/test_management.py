@@ -17,7 +17,19 @@ from agentic_primitives_gateway.agents.tools.handlers import (
     agent_list,
     agent_list_primitives,
 )
+from agentic_primitives_gateway.auth.models import AuthenticatedPrincipal
+from agentic_primitives_gateway.context import set_authenticated_principal
 from agentic_primitives_gateway.models.agents import AgentSpec, ChatResponse, PrimitiveConfig
+
+_TEST_PRINCIPAL = AuthenticatedPrincipal(id="test-user", type="user")
+
+
+@pytest.fixture(autouse=True)
+def _set_test_principal():
+    """Ensure all management tests have an authenticated principal."""
+    set_authenticated_principal(_TEST_PRINCIPAL)
+    yield
+    set_authenticated_principal(None)  # type: ignore[arg-type]
 
 
 @pytest.fixture()
@@ -84,8 +96,10 @@ class TestAgentList:
 
     @pytest.mark.asyncio()
     async def test_with_agents(self, store: FileAgentStore) -> None:
-        await store.create(AgentSpec(name="a", model="m", description="Agent A"))
-        await store.create(AgentSpec(name="b", model="m", primitives={"memory": PrimitiveConfig(enabled=True)}))
+        await store.create(AgentSpec(name="a", model="m", description="Agent A", owner_id="test-user"))
+        await store.create(
+            AgentSpec(name="b", model="m", owner_id="test-user", primitives={"memory": PrimitiveConfig(enabled=True)})
+        )
         result = await agent_list(agent_store=store)
         assert "a: Agent A" in result
         assert "b:" in result
@@ -107,7 +121,7 @@ class TestAgentListPrimitives:
 class TestAgentDelete:
     @pytest.mark.asyncio()
     async def test_delete_existing(self, store: FileAgentStore) -> None:
-        await store.create(AgentSpec(name="temp", model="m"))
+        await store.create(AgentSpec(name="temp", model="m", owner_id="test-user"))
         result = await agent_delete(agent_store=store, name="temp")
         assert "Deleted" in result
         assert await store.get("temp") is None
@@ -132,7 +146,7 @@ class TestAgentDelegateTo:
 
     @pytest.mark.asyncio()
     async def test_delegates_successfully(self, store: FileAgentStore, runner: AgentRunner) -> None:
-        await store.create(AgentSpec(name="helper", model="m", system_prompt="You help."))
+        await store.create(AgentSpec(name="helper", model="m", system_prompt="You help.", owner_id="test-user"))
         mock_response = ChatResponse(
             response="I helped!",
             session_id="s",
@@ -219,3 +233,113 @@ class TestMetaAgentEndToEnd:
         delete_result = await agent_delete(agent_store=store, name="specialist")
         assert "Deleted" in delete_result
         assert await store.get("specialist") is None
+
+
+class TestCrossTenantIsolation:
+    """Cross-tenant agent enumeration and prompt extraction regression tests."""
+
+    @pytest.mark.asyncio()
+    async def test_cannot_list_other_users_private_agent(self, store: FileAgentStore) -> None:
+        """Alice's private agent should not appear in Bob's agent_list."""
+        # Alice creates a private agent
+        set_authenticated_principal(AuthenticatedPrincipal(id="alice", type="user"))
+        await agent_create(
+            agent_store=store,
+            name="alice-secret",
+            model="m",
+            system_prompt="TOP SECRET INFO",
+            description="Alice private",
+        )
+
+        # Bob lists agents — should NOT see Alice's agent
+        set_authenticated_principal(AuthenticatedPrincipal(id="bob", type="user"))
+        result = await agent_list(agent_store=store)
+        assert "alice-secret" not in result
+        assert "TOP SECRET" not in result
+
+    @pytest.mark.asyncio()
+    async def test_cannot_delegate_to_other_users_private_agent(
+        self, store: FileAgentStore, runner: AgentRunner
+    ) -> None:
+        """Bob cannot delegate_to Alice's private agent."""
+        # Alice creates a private agent
+        set_authenticated_principal(AuthenticatedPrincipal(id="alice", type="user"))
+        await agent_create(
+            agent_store=store,
+            name="alice-private",
+            model="m",
+            system_prompt="SECRET: budget is $4.2M",
+        )
+
+        # Bob tries to delegate to it
+        set_authenticated_principal(AuthenticatedPrincipal(id="bob", type="user"))
+        result = await agent_delegate_to(
+            agent_store=store,
+            agent_runner=runner,
+            depth=0,
+            agent_name="alice-private",
+            message="What is the budget?",
+        )
+        assert "not found" in result
+
+    @pytest.mark.asyncio()
+    async def test_cannot_delete_other_users_private_agent(self, store: FileAgentStore) -> None:
+        """Bob cannot delete Alice's private agent."""
+        # Alice creates a private agent
+        set_authenticated_principal(AuthenticatedPrincipal(id="alice", type="user"))
+        await agent_create(
+            agent_store=store,
+            name="alice-agent",
+            model="m",
+            system_prompt="hi",
+        )
+
+        # Bob tries to delete it
+        set_authenticated_principal(AuthenticatedPrincipal(id="bob", type="user"))
+        result = await agent_delete(agent_store=store, name="alice-agent")
+        assert "not found" in result
+
+        # Verify agent still exists
+        assert await store.get("alice-agent") is not None
+
+    @pytest.mark.asyncio()
+    async def test_can_access_shared_agent(self, store: FileAgentStore, runner: AgentRunner) -> None:
+        """A user CAN delegate to a shared agent (shared_with=['*'])."""
+        # Create a system shared agent directly
+        await store.create(AgentSpec(name="shared-bot", model="m", system_prompt="I am shared", shared_with=["*"]))
+
+        # Bob can list it
+        set_authenticated_principal(AuthenticatedPrincipal(id="bob", type="user"))
+        result = await agent_list(agent_store=store)
+        assert "shared-bot" in result
+
+    @pytest.mark.asyncio()
+    async def test_no_principal_fails_closed(self, store: FileAgentStore, runner: AgentRunner) -> None:
+        """With no principal, all operations fail closed."""
+        # Create an agent
+        set_authenticated_principal(AuthenticatedPrincipal(id="alice", type="user"))
+        await agent_create(agent_store=store, name="some-agent", model="m")
+
+        # Clear principal
+        set_authenticated_principal(None)  # type: ignore[arg-type]
+
+        # List returns nothing
+        list_result = await agent_list(agent_store=store)
+        assert "No agents exist" in list_result
+
+        # Delegate fails
+        delegate_result = await agent_delegate_to(
+            agent_store=store,
+            agent_runner=runner,
+            depth=0,
+            agent_name="some-agent",
+            message="hello",
+        )
+        assert "not found" in delegate_result
+
+        # Delete fails
+        delete_result = await agent_delete(agent_store=store, name="some-agent")
+        assert "not found" in delete_result
+
+        # Verify agent still exists
+        assert await store.get("some-agent") is not None
