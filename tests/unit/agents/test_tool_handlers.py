@@ -443,14 +443,14 @@ class TestTaskHandlers:
 class TestAgentManagementHandlers:
     async def test_agent_create(self) -> None:
         store = AsyncMock()
-        store.get.return_value = None
+        store.resolve_for_caller.return_value = None
         result = await handlers.agent_create(store, "new-agent", "claude", primitives='{"memory": {"enabled": true}}')
         assert "Created agent" in result
         store.create.assert_awaited_once()
 
     async def test_agent_create_already_exists(self) -> None:
         store = AsyncMock()
-        store.get.return_value = MagicMock()
+        store.resolve_for_caller.return_value = MagicMock()
         result = await handlers.agent_create(store, "existing", "claude")
         assert "already exists" in result
 
@@ -461,7 +461,7 @@ class TestAgentManagementHandlers:
 
     async def test_agent_create_bool_primitive(self) -> None:
         store = AsyncMock()
-        store.get.return_value = None
+        store.resolve_for_caller.return_value = None
         result = await handlers.agent_create(store, "a", "m", primitives='{"memory": true}')
         assert "Created agent" in result
 

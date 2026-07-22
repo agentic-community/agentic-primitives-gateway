@@ -16,12 +16,24 @@ import pytest
 from agentic_primitives_gateway.agents.file_store import FileAgentStore, FileTeamStore
 from agentic_primitives_gateway.agents.runner import AgentRunner
 from agentic_primitives_gateway.agents.team_runner import TeamRunner
+from agentic_primitives_gateway.auth.models import AuthenticatedPrincipal
+from agentic_primitives_gateway.context import set_authenticated_principal
 from agentic_primitives_gateway.models.agents import AgentSpec, HooksConfig, PrimitiveConfig
 from agentic_primitives_gateway.models.tasks import TaskStatus
 from agentic_primitives_gateway.models.teams import TeamRunPhase, TeamSpec
 from agentic_primitives_gateway.registry import registry
 
 _GATEWAY_MOD = "agentic_primitives_gateway.agents.team_agent_loop.registry.llm"
+
+_TEST_PRINCIPAL = AuthenticatedPrincipal(id="test-user", type="user")
+
+
+@pytest.fixture(autouse=True)
+def _set_test_principal():
+    """Ensure all team runner tests have an authenticated principal."""
+    set_authenticated_principal(_TEST_PRINCIPAL)
+    yield
+    set_authenticated_principal(None)  # type: ignore[arg-type]
 
 
 # ── Helpers ──────────────────────────────────────────────────────────
@@ -36,6 +48,7 @@ def _make_agent(name: str, description: str = "") -> AgentSpec:
         primitives={},
         hooks=HooksConfig(auto_memory=False, auto_trace=False),
         max_turns=10,
+        shared_with=["*"],
     )
 
 
@@ -51,6 +64,7 @@ def _make_worker(name: str, with_code_interpreter: bool = False) -> AgentSpec:
         primitives=prims,
         hooks=HooksConfig(auto_memory=False, auto_trace=False),
         max_turns=10,
+        shared_with=["*"],
     )
 
 

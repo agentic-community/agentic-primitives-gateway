@@ -91,13 +91,31 @@ async def _resolve_team_agent(store: Any, team_owner_id: str, ref: str) -> Any:
     Bare refs resolve in the *team owner's* namespace first, then fall
     back to ``system`` — so the team behaves consistently regardless of
     who ran it.  See ``docs/concepts/team-versioning.md``.
+
+    Applies ``check_access`` against the calling principal to prevent
+    cross-tenant escalation through crafted worker references.
     """
+    from agentic_primitives_gateway.auth.access import check_access
+    from agentic_primitives_gateway.context import get_authenticated_principal
+
     if ":" in ref:
         owner_id, _, bare = ref.partition(":")
-        return await store.resolve_qualified(owner_id, bare)
-    spec = await store.resolve_qualified(team_owner_id, ref)
-    if spec is None and team_owner_id != "system":
-        spec = await store.resolve_qualified("system", ref)
+        spec = await store.resolve_qualified(owner_id, bare)
+    else:
+        spec = await store.resolve_qualified(team_owner_id, ref)
+        if spec is None and team_owner_id != "system":
+            spec = await store.resolve_qualified("system", ref)
+
+    # Enforce access: the calling user must be allowed to reach this spec
+    if spec is not None:
+        principal = get_authenticated_principal()
+        if principal is None:
+            return None
+        spec_owner = getattr(spec, "owner_id", "system")
+        spec_shared = getattr(spec, "shared_with", [])
+        if not check_access(principal, spec_owner, spec_shared):
+            return None
+
     return spec
 
 
@@ -367,6 +385,22 @@ class TeamRunner:
         team_spec = await self._team_store.resolve_qualified(spec_owner, spec_name)  # type: ignore[union-attr]
         if team_spec is None:
             logger.warning("Team '%s:%s' not found during resume — skipping", spec_owner, spec_name)
+            return
+
+        # Defense in depth: verify the restored principal still has access
+        from agentic_primitives_gateway.auth.access import check_access
+        from agentic_primitives_gateway.context import get_authenticated_principal
+
+        resume_principal = get_authenticated_principal()
+        if resume_principal is not None and not check_access(
+            resume_principal, team_spec.owner_id, team_spec.shared_with
+        ):
+            logger.warning(
+                "Principal '%s' no longer has access to team '%s:%s' — skipping resume",
+                resume_principal.id,
+                spec_owner,
+                spec_name,
+            )
             return
 
         team_run_id = data["team_run_id"]

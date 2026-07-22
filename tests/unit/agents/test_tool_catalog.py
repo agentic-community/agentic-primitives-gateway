@@ -13,7 +13,19 @@ from agentic_primitives_gateway.agents.tools.catalog import (
     to_llm_tools,
 )
 from agentic_primitives_gateway.agents.tools.delegation import MAX_AGENT_DEPTH, _build_agent_tools
+from agentic_primitives_gateway.auth.models import AuthenticatedPrincipal
+from agentic_primitives_gateway.context import set_authenticated_principal
 from agentic_primitives_gateway.models.agents import PrimitiveConfig
+
+_TEST_PRINCIPAL = AuthenticatedPrincipal(id="test-user", type="user")
+
+
+@pytest.fixture(autouse=True)
+def _set_test_principal():
+    """Ensure all catalog tests have an authenticated principal."""
+    set_authenticated_principal(_TEST_PRINCIPAL)
+    yield
+    set_authenticated_principal(None)  # type: ignore[arg-type]
 
 
 class TestBuildToolList:
@@ -132,7 +144,7 @@ class TestBuildAgentTools:
 
     async def test_delegation_handler_calls_runner(self) -> None:
         store = AsyncMock()
-        spec = MagicMock()
+        spec = MagicMock(owner_id="test-user", shared_with=[])
         store.resolve_qualified.return_value = spec
         runner = AsyncMock()
         response = MagicMock()
@@ -157,7 +169,7 @@ class TestBuildAgentTools:
 
     async def test_delegation_handler_error(self) -> None:
         store = AsyncMock()
-        store.resolve_qualified.return_value = MagicMock()
+        store.resolve_qualified.return_value = MagicMock(owner_id="test-user", shared_with=[])
         runner = AsyncMock()
         runner.run.side_effect = RuntimeError("boom")
 
@@ -169,7 +181,7 @@ class TestBuildAgentTools:
 
     async def test_delegation_handler_with_artifacts(self) -> None:
         store = AsyncMock()
-        store.resolve_qualified.return_value = MagicMock()
+        store.resolve_qualified.return_value = MagicMock(owner_id="test-user", shared_with=[])
         runner = AsyncMock()
         artifact = MagicMock()
         artifact.tool_name = "code_execute"

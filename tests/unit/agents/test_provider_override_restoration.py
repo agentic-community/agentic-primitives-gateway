@@ -72,6 +72,7 @@ class TestProviderOverrideRestoration:
             primitives={"memory": PrimitiveConfig(enabled=True)},
             hooks=HooksConfig(auto_memory=False, auto_trace=False),
             max_turns=2,
+            shared_with=["*"],
         )
         parent_spec = AgentSpec(
             name="coordinator",

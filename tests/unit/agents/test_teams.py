@@ -10,6 +10,8 @@ from fastapi.testclient import TestClient
 
 from agentic_primitives_gateway.agents.file_store import FileAgentStore, FileTeamStore
 from agentic_primitives_gateway.agents.team_runner import TeamRunner
+from agentic_primitives_gateway.auth.models import AuthenticatedPrincipal
+from agentic_primitives_gateway.context import set_authenticated_principal
 from agentic_primitives_gateway.main import app
 from agentic_primitives_gateway.models.agents import AgentSpec
 from agentic_primitives_gateway.models.teams import TeamSpec
@@ -17,6 +19,17 @@ from agentic_primitives_gateway.primitives.llm.base import LLMProvider
 from agentic_primitives_gateway.primitives.tasks.in_memory import InMemoryTasksProvider
 from agentic_primitives_gateway.routes.agents import set_agent_store
 from agentic_primitives_gateway.routes.teams import set_team_store
+
+_TEST_PRINCIPAL = AuthenticatedPrincipal(id="test-user", type="user")
+
+
+@pytest.fixture(autouse=True)
+def _set_test_principal():
+    """Ensure all team tests have an authenticated principal."""
+    set_authenticated_principal(_TEST_PRINCIPAL)
+    yield
+    set_authenticated_principal(None)  # type: ignore[arg-type]
+
 
 # ── Mock gateway ─────────────────────────────────────────────────────
 
@@ -233,10 +246,10 @@ async def test_team_runner_full_run(tmp_path: Any) -> None:
     team_store = FileTeamStore(path=str(tmp_path / "teams.json"))
     tasks_provider = InMemoryTasksProvider()
 
-    # Create agents
-    planner = AgentSpec(name="planner", model="mock", system_prompt="Plan tasks")
-    researcher = AgentSpec(name="researcher", model="mock", system_prompt="Research things")
-    synthesizer = AgentSpec(name="synthesizer", model="mock", system_prompt="Synthesize")
+    # Create agents (shared with all, like system agents from YAML configs)
+    planner = AgentSpec(name="planner", model="mock", system_prompt="Plan tasks", shared_with=["*"])
+    researcher = AgentSpec(name="researcher", model="mock", system_prompt="Research things", shared_with=["*"])
+    synthesizer = AgentSpec(name="synthesizer", model="mock", system_prompt="Synthesize", shared_with=["*"])
     await agent_store.create(planner)
     await agent_store.create(researcher)
     await agent_store.create(synthesizer)
@@ -317,9 +330,9 @@ async def test_team_runner_stream(tmp_path: Any) -> None:
     team_store = FileTeamStore(path=str(tmp_path / "teams.json"))
     tasks_provider = InMemoryTasksProvider()
 
-    planner = AgentSpec(name="planner", model="mock", system_prompt="Plan")
-    worker = AgentSpec(name="worker", model="mock", system_prompt="Work")
-    synth = AgentSpec(name="synth", model="mock", system_prompt="Synth")
+    planner = AgentSpec(name="planner", model="mock", system_prompt="Plan", shared_with=["*"])
+    worker = AgentSpec(name="worker", model="mock", system_prompt="Work", shared_with=["*"])
+    synth = AgentSpec(name="synth", model="mock", system_prompt="Synth", shared_with=["*"])
     await agent_store.create(planner)
     await agent_store.create(worker)
     await agent_store.create(synth)

@@ -654,7 +654,14 @@ class AgentRunner:
           receives the full code and output, not just the child's summary text.
         """
         sub_name = tool_name.removeprefix("call_")
-        sub_spec = await self._store.get(sub_name)  # type: ignore[union-attr]
+        # Access check: resolve via caller principal, not bare lookup
+        from agentic_primitives_gateway.context import get_authenticated_principal
+
+        principal = get_authenticated_principal()
+        if principal is not None:
+            sub_spec = await self._store.resolve_for_caller(sub_name, principal)  # type: ignore[union-attr]
+        else:
+            sub_spec = None
         if sub_spec is None:
             return f"Agent '{sub_name}' not found."
 
@@ -864,6 +871,21 @@ class AgentRunner:
         spec = await self._store.resolve_qualified(spec_owner, spec_name)  # type: ignore[union-attr]
         if spec is None:
             logger.warning("Agent '%s:%s' not found during resume — skipping", spec_owner, spec_name)
+            return
+
+        # Defense in depth: verify the restored principal still has access
+        # (the agent may have been un-shared since the checkpoint was created)
+        from agentic_primitives_gateway.auth.access import check_access
+        from agentic_primitives_gateway.context import get_authenticated_principal
+
+        resume_principal = get_authenticated_principal()
+        if resume_principal is not None and not check_access(resume_principal, spec.owner_id, spec.shared_with):
+            logger.warning(
+                "Principal '%s' no longer has access to agent '%s:%s' — skipping resume",
+                resume_principal.id,
+                spec_owner,
+                spec_name,
+            )
             return
 
         # Rebuild tools (handlers can't be serialized) and reinstall

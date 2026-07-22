@@ -174,6 +174,8 @@ async def export_agent(name: str, owner: str | None = None) -> Response:
     all_specs: dict[str, Any] = {}
     agents_cfg = spec.primitives.get("agents")
     if agents_cfg and agents_cfg.enabled and agents_cfg.tools:
+        from agentic_primitives_gateway.auth.access import check_access
+
         for ref in agents_cfg.tools:
             if ":" in ref:
                 owner_id, _, bare = ref.partition(":")
@@ -182,7 +184,7 @@ async def export_agent(name: str, owner: str | None = None) -> Response:
                 sa_spec = await store.resolve_qualified(spec.owner_id, ref)
                 if sa_spec is None:
                     sa_spec = await store.resolve_qualified("system", ref)
-            if sa_spec:
+            if sa_spec and check_access(principal, sa_spec.owner_id, sa_spec.shared_with):
                 all_specs[ref] = sa_spec
 
     code = _export(spec, all_specs=all_specs if all_specs else None)

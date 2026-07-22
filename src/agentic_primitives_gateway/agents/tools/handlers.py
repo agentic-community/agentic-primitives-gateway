@@ -526,6 +526,13 @@ def _get_owner_id() -> str:
     return principal.id if principal is not None else "system"
 
 
+def _get_principal():
+    """Return the current authenticated principal or None."""
+    from agentic_primitives_gateway.context import get_authenticated_principal
+
+    return get_authenticated_principal()
+
+
 async def agent_create(
     agent_store: Any,
     name: str,
@@ -560,7 +567,7 @@ async def agent_create(
         owner_id=_get_owner_id(),
     )
 
-    existing = await agent_store.get(name)
+    existing = await agent_store.resolve_for_caller(name, _get_principal()) if _get_principal() is not None else None
     if existing is not None:
         return f"Agent '{name}' already exists. Use a different name."
 

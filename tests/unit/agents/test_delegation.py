@@ -14,7 +14,19 @@ from agentic_primitives_gateway.agents.tools import (
     _build_agent_tools,
     build_tool_list,
 )
+from agentic_primitives_gateway.auth.models import AuthenticatedPrincipal
+from agentic_primitives_gateway.context import set_authenticated_principal
 from agentic_primitives_gateway.models.agents import AgentSpec, ChatResponse, PrimitiveConfig
+
+_TEST_PRINCIPAL = AuthenticatedPrincipal(id="test-user", type="user")
+
+
+@pytest.fixture(autouse=True)
+def _set_test_principal():
+    """Ensure all delegation tests have an authenticated principal."""
+    set_authenticated_principal(_TEST_PRINCIPAL)
+    yield
+    set_authenticated_principal(None)  # type: ignore[arg-type]
 
 
 @pytest.fixture()
@@ -75,12 +87,12 @@ class TestAgentDelegationHandler:
 
     @pytest.mark.asyncio()
     async def test_successful_delegation(self, agent_store: FileAgentStore, runner: AgentRunner) -> None:
-        # Create a sub-agent in the store
-        sub_spec = AgentSpec(name="helper", model="test-model", system_prompt="You help.")
+        # Create a sub-agent in the store owned by the test user
+        sub_spec = AgentSpec(name="helper", model="test-model", system_prompt="You help.", owner_id="test-user")
         await agent_store.create(sub_spec)
 
         config = PrimitiveConfig(enabled=True, tools=["helper"])
-        tools = _build_agent_tools(config, agent_store, runner, depth=0)
+        tools = _build_agent_tools(config, agent_store, runner, depth=0, parent_owner_id="test-user")
 
         # Mock the runner.run to avoid actual LLM calls
         mock_response = ChatResponse(
@@ -98,11 +110,11 @@ class TestAgentDelegationHandler:
     async def test_delegation_includes_artifacts(self, agent_store: FileAgentStore, runner: AgentRunner) -> None:
         from agentic_primitives_gateway.models.agents import ToolArtifact
 
-        sub_spec = AgentSpec(name="coder", model="test-model")
+        sub_spec = AgentSpec(name="coder", model="test-model", owner_id="test-user")
         await agent_store.create(sub_spec)
 
         config = PrimitiveConfig(enabled=True, tools=["coder"])
-        tools = _build_agent_tools(config, agent_store, runner, depth=0)
+        tools = _build_agent_tools(config, agent_store, runner, depth=0, parent_owner_id="test-user")
 
         mock_response = ChatResponse(
             response="Here's the code.",

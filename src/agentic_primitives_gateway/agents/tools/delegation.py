@@ -25,13 +25,31 @@ async def _resolve_sub_agent(store: Any, ref: str, parent_owner_id: str) -> Any:
     This matches the run-time rule documented in ``docs/concepts/
     agent-versioning.md``: sub-agent delegation resolves in the *running
     agent's* owner namespace, not the caller's.
+
+    Applies ``check_access`` against the calling principal to prevent
+    cross-tenant escalation through crafted sub-agent references.
     """
+    from agentic_primitives_gateway.auth.access import check_access
+    from agentic_primitives_gateway.context import get_authenticated_principal
+
     if ":" in ref:
         owner_id, _, bare = ref.partition(":")
-        return await store.resolve_qualified(owner_id, bare)
-    spec = await store.resolve_qualified(parent_owner_id, ref)
-    if spec is None and parent_owner_id != "system":
-        spec = await store.resolve_qualified("system", ref)
+        spec = await store.resolve_qualified(owner_id, bare)
+    else:
+        spec = await store.resolve_qualified(parent_owner_id, ref)
+        if spec is None and parent_owner_id != "system":
+            spec = await store.resolve_qualified("system", ref)
+
+    # Enforce access: the calling user must be allowed to reach this spec
+    if spec is not None:
+        principal = get_authenticated_principal()
+        if principal is None:
+            return None
+        spec_owner = getattr(spec, "owner_id", "system")
+        spec_shared = getattr(spec, "shared_with", [])
+        if not check_access(principal, spec_owner, spec_shared):
+            return None
+
     return spec
 
 
