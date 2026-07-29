@@ -123,7 +123,7 @@ class RedisEventStore(EventStore):
 
     async def get_index(self, index_key: str) -> list[str]:
         members = await self._redis.smembers(f"index:{index_key}")
-        return list(members)
+        return [member.decode("utf-8") if isinstance(member, bytes) else member for member in members]
 
     async def rename_key(self, old_key: str, new_key: str) -> None:
         """Rename status, events, and owner keys (best-effort)."""

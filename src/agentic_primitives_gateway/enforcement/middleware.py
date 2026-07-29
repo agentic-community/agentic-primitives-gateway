@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Iterable
 
 from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.responses import JSONResponse, Response
-from starlette.routing import Route
 
 from agentic_primitives_gateway import metrics
 from agentic_primitives_gateway.audit.emit import emit_audit_event
@@ -33,7 +33,7 @@ _EXEMPT_PREFIXES = (
 
 
 def _build_action_rules(
-    routes: list[Route],
+    routes: Iterable[object],
 ) -> list[tuple[str, re.Pattern[str], str]]:
     """Build Cedar action rules by introspecting the app's registered routes.
 
@@ -50,24 +50,30 @@ def _build_action_rules(
     /api/v1/memory/{namespace}/{key} matches /api/v1/memory/my-ns/my-key.
     FastAPI's {param:path} (catch-all) becomes .+ ; regular {param} becomes [^/]+.
 
-    Non-Route entries (Mount, WebSocket) are recursed into to handle sub-apps.
-    HEAD/OPTIONS are skipped (no enforcement needed for CORS preflight).
+    FastAPI 0.141+ represents included routers lazily. Their effective route
+    contexts expose the same path/method/endpoint attributes as Route, so use
+    those contexts when available. Other containers (such as Mount) are
+    recursed into through their routes attribute. WebSocket routes are skipped.
     """
     rules: list[tuple[str, re.Pattern[str], str]] = []
+
     for route in routes:
-        if not isinstance(route, Route):
+        effective_route_contexts = getattr(route, "effective_route_contexts", None)
+        if callable(effective_route_contexts):
+            rules.extend(_build_action_rules(effective_route_contexts()))
+            continue
+
+        path = getattr(route, "path", None)
+        methods = getattr(route, "methods", None)
+        endpoint = getattr(route, "endpoint", None)
+        endpoint_name = getattr(endpoint, "__name__", None)
+        if not isinstance(path, str) or not methods or not isinstance(endpoint_name, str):
             sub_routes = getattr(route, "routes", None)
             if sub_routes:
                 rules.extend(_build_action_rules(sub_routes))
             continue
 
-        path = route.path
         if not path.startswith("/api/v1/"):
-            continue
-
-        methods = route.methods or set()
-        endpoint = route.endpoint
-        if endpoint is None:
             continue
 
         # Derive primitive from first path segment: /api/v1/{primitive}/...
@@ -75,7 +81,7 @@ def _build_action_rules(
         primitive_segment = remainder.split("/", 1)[0]
         primitive = primitive_segment.replace("-", "_")  # "code-interpreter" → "code_interpreter"
 
-        action = f"{primitive}:{endpoint.__name__}"
+        action = f"{primitive}:{endpoint_name}"
 
         # Convert FastAPI path params to regex for matching at request time
         pattern_str = re.sub(r"\{[^}]+:path\}", ".+", path)  # {name:path} → .+

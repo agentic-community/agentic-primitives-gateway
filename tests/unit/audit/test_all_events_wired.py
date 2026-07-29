@@ -441,11 +441,17 @@ async def test_task_handlers_emit():
 @pytest.mark.asyncio
 async def test_agent_delegate_emits_on_success_and_failure():
     from agentic_primitives_gateway.agents.tools import delegation
+    from agentic_primitives_gateway.auth.models import AuthenticatedPrincipal
+    from agentic_primitives_gateway.context import set_authenticated_principal
     from agentic_primitives_gateway.models.agents import PrimitiveConfig
+
+    # Set a principal so access checks pass for alice-owned agents
+    set_authenticated_principal(AuthenticatedPrincipal(id="alice", type="user"))
 
     # Build one tool bound to a sub-agent named "analyst".
     spec_stub = MagicMock()
     spec_stub.owner_id = "alice"
+    spec_stub.shared_with = []
     spec_stub.name = "analyst"
 
     store = MagicMock()
@@ -466,6 +472,8 @@ async def test_agent_delegate_emits_on_success_and_failure():
     async with _wire_router() as sink:
         await handler_ok(message="hi")
         await handler_miss(message="hi")
+
+    set_authenticated_principal(None)  # type: ignore[arg-type]
 
     outcomes = [(e.action, e.outcome) for e in sink.events if e.action == AuditAction.AGENT_DELEGATE]
     assert ("agent.delegate", "success") in outcomes

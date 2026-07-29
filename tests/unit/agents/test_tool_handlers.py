@@ -7,6 +7,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from agentic_primitives_gateway.agents.tools import handlers
+from agentic_primitives_gateway.auth.models import AuthenticatedPrincipal
+from agentic_primitives_gateway.context import set_authenticated_principal
 from agentic_primitives_gateway.models.memory import MemoryRecord, SearchResult
 from agentic_primitives_gateway.models.tasks import Task
 from agentic_primitives_gateway.primitives.browser.context import (
@@ -40,6 +42,16 @@ def _mock_registry(**primitives: AsyncMock):
 
 
 # ── Contextvar fixtures — install per-primitive context the runner normally sets ──
+
+_TEST_PRINCIPAL = AuthenticatedPrincipal(id="test-user", type="user")
+
+
+@pytest.fixture(autouse=True)
+def _set_test_principal():
+    """Ensure all handler tests have an authenticated principal."""
+    set_authenticated_principal(_TEST_PRINCIPAL)
+    yield
+    set_authenticated_principal(None)  # type: ignore[arg-type]
 
 
 @pytest.fixture
@@ -431,14 +443,14 @@ class TestTaskHandlers:
 class TestAgentManagementHandlers:
     async def test_agent_create(self) -> None:
         store = AsyncMock()
-        store.get.return_value = None
+        store.resolve_for_caller.return_value = None
         result = await handlers.agent_create(store, "new-agent", "claude", primitives='{"memory": {"enabled": true}}')
         assert "Created agent" in result
         store.create.assert_awaited_once()
 
     async def test_agent_create_already_exists(self) -> None:
         store = AsyncMock()
-        store.get.return_value = MagicMock()
+        store.resolve_for_caller.return_value = MagicMock()
         result = await handlers.agent_create(store, "existing", "claude")
         assert "already exists" in result
 
@@ -449,7 +461,7 @@ class TestAgentManagementHandlers:
 
     async def test_agent_create_bool_primitive(self) -> None:
         store = AsyncMock()
-        store.get.return_value = None
+        store.resolve_for_caller.return_value = None
         result = await handlers.agent_create(store, "a", "m", primitives='{"memory": true}')
         assert "Created agent" in result
 
@@ -459,13 +471,13 @@ class TestAgentManagementHandlers:
         agent.description = "desc"
         agent.primitives = {"memory": MagicMock(enabled=True)}
         store = AsyncMock()
-        store.list.return_value = [agent]
+        store.list_for_user.return_value = [agent]
         result = await handlers.agent_list(store)
         assert "a1" in result
 
     async def test_agent_list_empty(self) -> None:
         store = AsyncMock()
-        store.list.return_value = []
+        store.list_for_user.return_value = []
         result = await handlers.agent_list(store)
         assert "No agents exist" in result
 
@@ -475,20 +487,26 @@ class TestAgentManagementHandlers:
 
     async def test_agent_delete_found(self) -> None:
         store = AsyncMock()
-        store.delete.return_value = True
+        spec = MagicMock()
+        spec.name = "a1"
+        spec.owner_id = "test-user"
+        store.resolve_for_caller.return_value = spec
+        store.delete_qualified.return_value = 1
         result = await handlers.agent_delete(store, "a1")
         assert "Deleted" in result
+        store.delete_qualified.assert_awaited_once_with("a1", "test-user")
 
     async def test_agent_delete_not_found(self) -> None:
         store = AsyncMock()
-        store.delete.return_value = False
+        store.resolve_for_caller.return_value = None
+        store.delete_qualified.return_value = False
         result = await handlers.agent_delete(store, "a1")
         assert "not found" in result
 
     async def test_agent_delegate_to(self) -> None:
         store = AsyncMock()
         spec = MagicMock()
-        store.get.return_value = spec
+        store.resolve_for_caller.return_value = spec
         runner = AsyncMock()
         response = MagicMock()
         response.response = "done"
@@ -499,14 +517,14 @@ class TestAgentManagementHandlers:
 
     async def test_agent_delegate_to_not_found(self) -> None:
         store = AsyncMock()
-        store.get.return_value = None
+        store.resolve_for_caller.return_value = None
         runner = AsyncMock()
         result = await handlers.agent_delegate_to(store, runner, 0, "missing", "msg")
         assert "not found" in result
 
     async def test_agent_delegate_to_with_artifacts(self) -> None:
         store = AsyncMock()
-        store.get.return_value = MagicMock()
+        store.resolve_for_caller.return_value = MagicMock()
         runner = AsyncMock()
         artifact = MagicMock()
         artifact.tool_name = "code_execute"
@@ -522,8 +540,82 @@ class TestAgentManagementHandlers:
 
     async def test_agent_delegate_to_error(self) -> None:
         store = AsyncMock()
-        store.get.return_value = MagicMock()
+        store.resolve_for_caller.return_value = MagicMock()
         runner = AsyncMock()
         runner.run.side_effect = RuntimeError("boom")
         result = await handlers.agent_delegate_to(store, runner, 0, "a", "msg")
         assert "boom" in result
+
+
+class TestAgentManagementAccessControl:
+    """Tests for cross-tenant isolation and fail-closed behavior."""
+
+    @pytest.mark.asyncio()
+    async def test_agent_list_no_principal_fails_closed(self) -> None:
+        """With no principal, agent_list returns nothing (fail closed)."""
+        set_authenticated_principal(None)  # type: ignore[arg-type]
+        store = AsyncMock()
+        store.list_for_user.return_value = [MagicMock()]
+        result = await handlers.agent_list(store)
+        assert "No agents exist" in result
+        store.list_for_user.assert_not_awaited()
+
+    @pytest.mark.asyncio()
+    async def test_agent_delegate_to_no_principal_fails_closed(self) -> None:
+        """With no principal, delegate_to returns not found (fail closed)."""
+        set_authenticated_principal(None)  # type: ignore[arg-type]
+        store = AsyncMock()
+        store.resolve_for_caller.return_value = MagicMock()
+        runner = AsyncMock()
+        result = await handlers.agent_delegate_to(store, runner, 0, "secret-agent", "msg")
+        assert "not found" in result
+        store.resolve_for_caller.assert_not_awaited()
+        runner.run.assert_not_awaited()
+
+    @pytest.mark.asyncio()
+    async def test_agent_delete_no_principal_fails_closed(self) -> None:
+        """With no principal, agent_delete returns not found (fail closed)."""
+        set_authenticated_principal(None)  # type: ignore[arg-type]
+        store = AsyncMock()
+        store.resolve_for_caller.return_value = MagicMock()
+        result = await handlers.agent_delete(store, "secret-agent")
+        assert "not found" in result
+        store.delete_qualified.assert_not_awaited()
+
+    @pytest.mark.asyncio()
+    async def test_agent_list_filters_by_principal(self) -> None:
+        """agent_list passes the principal to list_for_user for filtering."""
+        store = AsyncMock()
+        store.list_for_user.return_value = []
+        await handlers.agent_list(store)
+        store.list_for_user.assert_awaited_once_with(_TEST_PRINCIPAL)
+
+    @pytest.mark.asyncio()
+    async def test_agent_delegate_to_unshared_agent_not_visible(self) -> None:
+        """If resolve_for_caller returns None (agent not visible), delegation fails."""
+        store = AsyncMock()
+        store.resolve_for_caller.return_value = None  # agent exists but not visible
+        runner = AsyncMock()
+        result = await handlers.agent_delegate_to(store, runner, 0, "alice-private", "reveal secrets")
+        assert "not found" in result
+        runner.run.assert_not_awaited()
+
+    @pytest.mark.asyncio()
+    async def test_agent_delete_unshared_agent_not_visible(self) -> None:
+        """If resolve_for_caller returns None (agent not visible), delete fails."""
+        store = AsyncMock()
+        store.resolve_for_caller.return_value = None
+        result = await handlers.agent_delete(store, "alice-private")
+        assert "not found" in result
+        store.delete_qualified.assert_not_awaited()
+
+    @pytest.mark.asyncio()
+    async def test_agent_delete_other_users_agent_denied(self) -> None:
+        """Even if an agent is shared (readable), only owner can delete it."""
+        spec = MagicMock()
+        spec.owner_id = "alice"  # different from test-user
+        store = AsyncMock()
+        store.resolve_for_caller.return_value = spec  # shared agent visible
+        result = await handlers.agent_delete(store, "alice-shared-agent")
+        assert "Permission denied" in result
+        store.delete_qualified.assert_not_awaited()

@@ -799,17 +799,22 @@ class SpecStore[SpecT: BaseModel, VersionT: BaseModel](ABC):
         )
         return cast("SpecT", version.spec)  # type: ignore[attr-defined]
 
+    async def delete_qualified(self, name: str, owner_id: str) -> int:
+        """Archive exactly one owner-qualified identity and release its claim."""
+        archived = await self.archive_identity(name, owner_id)
+        if archived > 0:
+            # Release the atomic-create claim so the identity can be
+            # re-created later. No-op for the file store.
+            await self._release_identity_claim(_identity_key(owner_id, name))
+        return archived
+
     async def delete(self, name: str) -> bool:
+        """Delete the first deployed identity matching a legacy bare name."""
         found = await self._find_identity_by_name(name)
         if found is None:
             return False
-        owner_id, _ = found
-        archived = await self.archive_identity(name, owner_id)
-        if archived > 0:
-            # Release the atomic-create claim so the name can be
-            # re-created later.  No-op for the file store.
-            await self._release_identity_claim(_identity_key(owner_id, name))
-        return archived > 0
+        owner_id, resolved_name = found
+        return await self.delete_qualified(resolved_name, owner_id) > 0
 
     # ── Bucketed listing ───────────────────────────────────────────────────
 

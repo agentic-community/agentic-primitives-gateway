@@ -277,11 +277,11 @@ class TestPerAgentCard:
 
     @pytest.mark.asyncio
     async def test_private_agent_returns_403_for_anonymous(self, mock_store: AsyncMock) -> None:
-        """Private agent card returns 403 for anonymous users.
+        """Private agent card returns 404 for anonymous users.
 
         The ``.well-known/agent.json`` paths are auth-exempt, so the auth
         middleware sets ``ANONYMOUS_PRINCIPAL`` (not an admin). Private agents
-        therefore reject unauthenticated discovery.
+        return 404 (not 403) to avoid leaking existence information.
         """
         from starlette.testclient import TestClient
 
@@ -297,7 +297,7 @@ class TestPerAgentCard:
         try:
             client = TestClient(app)
             resp = client.get("/a2a/agents/private-bot/.well-known/agent.json")
-            assert resp.status_code == 403
+            assert resp.status_code == 404
         finally:
             app.state.auth_backend = prev
 

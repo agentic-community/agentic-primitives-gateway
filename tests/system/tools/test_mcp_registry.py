@@ -227,7 +227,7 @@ class TestSearchTools:
     async def test_search_tools(self, client: AgenticPlatformClient, mock_httpx: MagicMock) -> None:
         search_resp = _http_response(
             {
-                "results": [
+                "tools": [
                     {
                         "name": "calculator/add",
                         "description": "Adds two numbers",
@@ -237,7 +237,7 @@ class TestSearchTools:
             }
         )
 
-        mock_httpx.get.return_value = search_resp
+        mock_httpx.post.return_value = search_resp
 
         result = await client.search_tools("add")
 

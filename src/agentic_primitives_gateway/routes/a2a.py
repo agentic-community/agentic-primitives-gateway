@@ -37,7 +37,6 @@ from agentic_primitives_gateway.audit.models import AuditAction, AuditOutcome, R
 from agentic_primitives_gateway.auth.access import (
     ProviderOverrideSource,
     apply_filtered_provider_overrides,
-    require_access,
 )
 from agentic_primitives_gateway.config import settings
 from agentic_primitives_gateway.models.a2a import (
@@ -237,9 +236,10 @@ async def get_per_agent_card(name: str, request: Request) -> A2AAgentCard:
     spec = await store.get(name)
     if spec is None:
         raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
-    # Only public agents are discoverable without auth
+    # Only public agents are discoverable without auth — return 404
+    # (not 403) for private agents to avoid leaking existence.
     if "*" not in spec.shared_with:
-        require_access(require_principal(), spec.owner_id, spec.shared_with)
+        raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
 
     security_schemes, security_requirements = _build_security_schemes()
     base_url = str(request.base_url).rstrip("/")

@@ -134,6 +134,8 @@ async def export_team(name: str, owner: str | None = None) -> Response:
     agent_store = _get_agent_store()
     agent_refs = {spec.planner, spec.synthesizer, *spec.workers}
     agent_specs: dict[str, Any] = {}
+    from agentic_primitives_gateway.auth.access import check_access
+
     for ref in agent_refs:
         if ":" in ref:
             owner_id, _, bare = ref.partition(":")
@@ -142,7 +144,7 @@ async def export_team(name: str, owner: str | None = None) -> Response:
             aspec = await agent_store.resolve_qualified(spec.owner_id, ref)
             if aspec is None:
                 aspec = await agent_store.resolve_qualified("system", ref)
-        if aspec:
+        if aspec and check_access(principal, aspec.owner_id, aspec.shared_with):
             agent_specs[ref] = aspec
 
     code = _export(spec, agent_specs)

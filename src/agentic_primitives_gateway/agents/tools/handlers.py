@@ -518,6 +518,21 @@ async def task_get_available() -> str:
 # are call-stack state for the parent runner, not request-scoped state.
 
 
+def _get_owner_id() -> str:
+    """Return the current principal's id, or 'system' if no principal is set."""
+    from agentic_primitives_gateway.context import get_authenticated_principal
+
+    principal = get_authenticated_principal()
+    return principal.id if principal is not None else "system"
+
+
+def _get_principal():
+    """Return the current authenticated principal or None."""
+    from agentic_primitives_gateway.context import get_authenticated_principal
+
+    return get_authenticated_principal()
+
+
 async def agent_create(
     agent_store: Any,
     name: str,
@@ -549,9 +564,10 @@ async def agent_create(
         system_prompt=system_prompt,
         description=description,
         primitives=prim_configs,
+        owner_id=_get_owner_id(),
     )
 
-    existing = await agent_store.get(name)
+    existing = await agent_store.resolve_for_caller(name, _get_principal()) if _get_principal() is not None else None
     if existing is not None:
         return f"Agent '{name}' already exists. Use a different name."
 
@@ -561,8 +577,13 @@ async def agent_create(
 
 
 async def agent_list(agent_store: Any) -> str:
-    """List all agents with their descriptions and capabilities."""
-    agents = await agent_store.list()
+    """List agents visible to the current principal."""
+    from agentic_primitives_gateway.context import get_authenticated_principal
+
+    principal = get_authenticated_principal()
+    if principal is None:
+        return "No agents exist."
+    agents = await agent_store.list_for_user(principal)
     if not agents:
         return "No agents exist."
     lines = []
@@ -585,9 +606,22 @@ async def agent_list_primitives() -> str:
 
 
 async def agent_delete(agent_store: Any, name: str) -> str:
-    """Delete an agent from the store."""
-    deleted = await agent_store.delete(name)
-    if not deleted:
+    """Delete an agent from the store, subject to ownership check."""
+    from agentic_primitives_gateway.auth.access import check_owner_or_admin
+    from agentic_primitives_gateway.context import get_authenticated_principal
+
+    principal = get_authenticated_principal()
+    if principal is None:
+        return f"Agent '{name}' not found."
+    # Resolve the agent with access check first
+    spec = await agent_store.resolve_for_caller(name, principal)
+    if spec is None:
+        return f"Agent '{name}' not found."
+    # Only owner or admin can delete
+    if not check_owner_or_admin(principal, spec.owner_id):
+        return f"Permission denied: you are not the owner of agent '{name}'."
+    archived = await agent_store.delete_qualified(spec.name, spec.owner_id)
+    if archived <= 0:
         return f"Agent '{name}' not found."
     return f"Deleted agent '{name}'."
 
@@ -599,8 +633,13 @@ async def agent_delegate_to(
     agent_name: str,
     message: str,
 ) -> str:
-    """Delegate a task to any agent by name. The agent runs its full tool-call loop."""
-    spec = await agent_store.get(agent_name)
+    """Delegate a task to an agent by name, subject to access control."""
+    from agentic_primitives_gateway.context import get_authenticated_principal
+
+    principal = get_authenticated_principal()
+    if principal is None:
+        return f"Agent '{agent_name}' not found. Use agent_list to see available agents, or create_agent to make one."
+    spec = await agent_store.resolve_for_caller(agent_name, principal)
     if spec is None:
         return f"Agent '{agent_name}' not found. Use agent_list to see available agents, or create_agent to make one."
     try:

@@ -604,7 +604,7 @@ class TestExecuteSingleToolStreaming:
 class TestRunSubAgentStreaming:
     async def test_sub_agent_not_found(self) -> None:
         store = AsyncMock()
-        store.get.return_value = None
+        store.resolve_for_caller.return_value = None
         runner = AgentRunner()
         runner._store = store
 
@@ -614,7 +614,7 @@ class TestRunSubAgentStreaming:
 
     async def test_sub_agent_with_artifacts(self) -> None:
         store = AsyncMock()
-        store.get.return_value = MagicMock()
+        store.resolve_for_caller.return_value = MagicMock()
         runner = AgentRunner()
         runner._store = store
 

@@ -64,7 +64,7 @@ _ALICE = AuthenticatedPrincipal(id="alice", type="user", groups=frozenset({"engi
 
 
 def _make_spec(name: str = "test-agent") -> AgentSpec:
-    return AgentSpec(name=name, model="test-model", checkpointing_enabled=True)
+    return AgentSpec(name=name, model="test-model", checkpointing_enabled=True, owner_id="alice")
 
 
 class TestCheckpointSaveLoad:
@@ -849,12 +849,18 @@ class TestTeamResume:
         store = InMemoryCheckpointStore()
 
         team_spec = TeamSpec(
-            name="test-team", planner="planner", synthesizer="synth", workers=["w1"], checkpointing_enabled=True
+            name="test-team",
+            planner="planner",
+            synthesizer="synth",
+            workers=["w1"],
+            checkpointing_enabled=True,
+            owner_id="alice",
         )
 
         team_runner = TeamRunner()
         team_runner._checkpoint_store = store
         team_runner._team_store = AsyncMock()
+        team_runner._team_store.resolve_qualified = AsyncMock(return_value=team_spec)
         team_runner._team_store.get = AsyncMock(return_value=team_spec)
         team_runner._agent_store = AsyncMock()
         team_runner._agent_runner = AsyncMock()
@@ -891,11 +897,14 @@ class TestTeamResume:
         from agentic_primitives_gateway.models.teams import TeamSpec
 
         store = InMemoryCheckpointStore()
-        team_spec = TeamSpec(name="test-team", planner="p", synthesizer="s", workers=["w"], checkpointing_enabled=True)
+        team_spec = TeamSpec(
+            name="test-team", planner="p", synthesizer="s", workers=["w"], checkpointing_enabled=True, owner_id="bob"
+        )
 
         team_runner = TeamRunner()
         team_runner._checkpoint_store = store
         team_runner._team_store = AsyncMock()
+        team_runner._team_store.resolve_qualified = AsyncMock(return_value=team_spec)
         team_runner._team_store.get = AsyncMock(return_value=team_spec)
         team_runner._agent_store = AsyncMock()
         team_runner._agent_runner = AsyncMock()

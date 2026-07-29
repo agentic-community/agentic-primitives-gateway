@@ -79,7 +79,7 @@ class TestReplannerAddsTasks:
         await tasks_provider.update_task(run_id, t1.id, status="done", result="Found FastAPI is fastest")
 
         agent_store = FileAgentStore(path=str(tmp_path / "agents.json"))
-        # Seed the planner agent.
+        # Seed the planner agent (shared, as system agents are in real configs).
         planner = AgentSpec(
             name="planner",
             model="m",
@@ -87,6 +87,7 @@ class TestReplannerAddsTasks:
             primitives={},
             hooks=HooksConfig(auto_memory=False, auto_trace=False),
             max_turns=3,
+            shared_with=["*"],
         )
         await agent_store.create(planner)
 

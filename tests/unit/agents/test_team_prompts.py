@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from agentic_primitives_gateway.agents.team_prompts import (
     build_planner_prompt,
     build_replan_prompt,
@@ -9,7 +11,19 @@ from agentic_primitives_gateway.agents.team_prompts import (
     build_task_message,
     build_worker_descriptions,
 )
+from agentic_primitives_gateway.auth.models import AuthenticatedPrincipal
+from agentic_primitives_gateway.context import set_authenticated_principal
 from agentic_primitives_gateway.models.teams import TeamSpec
+
+_TEST_PRINCIPAL = AuthenticatedPrincipal(id="test-user", type="user")
+
+
+@pytest.fixture(autouse=True)
+def _set_test_principal():
+    """Ensure all team prompt tests have an authenticated principal."""
+    set_authenticated_principal(_TEST_PRINCIPAL)
+    yield
+    set_authenticated_principal(None)  # type: ignore[arg-type]
 
 
 def _make_team_spec(workers: list[str] | None = None) -> TeamSpec:
@@ -51,6 +65,8 @@ class TestBuildWorkerDescriptions:
         spec = MagicMock()
         spec.description = "Researches stuff"
         spec.primitives = {"memory": MagicMock(enabled=True), "browser": MagicMock(enabled=True)}
+        spec.owner_id = "system"
+        spec.shared_with = ["*"]
         # Versioned store — worker resolution goes through
         # ``_resolve_team_agent`` which calls ``resolve_qualified``.
         store.resolve_qualified.return_value = spec
