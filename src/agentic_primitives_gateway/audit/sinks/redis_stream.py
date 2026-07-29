@@ -124,9 +124,8 @@ class RedisStreamAuditSink(AuditSink):
         (pass as ``end`` on the next call to continue paging backward),
         or ``None`` when the stream is exhausted.
         """
-        entries: list[tuple[str, dict[str, str]]] = await self._redis.xrevrange(
-            self._stream, max=end, min=start, count=count
-        )
+        raw_entries: object = await self._redis.xrevrange(self._stream, max=end, min=start, count=count)
+        entries = _normalize_stream_entries(raw_entries)
         events: list[AuditEvent] = []
         last_id: str | None = None
         for entry_id, fields in entries:
@@ -148,7 +147,7 @@ class RedisStreamAuditSink(AuditSink):
         last_id: str = "$"
         while True:
             try:
-                resp = await self._redis.xread(
+                raw_response: object = await self._redis.xread(
                     {self._stream: last_id},
                     count=100,
                     block=_XREAD_BLOCK_MS,
@@ -162,16 +161,62 @@ class RedisStreamAuditSink(AuditSink):
                 await asyncio.sleep(1.0)
                 continue
 
-            if not resp:
+            entries = _normalize_xread_response(raw_response)
+            if not entries:
                 yield None  # keepalive tick
                 continue
 
-            for _stream, stream_entries in resp:
-                for entry_id, fields in stream_entries:
-                    last_id = entry_id
-                    event = _parse_entry(entry_id, fields)
-                    if event is not None:
-                        yield event
+            for entry_id, fields in entries:
+                last_id = entry_id
+                event = _parse_entry(entry_id, fields)
+                if event is not None:
+                    yield event
+
+
+def _decode_redis_text(value: object) -> str | None:
+    """Return text for Redis string responses and reject other shapes."""
+    if isinstance(value, bytes):
+        return value.decode("utf-8")
+    if isinstance(value, str):
+        return value
+    return None
+
+
+def _normalize_stream_entries(raw_entries: object) -> list[tuple[str, dict[str, str]]]:
+    """Normalize XREVRANGE/XREAD entry tuples from redis-py."""
+    if not isinstance(raw_entries, list | tuple):
+        return []
+
+    entries: list[tuple[str, dict[str, str]]] = []
+    for raw_entry in raw_entries:
+        if not isinstance(raw_entry, list | tuple) or len(raw_entry) != 2:
+            continue
+        entry_id = _decode_redis_text(raw_entry[0])
+        raw_fields = raw_entry[1]
+        if entry_id is None or not isinstance(raw_fields, dict):
+            continue
+
+        fields: dict[str, str] = {}
+        for raw_key, raw_value in raw_fields.items():
+            key = _decode_redis_text(raw_key)
+            value = _decode_redis_text(raw_value)
+            if key is not None and value is not None:
+                fields[key] = value
+        entries.append((entry_id, fields))
+    return entries
+
+
+def _normalize_xread_response(raw_response: object) -> list[tuple[str, dict[str, str]]]:
+    """Flatten and normalize redis-py's nested XREAD response."""
+    if not isinstance(raw_response, list | tuple):
+        return []
+
+    entries: list[tuple[str, dict[str, str]]] = []
+    for raw_stream in raw_response:
+        if not isinstance(raw_stream, list | tuple) or len(raw_stream) != 2:
+            continue
+        entries.extend(_normalize_stream_entries(raw_stream[1]))
+    return entries
 
 
 def _parse_entry(entry_id: str, fields: dict[str, str]) -> AuditEvent | None:

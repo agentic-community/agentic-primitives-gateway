@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import time
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from starlette.testclient import TestClient
@@ -324,3 +324,15 @@ class TestTeamCleanupStaleRuns:
 
         team_bg.cleanup()
         assert "active" in _active_team_runs
+
+
+@pytest.mark.asyncio
+async def test_redis_event_store_index_decodes_bytes() -> None:
+    fake = MagicMock()
+    fake.smembers = AsyncMock(return_value={b"run-1", "run-2"})
+    with patch("redis.asyncio.from_url", return_value=fake):
+        from agentic_primitives_gateway.routes._background import RedisEventStore
+
+        store = RedisEventStore()
+
+    assert sorted(await store.get_index("team:example")) == ["run-1", "run-2"]

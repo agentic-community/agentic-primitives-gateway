@@ -126,3 +126,46 @@ async def test_list_events_returns_cursor_when_batch_full():
     assert len(events) == 5
     # Cursor is the last entry's ID so the caller can continue backward.
     assert next_cursor == "0-5"
+
+
+@pytest.mark.asyncio
+async def test_list_events_decodes_bytes_responses():
+    evt = AuditEvent(action=AuditAction.AUTH_SUCCESS, outcome=AuditOutcome.SUCCESS)
+    fake = _make_fake_redis()
+    fake.xrevrange = AsyncMock(
+        return_value=[
+            (b"0-1", {b"event": evt.model_dump_json().encode("utf-8")}),
+        ]
+    )
+    with patch("redis.asyncio.from_url", return_value=fake):
+        from agentic_primitives_gateway.audit.sinks.redis_stream import RedisStreamAuditSink
+
+        sink = RedisStreamAuditSink()
+
+    events, next_cursor = await sink.list_events(start="-", end="+", count=1)
+    assert [event.action for event in events] == [AuditAction.AUTH_SUCCESS]
+    assert next_cursor == "0-1"
+
+
+@pytest.mark.asyncio
+async def test_tail_decodes_nested_bytes_response():
+    evt = AuditEvent(action=AuditAction.POLICY_ALLOW, outcome=AuditOutcome.ALLOW)
+    fake = _make_fake_redis()
+    fake.xread = AsyncMock(
+        return_value=[
+            (
+                b"gateway:audit",
+                [(b"0-1", {b"event": evt.model_dump_json().encode("utf-8")})],
+            )
+        ]
+    )
+    with patch("redis.asyncio.from_url", return_value=fake):
+        from agentic_primitives_gateway.audit.sinks.redis_stream import RedisStreamAuditSink
+
+        sink = RedisStreamAuditSink()
+
+    stream = sink.tail()
+    event = await anext(stream)
+    await stream.aclose()
+    assert event is not None
+    assert event.action == AuditAction.POLICY_ALLOW

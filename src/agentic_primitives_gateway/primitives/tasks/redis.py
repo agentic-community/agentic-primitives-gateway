@@ -101,8 +101,10 @@ return updated
 """
 
 
-def _parse_task(raw: str) -> Task:
+def _parse_task(raw: str | bytes) -> Task:
     """Parse a Task from Redis JSON, fixing Lua cjson empty-array-as-object."""
+    if isinstance(raw, bytes):
+        raw = raw.decode("utf-8")
     data = json.loads(raw)
     # Lua's cjson encodes [] as {} — normalize list fields
     for field in ("depends_on", "notes"):
