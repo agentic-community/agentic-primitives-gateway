@@ -488,16 +488,18 @@ class TestAgentManagementHandlers:
     async def test_agent_delete_found(self) -> None:
         store = AsyncMock()
         spec = MagicMock()
+        spec.name = "a1"
         spec.owner_id = "test-user"
         store.resolve_for_caller.return_value = spec
-        store.delete.return_value = True
+        store.delete_qualified.return_value = 1
         result = await handlers.agent_delete(store, "a1")
         assert "Deleted" in result
+        store.delete_qualified.assert_awaited_once_with("a1", "test-user")
 
     async def test_agent_delete_not_found(self) -> None:
         store = AsyncMock()
         store.resolve_for_caller.return_value = None
-        store.delete.return_value = False
+        store.delete_qualified.return_value = False
         result = await handlers.agent_delete(store, "a1")
         assert "not found" in result
 
@@ -578,7 +580,7 @@ class TestAgentManagementAccessControl:
         store.resolve_for_caller.return_value = MagicMock()
         result = await handlers.agent_delete(store, "secret-agent")
         assert "not found" in result
-        store.delete.assert_not_awaited()
+        store.delete_qualified.assert_not_awaited()
 
     @pytest.mark.asyncio()
     async def test_agent_list_filters_by_principal(self) -> None:
@@ -605,7 +607,7 @@ class TestAgentManagementAccessControl:
         store.resolve_for_caller.return_value = None
         result = await handlers.agent_delete(store, "alice-private")
         assert "not found" in result
-        store.delete.assert_not_awaited()
+        store.delete_qualified.assert_not_awaited()
 
     @pytest.mark.asyncio()
     async def test_agent_delete_other_users_agent_denied(self) -> None:
@@ -616,4 +618,4 @@ class TestAgentManagementAccessControl:
         store.resolve_for_caller.return_value = spec  # shared agent visible
         result = await handlers.agent_delete(store, "alice-shared-agent")
         assert "Permission denied" in result
-        store.delete.assert_not_awaited()
+        store.delete_qualified.assert_not_awaited()

@@ -620,8 +620,8 @@ async def agent_delete(agent_store: Any, name: str) -> str:
     # Only owner or admin can delete
     if not check_owner_or_admin(principal, spec.owner_id):
         return f"Permission denied: you are not the owner of agent '{name}'."
-    deleted = await agent_store.delete(name)
-    if not deleted:
+    archived = await agent_store.delete_qualified(spec.name, spec.owner_id)
+    if archived <= 0:
         return f"Agent '{name}' not found."
     return f"Deleted agent '{name}'."
 

@@ -158,6 +158,21 @@ class TestCrossTenantIsolation:
         assert await store.get("alice-agent") is not None
 
     @pytest.mark.asyncio()
+    async def test_same_name_delete_removes_only_callers_agent(self, store: FileAgentStore) -> None:
+        set_authenticated_principal(_ALICE)
+        await agent_create(agent_store=store, name="collision", model="m", system_prompt="ALICE SECRET")
+
+        set_authenticated_principal(_BOB)
+        await agent_create(agent_store=store, name="collision", model="m", system_prompt="BOB PROMPT")
+        result = await agent_delete(agent_store=store, name="collision")
+
+        assert result == "Deleted agent 'collision'."
+        alice_agent = await store.resolve_qualified("alice", "collision")
+        assert alice_agent is not None
+        assert alice_agent.system_prompt == "ALICE SECRET"
+        assert await store.resolve_qualified("bob", "collision") is None
+
+    @pytest.mark.asyncio()
     async def test_bob_cannot_reach_alice_via_static_delegation(self) -> None:
         """Crafted qualified ref 'alice:secret' should not resolve for bob."""
         set_authenticated_principal(_BOB)
