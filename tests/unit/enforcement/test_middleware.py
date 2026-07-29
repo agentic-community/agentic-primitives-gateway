@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -124,6 +125,22 @@ class TestResolveAction:
             "agents",
         }
         assert expected.issubset(primitives_with_rules)
+
+    def test_lazy_included_router_contexts(self):
+        """FastAPI 0.141+ lazy router contexts are discovered."""
+
+        def lazy_endpoint():
+            return None
+
+        route_context = SimpleNamespace(
+            path="/api/v1/lazy/{item_id}",
+            methods={"GET"},
+            endpoint=lazy_endpoint,
+        )
+        lazy_router = SimpleNamespace(effective_route_contexts=lambda: iter([route_context]))
+        lazy_app = SimpleNamespace(routes=[lazy_router])
+
+        assert _resolve_action(lazy_app, "GET", "/api/v1/lazy/item-1") == "lazy:lazy_endpoint"
 
 
 def _make_request(headers: dict[str, str]) -> MagicMock:
