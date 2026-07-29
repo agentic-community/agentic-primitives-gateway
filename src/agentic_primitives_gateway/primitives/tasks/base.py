@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from typing import Any
 
 from agentic_primitives_gateway.models.tasks import Task, TaskNote
 
@@ -11,7 +12,31 @@ class TasksProvider(ABC):
     Task providers manage structured task boards for agent team coordination.
     They support atomic claiming to prevent race conditions when multiple
     agents compete for work.
+
+    The ABC auto-wraps ``create_task`` / ``claim_task`` / ``update_task`` /
+    ``add_note`` on every subclass via ``__init_subclass__`` to emit
+    ``task.create`` / ``task.claim`` / ``task.update`` / ``task.note``
+    audit events at the provider boundary.
     """
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        from agentic_primitives_gateway.primitives.tasks._audit import (
+            wrap_add_note,
+            wrap_claim_task,
+            wrap_create_task,
+            wrap_update_task,
+        )
+
+        own = cls.__dict__
+        if "create_task" in own:
+            cls.create_task = wrap_create_task(own["create_task"])  # type: ignore[method-assign]
+        if "claim_task" in own:
+            cls.claim_task = wrap_claim_task(own["claim_task"])  # type: ignore[method-assign]
+        if "update_task" in own:
+            cls.update_task = wrap_update_task(own["update_task"])  # type: ignore[method-assign]
+        if "add_note" in own:
+            cls.add_note = wrap_add_note(own["add_note"])  # type: ignore[method-assign]
 
     @abstractmethod
     async def create_task(

@@ -9,7 +9,31 @@ class BrowserProvider(ABC):
 
     Manages cloud-based browser sessions and provides interaction methods
     (navigate, screenshot, page content, click, type) via CDP.
+
+    The ABC auto-wraps ``navigate`` / ``click`` / ``type_text`` /
+    ``evaluate`` on every subclass via ``__init_subclass__`` to emit
+    ``browser.navigate`` / ``browser.click`` / ``browser.type`` /
+    ``browser.evaluate`` audit events at the provider boundary.
     """
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        from agentic_primitives_gateway.primitives.browser._audit import (
+            wrap_click,
+            wrap_evaluate,
+            wrap_navigate,
+            wrap_type_text,
+        )
+
+        own = cls.__dict__
+        if "navigate" in own:
+            cls.navigate = wrap_navigate(own["navigate"])  # type: ignore[method-assign]
+        if "click" in own:
+            cls.click = wrap_click(own["click"])  # type: ignore[method-assign]
+        if "type_text" in own:
+            cls.type_text = wrap_type_text(own["type_text"])  # type: ignore[method-assign]
+        if "evaluate" in own:
+            cls.evaluate = wrap_evaluate(own["evaluate"])  # type: ignore[method-assign]
 
     @abstractmethod
     async def start_session(
