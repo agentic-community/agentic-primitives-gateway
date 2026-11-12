@@ -38,9 +38,9 @@ class KeycloakIdentityProvider(SyncRunnerMixin, IdentityProvider):
           client_id: "agentic-gateway"
           client_secret: "${KEYCLOAK_CLIENT_SECRET}"
 
-    Per-request credential overrides via headers::
+    Per-request credential overrides via headers (``server_url`` is
+    operator config only — caller values are ignored)::
 
-        X-Cred-Keycloak-Server-Url: https://keycloak.example.com
         X-Cred-Keycloak-Realm: my-realm
         X-Cred-Keycloak-Client-Id: my-client
         X-Cred-Keycloak-Client-Secret: my-secret

@@ -172,6 +172,27 @@ class TestOidcMapCredentials:
         result = OidcCredentialResolver._map_credentials({"apg.": "value"})
         assert result is None
 
+    @pytest.mark.parametrize(
+        "attr",
+        [
+            "apg.langfuse.base_url",
+            "apg.mcp_registry.url",
+            "apg.keycloak.server_url",
+            "apg.selenium.hub_url",
+            "apg.okta.domain",
+            "apg.agentcore.gateway_url",
+        ],
+    )
+    def test_endpoint_keys_dropped(self, attr: str):
+        """User-editable attributes must not redirect providers (SSRF)."""
+        service = attr.split(".")[1]
+        result = OidcCredentialResolver._map_credentials({attr: "http://redirect:8081", f"apg.{service}.token": "t"})
+        assert result is not None
+        assert result.service_credentials == {service: {"token": "t"}}
+
+    def test_only_endpoint_keys_returns_none(self):
+        assert OidcCredentialResolver._map_credentials({"apg.langfuse.base_url": "http://redirect"}) is None
+
 
 class TestOidcFetchUserinfo:
     @pytest.mark.asyncio

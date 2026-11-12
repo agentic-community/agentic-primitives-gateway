@@ -49,28 +49,18 @@ The `kitchen-sink.yaml` and `e2e-selfhosted-langchain.yaml` configs already incl
 
 ### Per-User Credentials
 
-In multi-tenant deployments, each user can provide their own registry credentials via headers:
-
-```bash
-curl -H "X-Cred-Mcp-Registry-Url: https://my-registry.internal:8080" \
-     -H "X-Cred-Mcp-Registry-Token: eyJ..." \
-     http://localhost:8000/api/v1/tools
-```
-
-Or configure them in Keycloak using the `apg.*` convention:
+In multi-tenant deployments, each user can provide their own registry token via the `apg.*` convention in Keycloak:
 
 | User Attribute | Maps To |
 |----------------|---------|
-| `apg.mcp_registry.url` | Registry base URL |
 | `apg.mcp_registry.token` | JWT token |
 
-These can be managed from the gateway's Settings page in the web UI.
+These can be managed from the gateway's Settings page in the web UI. The registry URL is operator configuration only (`base_url` / `MCP_REGISTRY_URL`); a caller can never redirect it, so the server token is only ever sent to the configured registry.
 
 **Credential resolution order:**
 
-1. Client headers (`X-Cred-Mcp-Registry-*`) always win
-2. OIDC-resolved attributes (`apg.mcp_registry.*`) per-user
-3. Provider config / environment variables server ambient
+1. OIDC-resolved attributes (`apg.mcp_registry.*`) per-user
+2. Provider config / environment variables server ambient
 
 ## Using the Tools API
 

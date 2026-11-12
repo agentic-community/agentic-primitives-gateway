@@ -29,7 +29,6 @@ In multi-tenant deployments, each user can have their own Langfuse project:
 ```bash
 curl -H "X-Cred-Langfuse-Public-Key: pk-..." \
      -H "X-Cred-Langfuse-Secret-Key: sk-..." \
-     -H "X-Cred-Langfuse-Base-Url: https://cloud.langfuse.com" \
      http://localhost:8000/api/v1/observability/traces
 ```
 
@@ -39,7 +38,6 @@ Or via the Python client:
 client.set_service_credentials("langfuse", {
     "public_key": "pk-...",
     "secret_key": "sk-...",
-    "base_url": "https://cloud.langfuse.com",
 })
 ```
 
@@ -49,7 +47,8 @@ Or via OIDC attributes (Keycloak):
 |----------------|---------|
 | `apg.langfuse.public_key` | Langfuse public key |
 | `apg.langfuse.secret_key` | Langfuse secret key |
-| `apg.langfuse.base_url` | Langfuse server URL |
+
+The Langfuse server URL is operator configuration only (`base_url` in the provider config or `LANGFUSE_BASE_URL`). Caller-supplied `base_url` values (headers or `apg.langfuse.base_url`) are ignored and audited as `network.access.denied`; letting a caller choose the host would send credentials — including operator fallback keys — to that host.
 
 **Credential resolution order:**
 

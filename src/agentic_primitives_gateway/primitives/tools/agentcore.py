@@ -17,10 +17,11 @@ class AgentCoreGatewayProvider(SyncRunnerMixin, ToolsProvider):
     and other services. This provider connects to a gateway endpoint via the
     MCP protocol to list and invoke tools.
 
-    The gateway_url and access token can come from:
-    1. Client headers: X-Cred-Agentcore-Gateway-Url, X-Cred-Agentcore-Gateway-Token
-    2. Provider config: gateway_url, gateway_id
-    3. Server credentials (if allow_server_credentials is enabled)
+    The gateway endpoint is operator configuration only (provider config
+    ``gateway_url`` or ``gateway_id``) — caller credentials can't redirect it.
+    The access token can come from the client header
+    ``X-Cred-Agentcore-Gateway-Token`` or the ``apg.agentcore.gateway_token``
+    OIDC attribute.
 
     Provider config example::
 
@@ -44,24 +45,19 @@ class AgentCoreGatewayProvider(SyncRunnerMixin, ToolsProvider):
         logger.info(
             "AgentCore Gateway tools provider initialized (region=%s, gateway_id=%s)",
             region,
-            gateway_id or "(from client)",
+            gateway_id or "(unset)",
         )
 
     def _resolve_gateway_url(self) -> str:
-        """Resolve the gateway URL from context or config."""
-        creds = get_service_credentials("agentcore")
-        url = (creds or {}).get("gateway_url") or self._default_gateway_url
-        if url:
-            return url
+        """Resolve the gateway URL from operator config."""
+        if self._default_gateway_url:
+            return self._default_gateway_url
 
-        gateway_id = (creds or {}).get("gateway_id") or self._default_gateway_id
-        if gateway_id:
-            return f"https://{gateway_id}.gateway.bedrock-agentcore.{self._region}.amazonaws.com/mcp"
+        if self._default_gateway_id:
+            return f"https://{self._default_gateway_id}.gateway.bedrock-agentcore.{self._region}.amazonaws.com/mcp"
 
         raise ValueError(
-            "AgentCore Gateway URL is required. Provide it via: "
-            "(1) client header X-Cred-Agentcore-Gateway-Url, "
-            "(2) gateway_url or gateway_id in the server provider config."
+            "AgentCore Gateway URL is required. Set gateway_url or gateway_id in the server provider config."
         )
 
     def _resolve_access_token(self) -> str | None:

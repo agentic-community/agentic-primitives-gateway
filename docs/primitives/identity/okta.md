@@ -28,9 +28,10 @@ providers:
 
 ### Per-Request Credentials
 
+The Okta domain is operator configuration only — caller-supplied `domain` values are ignored.
+
 ```bash
-curl -H "X-Cred-Okta-Domain: dev-123456.okta.com" \
-     -H "X-Cred-Okta-Client-Id: my-client" \
+curl -H "X-Cred-Okta-Client-Id: my-client" \
      -H "X-Cred-Okta-Client-Secret: my-secret" \
      -H "X-Cred-Okta-Api-Token: SSWS-token" \
      http://localhost:8000/api/v1/identity/token
@@ -40,7 +41,6 @@ Or via the Python client:
 
 ```python
 client.set_service_credentials("okta", {
-    "domain": "dev-123456.okta.com",
     "client_id": "my-client",
     "client_secret": "my-secret",
 })

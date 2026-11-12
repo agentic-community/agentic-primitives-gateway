@@ -1,7 +1,7 @@
 """``network.access.denied`` audit events on SSRF-guard rejections.
 
-Today only the X-Cred-* URL-shaped key filter emits this event.  A
-future browser-SSRF guard would add its own emit path and test module.
+Emitted when an endpoint-shaped credential key is rejected on any
+caller-controlled channel: X-Cred-* headers and OIDC ``apg.*`` attributes.
 """
 
 from __future__ import annotations
@@ -16,6 +16,7 @@ from agentic_primitives_gateway.audit.base import AuditSink
 from agentic_primitives_gateway.audit.emit import set_audit_router
 from agentic_primitives_gateway.audit.models import AuditAction, AuditEvent, AuditOutcome
 from agentic_primitives_gateway.audit.router import AuditRouter
+from agentic_primitives_gateway.credentials.oidc import OidcCredentialResolver
 from agentic_primitives_gateway.middleware import RequestContextMiddleware
 
 
@@ -95,3 +96,16 @@ async def test_legitimate_xcred_secret_emits_no_denial(audit_router):
         )
     await asyncio.sleep(0.05)
     assert not [e for e in audit_router.events if e.action == AuditAction.NETWORK_ACCESS_DENIED]
+
+
+# ── OIDC apg.* endpoint-key rejection ──────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_forbidden_oidc_attribute_emits_audit_event(audit_router):
+    OidcCredentialResolver._map_credentials({"apg.langfuse.base_url": "http://169.254.169.254"})
+
+    await asyncio.sleep(0.05)
+    events = [e for e in audit_router.events if e.action == AuditAction.NETWORK_ACCESS_DENIED]
+    assert len(events) == 1
+    assert events[0].metadata == {"service": "langfuse", "key": "base_url", "source": "oidc"}

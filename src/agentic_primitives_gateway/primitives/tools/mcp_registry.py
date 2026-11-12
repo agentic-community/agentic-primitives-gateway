@@ -27,10 +27,14 @@ class MCPRegistryProvider(SyncRunnerMixin, ToolsProvider):
 
     See: https://github.com/agentic-community/mcp-gateway-registry
 
-    Credentials (JWT token) can come from:
-    1. Client headers: X-Cred-Mcp-Registry-Token, X-Cred-Mcp-Registry-Url
-    2. Provider config: base_url, token
-    3. Environment: MCP_REGISTRY_URL, MCP_REGISTRY_TOKEN
+    The registry URL is operator configuration only (provider config
+    ``base_url`` or ``MCP_REGISTRY_URL``) — it is never taken from caller
+    credentials, so a configured server token can't be sent elsewhere.
+
+    The JWT token can come from:
+    1. Per-user OIDC attribute ``apg.mcp_registry.token``
+    2. Provider config: token
+    3. Environment: MCP_REGISTRY_TOKEN
 
     Provider config example::
 
@@ -53,11 +57,10 @@ class MCPRegistryProvider(SyncRunnerMixin, ToolsProvider):
         logger.info("MCP Registry tools provider initialized (base_url=%s)", self._default_base_url)
 
     def _resolve_config(self) -> tuple[str, str | None]:
-        """Resolve base URL and token from context or defaults."""
+        """Resolve base URL (operator config) and token (context or defaults)."""
         creds = get_service_credentials("mcp_registry") or {}
-        base_url = (creds.get("url") or self._default_base_url).rstrip("/")
         token = creds.get("token") or self._default_token
-        return base_url, token
+        return self._default_base_url.rstrip("/"), token
 
     def _fetch_servers_raw(self, base_url: str, token: str | None) -> list[dict[str, Any]]:
         """Fetch server list from the registry, supporting both API formats.
