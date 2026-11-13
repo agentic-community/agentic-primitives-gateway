@@ -69,7 +69,7 @@ async def test_execute_tool_filters_llm_override_of_namespace():
     # LLM attempts to override the bound namespace.
     result = await execute_tool(
         "remember",
-        {"key": "k", "content": "c", "namespace": "attacker-ns"},
+        {"key": "k", "content": "c", "namespace": "request-ns"},
         [tool],
     )
     assert result == "ok"

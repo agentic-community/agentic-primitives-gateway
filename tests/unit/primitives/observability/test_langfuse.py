@@ -9,6 +9,9 @@ from agentic_primitives_gateway.primitives.observability.langfuse import (
     _trace_to_dict,
 )
 
+# The SDK is mocked; skip the binding's network verification of key pairs.
+pytestmark = pytest.mark.usefixtures("langfuse_pairs_valid")
+
 
 class TestLangfuseObservabilityProvider:
     """Tests for the Langfuse observability provider."""
@@ -195,6 +198,31 @@ class TestLangfuseObservabilityProvider:
         assert provider._default_public_key == "env-pk"
         assert provider._default_secret_key == "env-sk"
         assert provider._default_base_url == "https://env.com"
+
+    @pytest.mark.asyncio
+    async def test_list_scores_uses_operator_host_not_request_host(self, provider):
+        from agentic_primitives_gateway.primitives.observability.langfuse import _to_langfuse_trace_id
+
+        with (
+            patch(
+                "agentic_primitives_gateway.primitives.observability.langfuse.get_service_credentials_or_defaults"
+            ) as creds,
+            patch("agentic_primitives_gateway.primitives.observability.langfuse.httpx.get") as get,
+        ):
+            creds.return_value = {"public_key": "pk", "secret_key": "sk", "base_url": "https://request-host.test"}
+            get.return_value.json.return_value = {"data": []}
+            assert await provider.list_scores("trace-1") == []
+            get.assert_called_once_with(
+                f"https://langfuse.example.com/api/public/scores?traceId={_to_langfuse_trace_id('trace-1')}",
+                auth=("pk", "sk"),
+            )
+
+    def test_host_env_fallback_and_config_precedence(self):
+        with patch.dict("os.environ", {"LANGFUSE_HOST": "https://host.test"}, clear=True):
+            assert LangfuseObservabilityProvider()._default_base_url == "https://host.test"
+            assert LangfuseObservabilityProvider(base_url="https://configured.test")._default_base_url == (
+                "https://configured.test"
+            )
 
     # ── New methods: get_trace, log_generation, flush ──────────────
 

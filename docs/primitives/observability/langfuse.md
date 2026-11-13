@@ -20,7 +20,7 @@ providers:
 |-----------|---------|-------------|
 | `public_key` | (none) | Langfuse public key (fallback if not provided per-request) |
 | `secret_key` | (none) | Langfuse secret key (fallback) |
-| `base_url` | (none) | Langfuse server URL |
+| `base_url` | `LANGFUSE_BASE_URL`, then `LANGFUSE_HOST`, then `https://cloud.langfuse.com` | Operator-selected Langfuse server URL for SDK, REST, and health checks |
 
 ### Per-User Credentials
 
@@ -48,7 +48,9 @@ Or via OIDC attributes (Keycloak):
 | `apg.langfuse.public_key` | Langfuse public key |
 | `apg.langfuse.secret_key` | Langfuse secret key |
 
-The Langfuse server URL is operator configuration only (`base_url` in the provider config or `LANGFUSE_BASE_URL`). Caller-supplied `base_url` values (headers or `apg.langfuse.base_url`) are ignored and audited as `network.access.denied`; letting a caller choose the host would send credentials — including operator fallback keys — to that host.
+The Langfuse server URL is operator configuration only (`base_url` in the provider config, then `LANGFUSE_BASE_URL`, then `LANGFUSE_HOST`, then Langfuse cloud). Caller-supplied `base_url` values (headers or `apg.langfuse.base_url`) are ignored and audited as `network.access.denied`; letting a caller choose the host would send credentials — including operator fallback keys — to that host.
+
+Both keys are required together — a partial pair is refused rather than letting the Langfuse SDK fill the secret from `LANGFUSE_SECRET_KEY`. The Langfuse v3 SDK caches one client per *public key* process-wide. The gateway verifies an unbound key pair against the configured host before SDK construction, with a bounded verification worker pool and short HTTP timeouts; concurrent requests with the same unbound key pair share one verification. A failed verification never creates a cached SDK client. After a public key is bound, requests with a different secret or host are rejected locally without HTTP requests; changing that key's secret requires restarting the gateway. Live rotation would shut down a manager still used by in-flight requests.
 
 **Credential resolution order:**
 
