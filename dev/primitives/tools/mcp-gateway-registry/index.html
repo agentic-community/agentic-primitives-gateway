@@ -3805,7 +3805,7 @@
 <p><strong>Credential resolution order:</strong></p>
 <ol>
 <li>OIDC-resolved attributes (<code>apg.mcp_registry.*</code>) per-user</li>
-<li>Provider config / environment variables server ambient</li>
+<li>Provider config / environment variables server token — only under <code>allow_server_credentials: fallback</code> or <code>always</code> (<code>always</code> also ignores per-user tokens)</li>
 </ol>
 <h2 id="using-the-tools-api">Using the Tools API<a class="headerlink" href="#using-the-tools-api" title="Permanent link">&para;</a></h2>
 <p>Once configured, all tools from the registry are available through the standard tools endpoints.</p>

@@ -4107,7 +4107,7 @@
 </tbody>
 </table>
 <h3 id="per-request-credentials">Per-request credentials<a class="headerlink" href="#per-request-credentials" title="Permanent link">&para;</a></h3>
-<p>Users can override Keycloak client credentials per-request. The server URL is operator configuration only — caller-supplied <code>server_url</code> values are ignored.</p>
+<p>Users can override Keycloak client credentials per-request. A caller-supplied set is used whole — send <code>realm</code>, <code>client_id</code>, and <code>client_secret</code> together; the operator's values never fill gaps. The server URL is operator configuration only — caller-supplied <code>server_url</code> values are ignored.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>curl<span class="w"> </span>-H<span class="w"> </span><span class="s2">"X-Cred-Keycloak-Realm: my-realm"</span><span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="w">     </span>-H<span class="w"> </span><span class="s2">"X-Cred-Keycloak-Client-Id: my-client"</span><span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="w">     </span>-H<span class="w"> </span><span class="s2">"X-Cred-Keycloak-Client-Secret: my-secret"</span><span class="w"> </span><span class="se">\</span>

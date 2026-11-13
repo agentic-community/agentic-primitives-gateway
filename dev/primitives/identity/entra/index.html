@@ -3440,6 +3440,7 @@
 </tbody>
 </table>
 <h3 id="per-request-credentials">Per-Request Credentials<a class="headerlink" href="#per-request-credentials" title="Permanent link">&para;</a></h3>
+<p>A caller-supplied set is used whole — send <code>tenant_id</code>, <code>client_id</code>, and <code>client_secret</code> together; the operator's values never fill gaps.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>curl<span class="w"> </span>-H<span class="w"> </span><span class="s2">"X-Cred-Entra-Tenant-Id: my-tenant"</span><span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">     </span>-H<span class="w"> </span><span class="s2">"X-Cred-Entra-Client-Id: my-client"</span><span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">     </span>-H<span class="w"> </span><span class="s2">"X-Cred-Entra-Client-Secret: my-secret"</span><span class="w"> </span><span class="se">\</span>

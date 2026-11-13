@@ -4076,14 +4076,16 @@
 </tr>
 <tr>
 <td><code>fallback</code></td>
-<td>Try per-user OIDC credentials first, then fall back to server ambient.</td>
+<td>Per service: if the caller supplied any non-empty credential, the caller's set is used alone (missing fields stay unset). Server credentials are used only when the caller supplied none for that service. Caller and server values are never mixed, so a caller can't pick the realm/tenant/client a server secret is used against.</td>
 </tr>
 <tr>
 <td><code>always</code></td>
-<td>Always use server credentials (dev mode).</td>
+<td>Always use server credentials (dev mode). Caller service credentials <strong>and caller AWS keys</strong> are ignored.</td>
 </tr>
 </tbody>
 </table>
+<p>In every mode, endpoint keys (anything containing <code>url</code>, <code>uri</code>, <code>host</code>, <code>endpoint</code>, <code>origin</code>, <code>port</code>, or <code>domain</code>) come from the server config only; caller values for them are dropped and audited as <code>network.access.denied</code>.</p>
+<p>Caller-selected AWS resource IDs (<code>X-Cred-Agentcore-Memory-Id</code>, <code>-Knowledgebase-Id</code>, <code>-Data-Source-Id</code>, or the matching <code>apg.agentcore.*</code> attributes) are honored only when the request also runs under the caller's own AWS credentials. When the gateway's ambient AWS identity is used (<code>fallback</code> without caller AWS keys, or <code>always</code>), the provider's configured IDs apply, so a caller can't aim the operator's role at arbitrary resources.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="nt">allow_server_credentials</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">fallback</span>
 </code></pre></div>
 <h3 id="per-user-credential-resolution-oidc">Per-User Credential Resolution (OIDC)<a class="headerlink" href="#per-user-credential-resolution-oidc" title="Permanent link">&para;</a></h3>
