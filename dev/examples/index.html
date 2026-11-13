@@ -3856,6 +3856,7 @@
 <a id="__codelineno-3-26" name="__codelineno-3-26" href="#__codelineno-3-26"></a><span class="s1">    }</span>
 <a id="__codelineno-3-27" name="__codelineno-3-27" href="#__codelineno-3-27"></a><span class="s1">  }'</span>
 </code></pre></div>
+<p>A2A messages require authentication (except public agent cards). A client-supplied <code>task_id</code> is reserved for one agent identity and cannot be reused or run concurrently with a chat session. <code>GET /a2a/agents/{name}/tasks/{task_id}</code>, <code>GET /a2a/agents/{name}/tasks/{task_id}:subscribe</code>, and <code>POST /a2a/agents/{name}/tasks/{task_id}:cancel</code> require the task owner; the task continues if a streaming client disconnects.</p>
 <p>See <code>examples/a2a-client/</code> for a full Python example with discovery, streaming, and task management.</p>
 <h2 id="quick-example-python-client">Quick Example: Python Client<a class="headerlink" href="#quick-example-python-client" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">agentic_primitives_gateway_client</span><span class="w"> </span><span class="kn">import</span> <span class="n">AgenticPrimitivesGatewayClient</span>
