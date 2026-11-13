@@ -3556,8 +3556,8 @@
 </tr>
 <tr>
 <td><code>base_url</code></td>
-<td>(none)</td>
-<td>Langfuse server URL</td>
+<td><code>LANGFUSE_BASE_URL</code>, then <code>LANGFUSE_HOST</code>, then <code>https://cloud.langfuse.com</code></td>
+<td>Operator-selected Langfuse server URL for SDK, REST, and health checks</td>
 </tr>
 </tbody>
 </table>
@@ -3592,7 +3592,8 @@
 </tr>
 </tbody>
 </table>
-<p>The Langfuse server URL is operator configuration only (<code>base_url</code> in the provider config or <code>LANGFUSE_BASE_URL</code>). Caller-supplied <code>base_url</code> values (headers or <code>apg.langfuse.base_url</code>) are ignored and audited as <code>network.access.denied</code>; letting a caller choose the host would send credentials — including operator fallback keys — to that host.</p>
+<p>The Langfuse server URL is operator configuration only (<code>base_url</code> in the provider config, then <code>LANGFUSE_BASE_URL</code>, then <code>LANGFUSE_HOST</code>, then Langfuse cloud). Caller-supplied <code>base_url</code> values (headers or <code>apg.langfuse.base_url</code>) are ignored and audited as <code>network.access.denied</code>; letting a caller choose the host would send credentials — including operator fallback keys — to that host.</p>
+<p>Both keys are required together — a partial pair is refused rather than letting the Langfuse SDK fill the secret from <code>LANGFUSE_SECRET_KEY</code>. The Langfuse v3 SDK caches one client per <em>public key</em> process-wide. The gateway verifies an unbound key pair against the configured host before SDK construction, with a bounded verification worker pool and short HTTP timeouts; concurrent requests with the same unbound key pair share one verification. A failed verification never creates a cached SDK client. After a public key is bound, requests with a different secret or host are rejected locally without HTTP requests; changing that key's secret requires restarting the gateway. Live rotation would shut down a manager still used by in-flight requests.</p>
 <p><strong>Credential resolution order:</strong></p>
 <ol>
 <li>Client headers (<code>X-Cred-Langfuse-*</code>): always win</li>
