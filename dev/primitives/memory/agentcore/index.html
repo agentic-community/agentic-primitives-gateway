@@ -3594,7 +3594,7 @@
 <tr>
 <td><code>memory_id</code></td>
 <td>(auto)</td>
-<td>Optional memory store ID</td>
+<td>Optional memory store ID. A per-request <code>X-Cred-Agentcore-Memory-Id</code> overrides it only when the request also carries the caller's own AWS credentials.</td>
 </tr>
 </tbody>
 </table>
@@ -3638,6 +3638,7 @@
 <h3 id="retrieve-by-key">Retrieve by Key<a class="headerlink" href="#retrieve-by-key" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>curl<span class="w"> </span>http://localhost:8000/api/v1/memory/agent:my-agent/user-preference
 </code></pre></div>
+<p>AgentCore has no native key-value store: recent keyed writes are cached locally per memory resource, region, and AWS signer. Cache hits require a successful live AgentCore read with the current request's credentials; revoked access or missing credentials cannot read previous cached content. This cache is process-local and is not a substitute for managed persistence.</p>
 <h2 id="using-with-declarative-agents">Using with Declarative Agents<a class="headerlink" href="#using-with-declarative-agents" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nt">agents</span><span class="p">:</span>
 <a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span><span class="nt">specs</span><span class="p">:</span>

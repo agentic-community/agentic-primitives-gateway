@@ -3451,6 +3451,7 @@
 </table>
 <h2 id="using-the-code-interpreter-api">Using the Code Interpreter API<a class="headerlink" href="#using-the-code-interpreter-api" title="Permanent link">&para;</a></h2>
 <p>All standard code interpreter endpoints work with this provider. See the <a href="../../../api/code-interpreter/">Code Interpreter API reference</a> for the full endpoint list.</p>
+<p>Execution history is held locally for an active session. Each history read checks that the current request's AWS credentials can access that session in AgentCore; expired or revoked access cannot retrieve previously recorded code or output.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="c1"># Start a session</span>
 <a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>http://localhost:8000/api/v1/code-interpreter/sessions
 <a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>

@@ -3442,7 +3442,7 @@
 <tr>
 <td><code>knowledge_base_id</code></td>
 <td>–</td>
-<td>KB to retrieve against. Resolved per-request from the <code>X-Cred-Agentcore-Knowledgebase-Id</code> header when present.</td>
+<td>KB to retrieve against. A per-request <code>X-Cred-Agentcore-Knowledgebase-Id</code> header overrides it only when the request also carries the caller's own AWS credentials; under the gateway's ambient AWS identity the configured ID always applies.</td>
 </tr>
 <tr>
 <td><code>data_source_id</code></td>

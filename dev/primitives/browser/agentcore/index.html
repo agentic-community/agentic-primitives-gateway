@@ -3449,6 +3449,7 @@
 </tr>
 </tbody>
 </table>
+<p><strong>Credentials:</strong> sessions start under the request's AWS credentials, and every later AWS call (stop, live-view URL signing) is re-signed with the credentials of the request making it — sessions outlive short-lived STS credentials. Before <strong>every</strong> Playwright interaction (navigate, content, screenshot, click, type, evaluate), AgentCore must authorize the current request's AWS credentials to read the session and report status <code>READY</code>; authorization is never cached, even for the same access-key ID, because a key may be revoked or presented with a different secret. Under <code>allow_server_credentials: never</code>, interactions without caller AWS credentials are refused. The session's original region is retained for subsequent SDK calls. A failed remote stop keeps the session and Playwright connection usable so it can be retried; local resources close only after AgentCore confirms the stop.</p>
 <h2 id="using-the-browser-api">Using the Browser API<a class="headerlink" href="#using-the-browser-api" title="Permanent link">&para;</a></h2>
 <p>All standard browser endpoints work with this provider. See the <a href="../../../api/browser/">Browser API reference</a> for the full endpoint list.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="c1"># Start a session</span>

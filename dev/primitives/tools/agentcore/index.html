@@ -3556,6 +3556,7 @@
 <a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">      </span><span class="nt">region</span><span class="p">:</span><span class="w"> </span><span class="s">"us-east-1"</span>
 <a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="w">      </span><span class="nt">gateway_id</span><span class="p">:</span><span class="w"> </span><span class="s">"your-gateway-id"</span>
 <a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">      </span><span class="nt">gateway_url</span><span class="p">:</span><span class="w"> </span><span class="s">"https://gw-id.gateway.bedrock-agentcore.us-east-1.amazonaws.com/mcp"</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="w">      </span><span class="nt">gateway_token</span><span class="p">:</span><span class="w"> </span><span class="s">"${AGENTCORE_GATEWAY_TOKEN:=}"</span><span class="w">   </span><span class="c1"># optional operator token</span>
 </code></pre></div>
 <table>
 <thead>
@@ -3581,15 +3582,19 @@
 <td>(none)</td>
 <td>Direct gateway URL (alternative to <code>gateway_id</code>)</td>
 </tr>
+<tr>
+<td><code>gateway_token</code></td>
+<td>(none)</td>
+<td>Operator access token; used only under <code>allow_server_credentials: fallback</code> (when the caller sends none) or <code>always</code></td>
+</tr>
 </tbody>
 </table>
+<p>The gateway endpoint is operator configuration only; caller credentials can't redirect it.</p>
 <h3 id="per-user-credentials">Per-User Credentials<a class="headerlink" href="#per-user-credentials" title="Permanent link">&para;</a></h3>
-<p>Users can provide their own gateway credentials:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">client</span><span class="o">.</span><span class="n">set_service_credentials</span><span class="p">(</span><span class="s2">"mcp_gateway"</span><span class="p">,</span> <span class="p">{</span>
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>    <span class="s2">"url"</span><span class="p">:</span> <span class="s2">"https://gw-id.gateway.bedrock-agentcore.us-east-1.amazonaws.com/mcp"</span><span class="p">,</span>
-<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>    <span class="s2">"token"</span><span class="p">:</span> <span class="s2">"..."</span><span class="p">,</span>
-<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="p">})</span>
+<p>Users can provide their own gateway access token:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">client</span><span class="o">.</span><span class="n">set_service_credentials</span><span class="p">(</span><span class="s2">"agentcore"</span><span class="p">,</span> <span class="p">{</span><span class="s2">"gateway_token"</span><span class="p">:</span> <span class="s2">"..."</span><span class="p">})</span>
 </code></pre></div>
+<p>or via the <code>apg.agentcore.gateway_token</code> OIDC attribute. Under <code>always</code> the caller's token is ignored.</p>
 <h2 id="using-the-tools-api">Using the Tools API<a class="headerlink" href="#using-the-tools-api" title="Permanent link">&para;</a></h2>
 <h3 id="list-tools">List Tools<a class="headerlink" href="#list-tools" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>curl<span class="w"> </span>http://localhost:8000/api/v1/tools

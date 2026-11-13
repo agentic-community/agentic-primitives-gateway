@@ -3461,6 +3461,7 @@
 </tr>
 </tbody>
 </table>
+<p><strong>Credentials:</strong> trace/log writes (<code>ingest_trace</code>, <code>ingest_log</code>, <code>log_generation</code>, and request-triggered <code>flush</code>) go through one process-wide OTLP exporter signed with the gateway's own AWS identity — they are operator-owned. They are refused under <code>allow_server_credentials: never</code> and audited as <code>provider.server_credentials_used</code> otherwise. Trace reads (X-Ray queries) use the request's AWS credentials.</p>
 <h2 id="using-the-observability-api">Using the Observability API<a class="headerlink" href="#using-the-observability-api" title="Permanent link">&para;</a></h2>
 <p>All standard observability endpoints work with this provider:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="c1"># Create a trace</span>
