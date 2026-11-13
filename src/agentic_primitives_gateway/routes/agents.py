@@ -20,7 +20,9 @@ from agentic_primitives_gateway.auth.access import (
     ProviderOverrideSource,
     apply_filtered_provider_overrides,
     require_owner_or_admin,
+    validate_agent_pool_references,
 )
+from agentic_primitives_gateway.auth.models import AuthenticatedPrincipal
 from agentic_primitives_gateway.context import (
     get_provider_override,
 )
@@ -59,6 +61,15 @@ from agentic_primitives_gateway.routes._helpers import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/agents", tags=["agents"])
+
+
+async def _validate_agent_pools(spec: AgentSpec, principal: AuthenticatedPrincipal, store: AgentStore) -> None:
+    mem = spec.primitives.get("memory")
+    if not mem or not mem.shared_namespaces:
+        return
+    from agentic_primitives_gateway.routes.teams import _get_store as _get_team_store
+
+    await validate_agent_pool_references(spec, principal, store, _get_team_store())
 
 
 _store: AgentStore | None = None
@@ -122,9 +133,12 @@ async def create_agent(request: CreateAgentRequest) -> AgentSpec:
     """
     store = _get_store()
     principal = require_principal()
+    if principal.id == "system" and not principal.is_admin:
+        raise HTTPException(status_code=403, detail="System namespace requires admin access")
     data = request.model_dump()
     data["owner_id"] = principal.id
     spec = AgentSpec(**data)
+    await _validate_agent_pools(spec, principal, store)
 
     existing = await store.get_deployed(spec.name, principal.id)
     if existing is not None:
@@ -253,6 +267,7 @@ async def update_agent(name: str, request: UpdateAgentRequest, owner: str | None
     merged["owner_id"] = existing.owner_id
     merged["name"] = existing.name
     new_spec = AgentSpec(**merged)
+    await _validate_agent_pools(new_spec, principal, store)
     current_deployed = await store.get_deployed(existing.name, existing.owner_id)
     version = await store.create_version(
         name=existing.name,
@@ -380,12 +395,10 @@ async def get_agent_memory(name: str, session_id: str | None = None, owner: str 
             namespace,
             all_namespaces,
         )
-        # Filter to namespaces belonging to this agent.
-        # Use "namespace:" prefix to avoid matching other agents whose names
-        # share a prefix (e.g. "agent:bot" must not match "agent:bot-2").
-        child_prefix = namespace + ":"
+        # Private namespaces have a terminal user segment; a longer ID
+        # (e.g. bob:admin) is another principal, never a child of bob.
         for ns_name in all_namespaces:
-            if ns_name == namespace or ns_name.startswith(child_prefix):
+            if ns_name == namespace:
                 records = await registry.memory.list_memories(namespace=ns_name, limit=50)
                 stores.append(
                     MemoryStoreInfo(
@@ -738,6 +751,7 @@ async def create_version(name: str, request: CreateVersionRequest, owner: str | 
     merged["owner_id"] = existing.owner_id
     merged["name"] = existing.name
     new_spec = AgentSpec(**merged)
+    await _validate_agent_pools(new_spec, principal, store)
     parent_id = request.parent_version_id
     if parent_id is None:
         current_deployed = await store.get_deployed(existing.name, existing.owner_id)
@@ -864,6 +878,10 @@ async def deploy_version(name: str, version_id: str, owner: str | None = None) -
     principal = require_principal()
     spec: AgentSpec = await resolve_agent_spec(store, name, principal, owner_query=owner)
     require_owner_or_admin(principal, spec.owner_id)
+    candidate = await store.get_version(spec.name, spec.owner_id, version_id)
+    if candidate is None:
+        raise HTTPException(status_code=404, detail=f"Version '{version_id}' not found")
+    await _validate_agent_pools(candidate.spec, principal, store)
     previous = await store.get_deployed(spec.name, spec.owner_id)
     try:
         version = await store.deploy_version(spec.name, spec.owner_id, version_id, deployed_by=principal.id)
@@ -895,7 +913,11 @@ async def fork_agent(name: str, request: ForkRequest, owner: str | None = None) 
     """
     store = _get_store()
     principal = require_principal()
+    if principal.id == "system" and not principal.is_admin:
+        raise HTTPException(status_code=403, detail="System namespace requires admin access")
     source: AgentSpec = await resolve_agent_spec(store, name, principal, owner_query=owner)
+    target = source.model_copy(update={"owner_id": principal.id, "name": request.target_name or source.name})
+    await _validate_agent_pools(target, principal, store)
     try:
         version = await store.fork(
             source_name=source.name,

@@ -78,6 +78,20 @@ class TestResolveMemoryNamespace:
         bob = AuthenticatedPrincipal(id="bob", type="user")
         assert resolve_memory_namespace(spec, _ALICE) != resolve_memory_namespace(spec, bob)
 
+    def test_colon_and_percent_in_user_ids_are_disjoint(self) -> None:
+        spec = self._make_spec()
+        bob = AuthenticatedPrincipal(id="bob", type="user")
+        nested = AuthenticatedPrincipal(id="bob:admin", type="user")
+        literal = AuthenticatedPrincipal(id="bob%3Aadmin", type="user")
+        names = [resolve_memory_namespace(spec, principal) for principal in (bob, nested, literal)]
+        assert names == [
+            "agent:system:test-agent:u:bob",
+            "agent:system:test-agent:u:bob%3Aadmin",
+            "agent:system:test-agent:u:bob%253Aadmin",
+        ]
+        assert len(set(names)) == 3
+        assert all(not other.startswith(name + ":") for name in names for other in names if name != other)
+
 
 class TestResolveMemoryNamespaceForIdentity:
     def test_with_template(self) -> None:
@@ -118,6 +132,13 @@ class TestActorId:
 
     def test_actor_id_for_identity(self) -> None:
         assert resolve_actor_id_for_identity(name="bot", owner_id="system", principal=_ALICE) == "system:bot:u:alice"
+
+    def test_colon_in_actor_id_does_not_overlap_other_user(self) -> None:
+        spec = AgentSpec(name="bot", model="m", owner_id="alice")
+        bob = AuthenticatedPrincipal(id="bob", type="user")
+        nested = AuthenticatedPrincipal(id="bob:admin", type="user")
+        assert resolve_actor_id(spec, bob) == "alice:bot:u:bob"
+        assert resolve_actor_id(spec, nested) == "alice:bot:u:bob%3Aadmin"
 
 
 class TestNamespaceIsolation:

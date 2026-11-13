@@ -54,6 +54,16 @@ curl http://localhost:8000/api/v1/memory/agent:my-agent/user-preference
 
 AgentCore has no native key-value store: recent keyed writes are cached locally per memory resource, region, and AWS signer. Cache hits require a successful live AgentCore read with the current request's credentials; revoked access or missing credentials cannot read previous cached content. This cache is process-local and is not a substitute for managed persistence.
 
+AgentCore long-term search/list use namespace **prefix** queries. The gateway
+returns and deletes a long-term record only when the SDK result's actual
+`namespaces` includes the requested namespace; records without namespace
+provenance are ignored. For example, a team pool query for
+`team:alice:work` cannot read private records in
+`team:alice:work:run-1:u:alice`, including records written before private
+working memory moved to the disjoint `team-private:…` tree. For declarative
+agents, user IDs are percent-encoded as terminal segments (`bob:admin` becomes
+`:u:bob%3Aadmin`), so private users never share a prefix by accident.
+
 ## Using with Declarative Agents
 
 ```yaml

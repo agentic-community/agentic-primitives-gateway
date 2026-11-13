@@ -8,6 +8,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
+from agentic_primitives_gateway.agents.namespace import pool_owner_segment
 from agentic_primitives_gateway.auth.models import AuthenticatedPrincipal
 from agentic_primitives_gateway.context import get_authenticated_principal
 
@@ -35,31 +36,18 @@ def require_admin() -> AuthenticatedPrincipal:
 def require_user_scoped(value: str, principal: AuthenticatedPrincipal) -> None:
     """Raise 403 if *value* (actor_id or namespace) is user-scoped to a different user.
 
-    User-scoped values contain ``:u:{user_id}`` where ``{user_id}`` MUST
-    be the **terminal segment** — no trailing colons or further segments.
-    This is a project-wide convention:
+    User-scoped values contain ``:u:{encoded_user_id}`` where the
+    complete percent-encoded ID is the terminal segment. Encode colons
+    and percent signs inside IDs so ``bob`` and ``bob:admin`` are disjoint.
 
-    * ``agent:bot:u:alice``            → owner=``alice``             ✓
-    * ``agent:system:support:u:alice`` → owner=``alice``             ✓
-    * ``:u:alice:kb``                  → owner=``alice:kb`` (wrong!) ✗
-
-    The parser takes everything after the ``:u:`` marker as the owner
-    id, so a value like ``:u:alice:kb`` parses to owner ``"alice:kb"``
-    and fails the match against principal ``"alice"`` — alice would be
-    403'd from what she thinks is her own namespace.  If you see that
-    happen, the fix is to correct the *namespace construction code*
-    to put ``:u:{user_id}`` at the end, not to relax this parser.
-
-    Values that do NOT contain the ``:u:`` marker are considered
-    unscoped (shared) and are allowed through — access control for
-    unscoped namespaces is the responsibility of the calling route
-    (e.g. admin-only surfaces, per-namespace ACLs).
+    Values with no ``:u:`` marker are shared and require a separate
+    pool ACL from the calling route.
     """
     idx = value.find(_USER_SCOPE_SEP)
     if idx == -1:
         return  # not user-scoped — allow
     owner_id = value[idx + len(_USER_SCOPE_SEP) :]
-    if owner_id != principal.id and not principal.is_admin:
+    if owner_id != pool_owner_segment(principal.id) and not principal.is_admin:
         raise HTTPException(status_code=403, detail="Forbidden")
 
 

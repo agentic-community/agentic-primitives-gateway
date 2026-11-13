@@ -8,6 +8,7 @@ from typing import Any
 
 from bedrock_agentcore.memory import MemorySessionManager
 from bedrock_agentcore.memory.constants import ConversationalMessage, MessageRole
+from bedrock_agentcore.memory.models import MemoryRecord as AgentCoreRecord
 
 from agentic_primitives_gateway.context import get_boto3_session, get_caller_resource_id
 from agentic_primitives_gateway.models.memory import MemoryRecord, SearchResult
@@ -38,6 +39,26 @@ class AgentCoreMemoryProvider(SyncRunnerMixin, MemoryProvider):
     """
 
     _KEY_FIELD = "_agentic_key"
+
+    @staticmethod
+    def _exact_namespace_entry(entry: Any, namespace: str) -> dict[str, Any] | AgentCoreRecord | None:
+        """AgentCore queries are prefix matches; trust only the returned record's namespaces.
+
+        The SDK wraps memoryRecordSummaries in DictWrapper (not dict). Both
+        retrieve and list return a required ``namespaces`` list in the API
+        response; missing provenance must never inherit the requested scope.
+        """
+        if not isinstance(entry, dict | AgentCoreRecord):
+            return None
+        namespaces = entry.get("namespaces")
+        return entry if isinstance(namespaces, list) and namespace in namespaces else None
+
+    @staticmethod
+    def _entry_content(entry: dict[str, Any] | AgentCoreRecord) -> str:
+        content = entry.get("content")
+        if isinstance(content, dict):
+            return str(content.get("text") or "")
+        return str(entry.get("memory") or content or "")
 
     def __init__(
         self,
@@ -237,13 +258,15 @@ class AgentCoreMemoryProvider(SyncRunnerMixin, MemoryProvider):
         try:
             lt_results = await self._run_sync(_search_lt)
             for entry in lt_results:
-                entry_dict = entry if isinstance(entry, dict) else {}
-                meta = dict(entry_dict.get("metadata", {}))
-                record_key = meta.pop(self._KEY_FIELD, entry_dict.get("id", ""))
+                entry_dict = self._exact_namespace_entry(entry, namespace)
+                if entry_dict is None:
+                    continue
+                meta = dict(entry_dict.get("metadata") or {})
+                record_key = meta.pop(self._KEY_FIELD, entry_dict.get("memoryRecordId") or entry_dict.get("id", ""))
                 record = MemoryRecord(
                     namespace=namespace,
                     key=record_key,
-                    content=str(entry_dict.get("memory") or entry_dict.get("content") or ""),
+                    content=self._entry_content(entry_dict),
                     metadata=meta,
                     created_at=datetime.now(UTC),
                     updated_at=datetime.now(UTC),
@@ -322,10 +345,12 @@ class AgentCoreMemoryProvider(SyncRunnerMixin, MemoryProvider):
                 top_k=50,
             )
             for record in records:
-                record_dict = record if isinstance(record, dict) else {}
-                meta = record_dict.get("metadata", {})
+                record_dict = self._exact_namespace_entry(record, namespace)
+                if record_dict is None:
+                    continue
+                meta = record_dict.get("metadata") or {}
                 if meta.get(self._KEY_FIELD) == key:
-                    record_id = record_dict.get("id")
+                    record_id = record_dict.get("memoryRecordId") or record_dict.get("id")
                     if record_id:
                         session = self._make_session(memory_id, boto_session, namespace)
                         session.delete_memory_record(record_id)
@@ -366,16 +391,18 @@ class AgentCoreMemoryProvider(SyncRunnerMixin, MemoryProvider):
             remote_authorized = True
 
             for entry in lt_records:
-                entry_dict = entry if isinstance(entry, dict) else {}
-                meta = dict(entry_dict.get("metadata", {}))
+                entry_dict = self._exact_namespace_entry(entry, namespace)
+                if entry_dict is None:
+                    continue
+                meta = dict(entry_dict.get("metadata") or {})
                 if filters and not all(meta.get(k) == v for k, v in filters.items()):
                     continue
-                record_key = meta.pop(self._KEY_FIELD, entry_dict.get("id", ""))
+                record_key = meta.pop(self._KEY_FIELD, entry_dict.get("memoryRecordId") or entry_dict.get("id", ""))
                 records.append(
                     MemoryRecord(
                         namespace=namespace,
                         key=record_key,
-                        content=str(entry_dict.get("memory") or entry_dict.get("content") or ""),
+                        content=self._entry_content(entry_dict),
                         metadata=meta,
                         created_at=datetime.now(UTC),
                         updated_at=datetime.now(UTC),

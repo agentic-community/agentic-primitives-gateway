@@ -2,6 +2,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 
+from agentic_primitives_gateway.agents.namespace import pool_owner_segment
 from agentic_primitives_gateway.audit.emit import audit_mutation
 from agentic_primitives_gateway.audit.models import AuditAction, ResourceType
 from agentic_primitives_gateway.auth.access import require_pool_access, require_pool_delete
@@ -25,6 +26,7 @@ from agentic_primitives_gateway.models.memory import (
 from agentic_primitives_gateway.registry import registry
 from agentic_primitives_gateway.routes._helpers import (
     handle_provider_errors,
+    require_admin,
     require_principal,
     require_user_scoped,
 )
@@ -110,7 +112,7 @@ async def list_namespaces() -> Any:
     if principal.is_admin:
         return {"namespaces": namespaces}
     # Filter to namespaces belonging to this user
-    filtered = [ns for ns in namespaces if f":u:{principal.id}" in ns]
+    filtered = [ns for ns in namespaces if ns.endswith(f":u:{pool_owner_segment(principal.id)}")]
     return {"namespaces": filtered}
 
 
@@ -234,7 +236,13 @@ async def list_actors() -> Any:
     actors = await registry.memory.list_actors()
     if principal.is_admin:
         return {"actors": actors}
-    filtered = [a for a in actors if f":u:{principal.id}" in a]
+    filtered = [
+        a
+        for a in actors
+        if isinstance(a, dict)
+        and isinstance(a.get("actor_id"), str)
+        and a["actor_id"].endswith(f":u:{pool_owner_segment(principal.id)}")
+    ]
     return {"actors": filtered}
 
 
@@ -292,9 +300,16 @@ async def list_branches(actor_id: str, session_id: str) -> Any:
 
 
 # ── Control plane (memory resource lifecycle) ────────────────────────
+# Admin-only: memory resources are account-level backend objects (e.g.
+# AgentCore Memory) with no gateway owner, and these calls run under the
+# provider's AWS identity — often the operator role.  A path ``memory_id``
+# from a regular user would let them read, mutate or delete any resource
+# that role can reach.
+
+_ADMIN = [Depends(require_admin)]
 
 
-@router.post("/resources", status_code=201)
+@router.post("/resources", status_code=201, dependencies=_ADMIN)
 async def create_memory_resource(request: CreateMemoryResourceRequest) -> Any:
     async with audit_mutation(
         AuditAction.MEMORY_RESOURCE_CREATE,
@@ -316,20 +331,20 @@ async def create_memory_resource(request: CreateMemoryResourceRequest) -> Any:
         return result
 
 
-@router.get("/resources")
+@router.get("/resources", dependencies=_ADMIN)
 @handle_provider_errors("Memory resource management not supported by this provider")
 async def list_memory_resources() -> Any:
     resources = await registry.memory.list_memory_resources()
     return {"resources": resources}
 
 
-@router.get("/resources/{memory_id}")
+@router.get("/resources/{memory_id}", dependencies=_ADMIN)
 @handle_provider_errors("Memory resource management not supported by this provider")
 async def get_memory_resource(memory_id: str) -> Any:
     return await registry.memory.get_memory_resource(memory_id=memory_id)
 
 
-@router.delete("/resources/{memory_id}")
+@router.delete("/resources/{memory_id}", dependencies=_ADMIN)
 @handle_provider_errors("Memory resource management not supported by this provider")
 async def delete_memory_resource(memory_id: str) -> Response:
     async with audit_mutation(
@@ -344,14 +359,14 @@ async def delete_memory_resource(memory_id: str) -> Response:
 # ── Strategy management ─────────────────────────────────────────────
 
 
-@router.get("/resources/{memory_id}/strategies")
+@router.get("/resources/{memory_id}/strategies", dependencies=_ADMIN)
 @handle_provider_errors("Strategy management not supported by this provider")
 async def list_strategies(memory_id: str) -> Any:
     strategies = await registry.memory.list_strategies(memory_id=memory_id)
     return {"strategies": strategies}
 
 
-@router.post("/resources/{memory_id}/strategies", status_code=201)
+@router.post("/resources/{memory_id}/strategies", status_code=201, dependencies=_ADMIN)
 async def add_strategy(memory_id: str, request: AddStrategyRequest) -> Any:
     async with audit_mutation(
         AuditAction.MEMORY_STRATEGY_CREATE,
@@ -370,7 +385,7 @@ async def add_strategy(memory_id: str, request: AddStrategyRequest) -> Any:
         return result
 
 
-@router.delete("/resources/{memory_id}/strategies/{strategy_id}")
+@router.delete("/resources/{memory_id}/strategies/{strategy_id}", dependencies=_ADMIN)
 @handle_provider_errors("Strategy management not supported by this provider")
 async def delete_strategy(memory_id: str, strategy_id: str) -> Response:
     async with audit_mutation(

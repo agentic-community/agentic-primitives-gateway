@@ -11,7 +11,8 @@ from agentic_primitives_gateway.agents.team_runner import TeamRunner
 from agentic_primitives_gateway.agents.team_store import TeamStore
 from agentic_primitives_gateway.audit.emit import emit_audit_event
 from agentic_primitives_gateway.audit.models import AuditAction, AuditOutcome, ResourceType
-from agentic_primitives_gateway.auth.access import require_owner_or_admin
+from agentic_primitives_gateway.auth.access import require_owner_or_admin, validate_team_pool_reference
+from agentic_primitives_gateway.auth.models import AuthenticatedPrincipal
 from agentic_primitives_gateway.models.agents import ForkRequest, RejectionRequest
 from agentic_primitives_gateway.models.teams import (
     CreateTeamRequest,
@@ -40,6 +41,14 @@ from agentic_primitives_gateway.routes._helpers import (
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/teams", tags=["teams"])
+
+
+async def _validate_team_pool(spec: TeamSpec, principal: AuthenticatedPrincipal, store: TeamStore) -> None:
+    if not spec.shared_memory_namespace:
+        return
+    from agentic_primitives_gateway.routes.agents import _get_store as _get_agent_store
+
+    await validate_team_pool_reference(spec, principal, _get_agent_store(), store)
 
 
 _store: TeamStore | None = None
@@ -92,9 +101,12 @@ async def create_team(request: CreateTeamRequest) -> TeamSpec:
     """
     store = _get_store()
     principal = require_principal()
+    if principal.id == "system" and not principal.is_admin:
+        raise HTTPException(status_code=403, detail="System namespace requires admin access")
     data = request.model_dump()
     data["owner_id"] = principal.id
     spec = TeamSpec(**data)
+    await _validate_team_pool(spec, principal, store)
 
     existing = await store.get_deployed(spec.name, principal.id)
     if existing is not None:
@@ -203,6 +215,7 @@ async def update_team(name: str, request: UpdateTeamRequest, owner: str | None =
     merged["owner_id"] = existing.owner_id
     merged["name"] = existing.name
     new_spec = TeamSpec(**merged)
+    await _validate_team_pool(new_spec, principal, store)
     current_deployed = await store.get_deployed(existing.name, existing.owner_id)
     version = await store.create_version(
         name=existing.name,
@@ -591,6 +604,7 @@ async def create_team_version(name: str, request: CreateTeamVersionRequest, owne
     merged["owner_id"] = existing.owner_id
     merged["name"] = existing.name
     new_spec = TeamSpec(**merged)
+    await _validate_team_pool(new_spec, principal, store)
     parent_id = request.parent_version_id
     if parent_id is None:
         current_deployed = await store.get_deployed(existing.name, existing.owner_id)
@@ -713,6 +727,10 @@ async def deploy_team_version(name: str, version_id: str, owner: str | None = No
     principal = require_principal()
     spec: TeamSpec = await resolve_team_spec(store, name, principal, owner_query=owner)
     require_owner_or_admin(principal, spec.owner_id)
+    candidate = await store.get_version(spec.name, spec.owner_id, version_id)
+    if candidate is None:
+        raise HTTPException(status_code=404, detail=f"Version '{version_id}' not found")
+    await _validate_team_pool(candidate.spec, principal, store)
     previous = await store.get_deployed(spec.name, spec.owner_id)
     try:
         version = await store.deploy_version(spec.name, spec.owner_id, version_id, deployed_by=principal.id)
@@ -745,7 +763,11 @@ async def fork_team(name: str, request: ForkRequest, owner: str | None = None) -
     """
     store = _get_store()
     principal = require_principal()
+    if principal.id == "system" and not principal.is_admin:
+        raise HTTPException(status_code=403, detail="System namespace requires admin access")
     source: TeamSpec = await resolve_team_spec(store, name, principal, owner_query=owner)
+    target = source.model_copy(update={"owner_id": principal.id, "name": request.target_name or source.name})
+    await _validate_team_pool(target, principal, store)
     try:
         version = await store.fork(
             source_name=source.name,

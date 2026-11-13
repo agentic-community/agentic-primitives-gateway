@@ -55,6 +55,16 @@ class TestRequireUserScoped:
         with pytest.raises(HTTPException):
             require_user_scoped("agent:my-agent:u:user-123", _user("user-456"))
 
+    def test_colon_and_percent_bearing_ids_are_exact(self):
+        encoded = "agent:bot:u:bob%3Aadmin"
+        require_user_scoped(encoded, _user("bob:admin"))
+        for other in ("bob", "bob%3Aadmin"):
+            with pytest.raises(HTTPException) as exc_info:
+                require_user_scoped(encoded, _user(other))
+            assert exc_info.value.status_code == 403
+        with pytest.raises(HTTPException):
+            require_user_scoped("agent:bot:u:bob:admin", _user("bob:admin"))
+
 
 # ── require_admin ────────────────────────────────────────────────────
 

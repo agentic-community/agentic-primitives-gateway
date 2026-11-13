@@ -25,11 +25,11 @@ curl -X POST http://localhost:8000/api/v1/teams \
     "workers": ["researcher", "coder"],
     "global_max_turns": 100,
     "global_timeout_seconds": 300,
-    "shared_memory_namespace": "team:{team_name}:shared"
+    "shared_memory_namespace": "team:{team_owner}:{team_name}:shared"
   }'
 ```
 
-The `shared_memory_namespace` field enables team-scoped shared memory. When set, all workers receive `share_finding`, `read_shared`, `search_shared`, and `list_shared` tools that read/write to the same memory namespace. The `{team_name}` placeholder is expanded at runtime.
+The `shared_memory_namespace` field enables team-scoped shared memory. When set, all workers receive `share_finding`, `read_shared`, `search_shared`, and `list_shared` tools that read/write to the same memory namespace. User-owned teams create pools beneath `team:{team_owner}:…`; both placeholders expand at runtime. System-seeded teams may retain operator-defined namespaces.
 
 ## Export
 

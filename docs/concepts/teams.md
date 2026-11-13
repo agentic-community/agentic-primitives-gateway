@@ -49,7 +49,7 @@ teams:
       workers: ["researcher", "coder"]  # Agent names that do the work
       global_max_turns: 100        # Safety limit across all agents
       global_timeout_seconds: 300  # Wall-clock timeout
-      shared_memory_namespace: "team:{team_name}:shared"  # Optional shared memory
+      shared_memory_namespace: "team:{team_owner}:{team_name}:shared"  # Optional shared memory
 ```
 
 ### Fields
@@ -309,7 +309,7 @@ Teams support shared memory for inter-agent communication during a run. When `sh
 | `search_shared(query)` | Search shared findings by semantic similarity |
 | `list_shared()` | List all findings in the shared namespace |
 
-The `{team_name}` placeholder in the namespace is expanded at runtime. Team shared memory is **cross-user by design** — the whole point is that workers (and the humans who run the team) collaborate on the same findings. If you need per-user isolation, use each worker's private memory (`remember`/`recall`/`search_memory`) instead of the shared pool.
+The `{team_name}` and `{team_owner}` placeholders expand at runtime. New user-owned team pools must resolve beneath `team:{team_owner}:…`, or name an existing deployed pool shared with the team owner. Operator-seeded teams can retain their legacy unscoped namespaces. Team shared memory is **cross-user for authorized callers**; a foreign private team namespace cannot be claimed by merely declaring it in a new team. Each team run's working/private memory remains separate from this explicitly shared namespace.
 
 This is **Level 1** shared memory (team-scoped, single namespace). For **Level 2** (agent-level pools via `shared_namespaces`), see [Agents](agents.md#shared-memory-pools).
 
@@ -319,7 +319,7 @@ This is **Level 1** shared memory (team-scoped, single namespace). For **Level 2
 teams:
   specs:
     research-team:
-      shared_memory_namespace: "team:{team_name}:shared"
+      shared_memory_namespace: "team:{team_owner}:{team_name}:shared"
       workers: ["researcher", "coder"]
 ```
 
@@ -360,6 +360,8 @@ See the [Teams API Reference](../api/teams.md#task-retry) for details.
 **Task board persistence:** With `RedisTasksProvider`, the task board survives across requests and is visible from any replica. With `InMemoryTasksProvider` (default), tasks exist only in the process that created them.
 
 **Multiple runs:** Each team can have many runs. The UI stores run IDs and provides a run picker to switch between them.
+
+**Memory isolation:** Team shared pools use owner-scoped `team:{team_owner}:…` namespaces; planner and worker private working memory lives under a disjoint `team-private:{team_owner}:{team_name}:{run_id}[:role]:u:{encoded_caller_id}` tree. An authorized shared-pool prefix cannot include another caller's private records, including with AgentCore's prefix-based search.
 
 ## Checkpointing
 

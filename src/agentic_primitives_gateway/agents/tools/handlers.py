@@ -52,6 +52,8 @@ def _require_shared_memory_namespace() -> str:
     ns = get_shared_memory_namespace()
     if ns is None:
         raise RuntimeError("shared_memory tool called without a team shared namespace bound")
+    if ":u:" in ns:
+        raise ValueError("Shared memory cannot reference private user memory")
     return ns
 
 
@@ -256,12 +258,14 @@ async def shared_memory_list(limit: int = 20) -> str:
 
 
 def _resolve_pool(pool: str) -> str:
-    """Resolve a pool name to its namespace. Raises ValueError if invalid."""
+    """Resolve a configured pool without ever crossing into private memory."""
     pools = get_memory_pools() or {}
     ns = pools.get(pool)
     if ns is None:
         available = ", ".join(sorted(pools.keys())) or "(none configured)"
         raise ValueError(f"Unknown pool '{pool}'. Available pools: {available}")
+    if ":u:" in ns:
+        raise ValueError("Shared memory cannot reference private user memory")
     return ns
 
 

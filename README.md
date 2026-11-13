@@ -202,7 +202,7 @@ See the [Agents Guide](https://agentic-community.github.io/agentic-primitives-ga
 | **Authentication** | Pluggable: noop (dev), static API keys, JWT/OIDC (Keycloak, Cognito, Auth0, Okta) |
 | **Policy enforcement** | Cedar policies evaluated on every request. Default-deny when active. |
 | **Resource ownership** | Agents/teams have `owner_id` + `shared_with`. Mutations require ownership. |
-| **User-scoped memory** | Automatic `:u:{user_id}` namespace isolation for declarative agents |
+| **User-scoped memory** | Declarative agents encode each user ID as a terminal `:u:{encoded_id}` segment; shared pools require explicit access. |
 | **Session ownership** | Browser/code_interpreter sessions are tied to their creator |
 | **Credential isolation** | Per-request contextvars — no credential leakage between concurrent requests |
 | **Per-user credentials** | OIDC attributes supply secrets, never provider endpoints. Accepted headers override only matching OIDC keys; caller and operator secret sets never mix under `fallback`. |

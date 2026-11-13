@@ -22,7 +22,7 @@ primitives:
     namespace: "agent:{agent_name}:{session_id}"  # Template
 ```
 
-The `{session_id}` placeholder is **stripped** for the memory store, and `{user_id}` is injected when auth is active:
+The `{session_id}` placeholder is **stripped** for the memory store; the terminal user ID is encoded as one namespace segment:
 
 - Template: `agent:{agent_name}:{session_id}`
 - Memory namespace: `agent:research-assistant:u:alice` (always user-scoped, no session)
@@ -51,20 +51,10 @@ At the start of a new conversation (no history loaded), the runner:
 
 This means the agent "remembers" facts from previous sessions even with a new session ID.
 
-## Fallback to Child Namespaces
+## Historical Child Namespaces
 
-If the memory namespace is empty, the runner also searches child namespaces:
+The runner no longer searches child namespaces when a private memory namespace is empty. Private `:u:{encoded_user_id}` is terminal: `bob:admin` becomes `bob%3Aadmin`, not a child of Bob's `…:u:bob` namespace. Historical session-scoped memories require an explicit, ownership-checked migration into the caller's exact private namespace.
 
-```
-Memory namespace:  agent:research-assistant       (empty)
-Child namespaces:  agent:research-assistant:abc123 (has memories)
-                   agent:research-assistant:def456 (has memories)
-```
-
-This handles cases where memories were stored in session-scoped namespaces before the memory/session split.
-
-!!! warning "Multi-tenancy safety"
-    The child search uses `namespace + ":"` as the prefix (with trailing colon). This prevents `agent:bot` from matching `agent:bot-2`'s memories.
 
 ## User Isolation (Private Memory)
 
@@ -85,9 +75,9 @@ Three separate knobs expose cross-user state; each has its own tools and its own
 |------|------------------|------------|-------|
 | **Agent-level shared pools** | `PrimitiveConfig.memory.shared_namespaces` on the agent spec | `share_to`, `read_from_pool`, `search_pool`, `list_pool` | Cross-user, one per pool name |
 | **Team shared memory** | `TeamSpec.shared_memory_namespace` | `share_finding`, `read_shared`, `search_shared`, `list_shared` | Cross-user, one per team |
-| **Private memory** (default) | `PrimitiveConfig.memory.namespace` on the agent spec | `remember`, `recall`, `search_memory`, `forget`, `list_memories` | Per-user (`:u:{principal.id}` suffix) |
+| **Private memory** (default) | `PrimitiveConfig.memory.namespace` on the agent spec | `remember`, `recall`, `search_memory`, `forget`, `list_memories` | Per-user (`:u:{encoded_user_id}` suffix) |
 
-All three hit the same `registry.memory` provider — the only difference is the namespace string each tool uses. Private memory appends `:u:{principal.id}` to the template; shared memory does not.
+All three hit the same `registry.memory` provider — the only difference is the namespace string each tool uses. Private memory appends a terminal encoded user ID; shared memory does not.
 
 ### Example: worker agent with all three
 
@@ -96,22 +86,20 @@ All three hit the same `registry.memory` provider — the only difference is the
 primitives:
   memory:
     enabled: true
-    namespace: "agent:{agent_name}"        # → "agent:researcher:u:alice" (private)
-    shared_namespaces:                     # agent-level pools (cross-user)
-      - "org:engineering-docs"
-      - "project:{agent_name}-shared"
+    namespace: "agent:{agent_name}"        # private, always ends with :u:{caller_id}
+    shared_namespaces:                     # user-owned agent pools (cross-user)
+      - "pool:{agent_owner}:engineering-docs"
+      - "pool:{agent_owner}:{agent_name}-shared"
 ```
 
 ```yaml
-# In the team spec:
-shared_memory_namespace: "team:{team_name}"  # → "team:research-team" (cross-user, team-wide)
+# In a user-owned team spec:
+shared_memory_namespace: "team:{team_owner}:{team_name}"
 ```
 
-When Alice chats with the shared `researcher` agent inside a team run:
+When Alice chats with a shared `researcher` agent, her private `remember` data remains in her own `:u:alice` namespace, while `share_to("pool:{agent_owner}:engineering-docs", "api-spec")` uses the agent owner's pool. During a team run, worker private/working memory includes the team owner, caller and run ID; `share_finding("budget")` instead uses the team's explicitly shared namespace across authorized callers and runs.
 
-- `remember("my favorite color")` → `agent:researcher:u:alice` (only Alice sees it)
-- `share_finding("budget")` → `team:research-team` (visible to everyone on the team, forever)
-- `share_to("org:engineering-docs", "api-spec")` → `org:engineering-docs` (visible to every user who uses an agent configured with that pool)
+User-created agent pools must resolve under `pool:{agent_owner}:…`; user-created team pools must resolve under `team:{team_owner}:…`. Owner IDs are encoded as one namespace segment. A user can instead reference an **already deployed pool** shared through another owner's accessible agent or team. Operator-seeded (`system`) specs may retain existing unscoped pool names such as `org:engineering-docs`. Merely declaring a name in a new spec never grants access to an unshared pool; private `:u:` namespaces cannot be configured as shared pools. Shared pools stay cross-user for people allowed to access their declaring agent/team, and the REST memory API enforces the same access policy.
 
 ## Best Practices
 
@@ -119,4 +107,4 @@ When Alice chats with the shared `researcher` agent inside a team run:
 - **Include `{session_id}`** only if you want session-isolated memory stores (rare).
 - **Use `shared_namespaces`** on the agent spec for cross-user pools (e.g., organizational docs).
 - **Use `shared_memory_namespace`** on the team spec for worker-to-worker collaboration inside a team run.
-- **The UI memory panel** shows all namespaces for an agent, including child namespaces.
+- **The UI memory panel** shows only the caller's exact private namespace for an agent, not arbitrary child namespaces.

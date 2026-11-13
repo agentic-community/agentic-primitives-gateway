@@ -287,7 +287,7 @@ researcher:
     memory:
       enabled: true
       namespace: "agent:{agent_name}"
-      shared_namespaces: ["findings", "references"]
+      shared_namespaces: ["pool:{agent_owner}:findings", "pool:{agent_owner}:references"]
 ```
 
 When `shared_namespaces` is configured, the agent gets additional tools:
@@ -299,7 +299,7 @@ When `shared_namespaces` is configured, the agent gets additional tools:
 | `search_pool(pool, query)` | Search a shared pool by semantic similarity |
 | `list_pool(pool)` | List all findings in a pool |
 
-Each pool resolves to its declared namespace **cross-user** — the whole point of a shared pool is that Alice and Bob hit the same data. If the pool declares placeholders like `{agent_name}` or `{agent_owner}` they're substituted, but the `:u:` user-scoping suffix is **not** appended. Use the default private memory tools (`remember`/`recall`/`search_memory`) whenever you want per-user isolation.
+Each pool resolves **cross-user** without the `:u:` private-memory suffix. User-owned agents must declare new pools beneath `pool:{agent_owner}:…`, or reference an existing deployed pool shared by its owner; operator-seeded agents may retain legacy unscoped names. A user cannot gain access to a foreign private pool merely by declaring its name. Use the default private memory tools (`remember`/`recall`/`search_memory`) whenever you want per-user isolation.
 
 This is **Level 2** shared memory (agent-level pools). For **Level 1** (team-scoped shared memory), see [Teams](teams.md).
 

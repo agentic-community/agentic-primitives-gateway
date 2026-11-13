@@ -276,6 +276,16 @@ class TeamRunner:
         if key is not None:
             self._event_keys[team_run_id] = key
 
+    async def _validate_team_pool(self, team_spec: TeamSpec) -> None:
+        if not team_spec.shared_memory_namespace:
+            return
+        from agentic_primitives_gateway.auth.access import validate_team_pool_reference
+
+        principal = get_authenticated_principal()
+        if principal is None or self._agent_store is None or self._team_store is None:
+            raise RuntimeError("Cannot validate team pool without a principal and stores")
+        await validate_team_pool_reference(team_spec, principal, self._agent_store, self._team_store)
+
     async def _recover_partial_tokens(
         self, team_run_id: str, role_label: str, *, team_spec: TeamSpec | None = None
     ) -> str:
@@ -451,6 +461,7 @@ class TeamRunner:
                 spec_name,
             )
             return
+        await self._validate_team_pool(team_spec)
 
         team_run_id = data["team_run_id"]
         message = data.get("message", "")
@@ -636,6 +647,7 @@ class TeamRunner:
         team_run_id = uuid.uuid4().hex[:16]
         assert self._agent_store is not None
         assert self._agent_runner is not None
+        await self._validate_team_pool(team_spec)
 
         _emit_team_event(AuditAction.TEAM_RUN_START, AuditOutcome.SUCCESS, team_spec.name, team_run_id)
         metrics.TEAM_RUNS.labels(team_name=team_spec.name, status="start").inc()
@@ -684,6 +696,7 @@ class TeamRunner:
         team_run_id = uuid.uuid4().hex[:16]
         assert self._agent_store is not None
         assert self._agent_runner is not None
+        await self._validate_team_pool(team_spec)
         if team_run_id in self._cancel_events:
             raise ValueError(f"Team run ID already active: {team_run_id}")
 
@@ -805,16 +818,21 @@ class TeamRunner:
 
     # ── Phase 1: Planning ────────────────────────────────────────────
 
-    def _planner_memory_ns(self, team_spec: TeamSpec, team_run_id: str, role: str) -> str:
-        """Deterministic per-role memory namespace for planner / synthesizer.
+    @staticmethod
+    def _working_memory_ns(team_spec: TeamSpec, team_run_id: str, role: str | None = None) -> str:
+        """Private working memory for one team owner, caller and run."""
+        from agentic_primitives_gateway.agents.namespace import pool_owner_segment
 
-        Keeps planner/synthesizer memory writes scoped to the team run
-        so they don't pollute user-level memory.  Workers use a
-        separate ``team:{name}:{run_id}`` namespace (set at the worker
-        callsites) so planner and worker don't share a namespace by
-        accident.
-        """
-        return f"team:{team_spec.name}:{team_run_id}:{role}"
+        principal = get_authenticated_principal()
+        if principal is None:
+            raise RuntimeError("Cannot use team working memory without an authenticated principal")
+        base = f"team-private:{pool_owner_segment(team_spec.owner_id)}:{team_spec.name}:{team_run_id}"
+        user = pool_owner_segment(principal.id)
+        return f"{base}:{role}:u:{user}" if role else f"{base}:u:{user}"
+
+    def _planner_memory_ns(self, team_spec: TeamSpec, team_run_id: str, role: str) -> str:
+        """Separate planner/synthesizer private working memory from worker memory."""
+        return self._working_memory_ns(team_spec, team_run_id, role)
 
     async def _run_planner(self, team_spec: TeamSpec, team_run_id: str, message: str) -> None:
         planner_spec = await self._get_agent(team_spec.planner, "Planner", team_spec.owner_id)
@@ -1346,7 +1364,7 @@ class TeamRunner:
             async with self._team_role_context(
                 team_run_id=team_run_id,
                 agent_role=worker_name,
-                memory_namespace=f"team:{team_spec.name}:{team_run_id}",
+                memory_namespace=self._working_memory_ns(team_spec, team_run_id),
                 shared_memory_namespace=self._resolve_shared_namespace(team_spec),
                 knowledge_namespace=self._resolve_worker_knowledge_ns(worker_spec),
             ):
@@ -1401,7 +1419,7 @@ class TeamRunner:
             async with self._team_role_context(
                 team_run_id=team_run_id,
                 agent_role=worker_spec.name,
-                memory_namespace=f"team:{team_spec.name}:{team_run_id}",
+                memory_namespace=self._working_memory_ns(team_spec, team_run_id),
                 shared_memory_namespace=self._resolve_shared_namespace(team_spec),
                 knowledge_namespace=self._resolve_worker_knowledge_ns(worker_spec),
             ):
@@ -1492,6 +1510,7 @@ class TeamRunner:
         Atomically rearms the failed task, recovers partial tokens from the
         event store, and re-runs the assigned worker agent with resume context.
         """
+        await self._validate_team_pool(team_spec)
         # Validate task exists and is failed
         task = await registry.tasks.get_task(team_run_id, task_id)
         if task is None:
@@ -1542,7 +1561,7 @@ class TeamRunner:
             async with self._team_role_context(
                 team_run_id=team_run_id,
                 agent_role=worker_name,
-                memory_namespace=f"team:{team_spec.name}:{team_run_id}",
+                memory_namespace=self._working_memory_ns(team_spec, team_run_id),
                 shared_memory_namespace=self._resolve_shared_namespace(team_spec),
                 knowledge_namespace=self._resolve_worker_knowledge_ns(worker_spec),
             ):
@@ -1834,19 +1853,9 @@ class TeamRunner:
 
     @staticmethod
     def _resolve_shared_namespace(team_spec: TeamSpec) -> str | None:
-        """Resolve the team shared memory namespace.
+        from agentic_primitives_gateway.agents.namespace import resolve_team_shared_namespace
 
-        Team shared memory is **cross-user by design** — the whole
-        point is that workers collaborate.  Previously this appended
-        ``:u:{principal.id}`` which made the pool silently per-user and
-        defeated the feature (same bug as ``resolve_shared_pools``).
-        If you need per-user isolation of a shared resource, use
-        per-user memory instead.
-        """
-        if not team_spec.shared_memory_namespace:
-            return None
-        ns = team_spec.shared_memory_namespace
-        return ns.replace("{team_name}", team_spec.name)
+        return resolve_team_shared_namespace(team_spec)
 
     @staticmethod
     async def _gather_upstream_context(team_run_id: str, task_id: str) -> str:
