@@ -254,6 +254,7 @@ async def test_langfuse_unbound_flood_does_not_queue_on_default_executor():
 
     from agentic_primitives_gateway.primitives._langfuse import (
         _VERIFICATION_WORKERS,
+        _pending,
         async_bind_langfuse_sdk_client,
     )
 
@@ -276,6 +277,9 @@ async def test_langfuse_unbound_flood_does_not_queue_on_default_executor():
         ]
         try:
             await asyncio.to_thread(entered.wait, 3)
+            # Keep the underlying worker future: the cancelled waiter returns
+            # before its verification worker has necessarily published a binding.
+            first_verification = _pending["pk-flood-0"][2]
             with pytest.raises(ValueError, match="verification busy"):
                 await async_bind_langfuse_sdk_client(
                     _FakeLangfuse, {"public_key": "pk-extra", "secret_key": "real-secret"}
@@ -290,6 +294,7 @@ async def test_langfuse_unbound_flood_does_not_queue_on_default_executor():
         finally:
             release.set()
             await asyncio.gather(*pending, return_exceptions=True)
+        await asyncio.wrap_future(first_verification)
         assert _bound("pk-flood-0") is not None
 
 
