@@ -3405,7 +3405,7 @@
 <tr>
 <td><code>GET</code></td>
 <td><code>/sessions/{session_id}</code></td>
-<td>Get session info. Returns 404 if not found.</td>
+<td>Get session info. Returns 404 if not found. With AgentCore, a fresh remote <code>READY</code> check must authorize the current request's AWS identity before the cached page URL is returned. Revoked access is refused; missing caller credentials are refused under <code>allow_server_credentials: never</code>.</td>
 </tr>
 <tr>
 <td><code>DELETE</code></td>
@@ -3439,7 +3439,7 @@
 <td><code>session_id</code></td>
 <td>string</td>
 <td>auto-generated</td>
-<td>Optional custom session ID.</td>
+<td>Optional custom session ID. Already-claimed or previously stopped IDs return <code>409 Conflict</code>; session IDs are never reused, so in-flight requests cannot reach a replacement session.</td>
 </tr>
 <tr>
 <td><code>config</code></td>
