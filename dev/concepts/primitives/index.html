@@ -3493,7 +3493,7 @@
 <p><strong>Level 2: Agent-level shared pools:</strong> Individual agents set <code>shared_namespaces</code> on their <code>PrimitiveConfig.memory</code>. Each declared pool resolves to its own cross-user namespace. Agents receive <code>share_to</code>, <code>read_from_pool</code>, <code>search_pool</code>, and <code>list_pool</code> tools that accept a <code>pool</code> parameter. Enables cross-agent sharing outside of a team context.</p>
 </li>
 </ul>
-<p>Private memory (every agent's default <code>remember</code>/<code>recall</code>/<code>search_memory</code> tools) remains user-scoped with a trailing <code>:u:{user_id}</code> — two users on the same agent never see each other's private facts. Shared namespaces deliberately drop the <code>:u:</code> suffix; if you want per-user isolation, use private memory instead of a pool.</p>
+<p>Private memory (every agent's default <code>remember</code>/<code>recall</code>/<code>search_memory</code> tools) remains user-scoped with a trailing <code>:u:{user_id}</code> — two users on the same agent never see each other's private facts. Shared namespaces never contain <code>:u:</code>. A user-owned new agent pool must resolve under <code>pool:{agent_owner}:…</code>, a new team pool under <code>team:{team_owner}:…</code>; another owner's pool can only be referenced when its deployed declaring agent/team grants access. System-seeded pools preserve operator-configured legacy names. See <a href="../../guides/memory-namespaces/">Memory Namespaces</a> for examples.</p>
 <h2 id="healthcheck">Healthcheck<a class="headerlink" href="#healthcheck" title="Permanent link">&para;</a></h2>
 <p>Each provider implements a <code>healthcheck()</code> method that returns one of three states:</p>
 <table>

@@ -1124,10 +1124,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#fallback-to-child-namespaces" class="md-nav__link">
+  <a href="#historical-child-namespaces" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Fallback to Child Namespaces
+        Historical Child Namespaces
       
     </span>
   </a>
@@ -3396,10 +3396,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#fallback-to-child-namespaces" class="md-nav__link">
+  <a href="#historical-child-namespaces" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Fallback to Child Namespaces
+        Historical Child Namespaces
       
     </span>
   </a>
@@ -3511,7 +3511,7 @@
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">    </span><span class="nt">enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
 <a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">    </span><span class="nt">namespace</span><span class="p">:</span><span class="w"> </span><span class="s">"agent:{agent_name}:{session_id}"</span><span class="w">  </span><span class="c1"># Template</span>
 </code></pre></div>
-<p>The <code>{session_id}</code> placeholder is <strong>stripped</strong> for the memory store, and <code>{user_id}</code> is injected when auth is active:</p>
+<p>The <code>{session_id}</code> placeholder is <strong>stripped</strong> for the memory store; the terminal user ID is encoded as one namespace segment:</p>
 <ul>
 <li>Template: <code>agent:{agent_name}:{session_id}</code></li>
 <li>Memory namespace: <code>agent:research-assistant:u:alice</code> (always user-scoped, no session)</li>
@@ -3536,17 +3536,8 @@
 <li>Injects into the conversation so the LLM knows what it stored before</li>
 </ol>
 <p>This means the agent "remembers" facts from previous sessions even with a new session ID.</p>
-<h2 id="fallback-to-child-namespaces">Fallback to Child Namespaces<a class="headerlink" href="#fallback-to-child-namespaces" title="Permanent link">&para;</a></h2>
-<p>If the memory namespace is empty, the runner also searches child namespaces:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>Memory namespace:  agent:research-assistant       (empty)
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>Child namespaces:  agent:research-assistant:abc123 (has memories)
-<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>                   agent:research-assistant:def456 (has memories)
-</code></pre></div>
-<p>This handles cases where memories were stored in session-scoped namespaces before the memory/session split.</p>
-<div class="admonition warning">
-<p class="admonition-title">Multi-tenancy safety</p>
-<p>The child search uses <code>namespace + ":"</code> as the prefix (with trailing colon). This prevents <code>agent:bot</code> from matching <code>agent:bot-2</code>'s memories.</p>
-</div>
+<h2 id="historical-child-namespaces">Historical Child Namespaces<a class="headerlink" href="#historical-child-namespaces" title="Permanent link">&para;</a></h2>
+<p>The runner no longer searches child namespaces when a private memory namespace is empty. Private <code>:u:{encoded_user_id}</code> is terminal: <code>bob:admin</code> becomes <code>bob%3Aadmin</code>, not a child of Bob's <code>…:u:bob</code> namespace. Historical session-scoped memories require an explicit, ownership-checked migration into the caller's exact private namespace.</p>
 <h2 id="user-isolation-private-memory">User Isolation (Private Memory)<a class="headerlink" href="#user-isolation-private-memory" title="Permanent link">&para;</a></h2>
 <p>When JWT auth is active, two users chatting with the same agent have <strong>completely isolated private memory</strong>:</p>
 <ul>
@@ -3586,37 +3577,33 @@
 <td><strong>Private memory</strong> (default)</td>
 <td><code>PrimitiveConfig.memory.namespace</code> on the agent spec</td>
 <td><code>remember</code>, <code>recall</code>, <code>search_memory</code>, <code>forget</code>, <code>list_memories</code></td>
-<td>Per-user (<code>:u:{principal.id}</code> suffix)</td>
+<td>Per-user (<code>:u:{encoded_user_id}</code> suffix)</td>
 </tr>
 </tbody>
 </table>
-<p>All three hit the same <code>registry.memory</code> provider — the only difference is the namespace string each tool uses. Private memory appends <code>:u:{principal.id}</code> to the template; shared memory does not.</p>
+<p>All three hit the same <code>registry.memory</code> provider — the only difference is the namespace string each tool uses. Private memory appends a terminal encoded user ID; shared memory does not.</p>
 <h3 id="example-worker-agent-with-all-three">Example: worker agent with all three<a class="headerlink" href="#example-worker-agent-with-all-three" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="c1"># In the agent spec used as a team worker:</span>
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="nt">primitives</span><span class="p">:</span>
-<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">  </span><span class="nt">memory</span><span class="p">:</span>
-<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">    </span><span class="nt">enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
-<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">    </span><span class="nt">namespace</span><span class="p">:</span><span class="w"> </span><span class="s">"agent:{agent_name}"</span><span class="w">        </span><span class="c1"># → "agent:researcher:u:alice" (private)</span>
-<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="w">    </span><span class="nt">shared_namespaces</span><span class="p">:</span><span class="w">                     </span><span class="c1"># agent-level pools (cross-user)</span>
-<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">"org:engineering-docs"</span>
-<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">"project:{agent_name}-shared"</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="c1"># In the agent spec used as a team worker:</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="nt">primitives</span><span class="p">:</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">  </span><span class="nt">memory</span><span class="p">:</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">    </span><span class="nt">enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">    </span><span class="nt">namespace</span><span class="p">:</span><span class="w"> </span><span class="s">"agent:{agent_name}"</span><span class="w">        </span><span class="c1"># private, always ends with :u:{caller_id}</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">    </span><span class="nt">shared_namespaces</span><span class="p">:</span><span class="w">                     </span><span class="c1"># user-owned agent pools (cross-user)</span>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">"pool:{agent_owner}:engineering-docs"</span>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="w">      </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="s">"pool:{agent_owner}:{agent_name}-shared"</span>
 </code></pre></div>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="c1"># In the team spec:</span>
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="nt">shared_memory_namespace</span><span class="p">:</span><span class="w"> </span><span class="s">"team:{team_name}"</span><span class="w">  </span><span class="c1"># → "team:research-team" (cross-user, team-wide)</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="c1"># In a user-owned team spec:</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="nt">shared_memory_namespace</span><span class="p">:</span><span class="w"> </span><span class="s">"team:{team_owner}:{team_name}"</span>
 </code></pre></div>
-<p>When Alice chats with the shared <code>researcher</code> agent inside a team run:</p>
-<ul>
-<li><code>remember("my favorite color")</code> → <code>agent:researcher:u:alice</code> (only Alice sees it)</li>
-<li><code>share_finding("budget")</code> → <code>team:research-team</code> (visible to everyone on the team, forever)</li>
-<li><code>share_to("org:engineering-docs", "api-spec")</code> → <code>org:engineering-docs</code> (visible to every user who uses an agent configured with that pool)</li>
-</ul>
+<p>When Alice chats with a shared <code>researcher</code> agent, her private <code>remember</code> data remains in her own <code>:u:alice</code> namespace, while <code>share_to("pool:{agent_owner}:engineering-docs", "api-spec")</code> uses the agent owner's pool. During a team run, worker private/working memory includes the team owner, caller and run ID; <code>share_finding("budget")</code> instead uses the team's explicitly shared namespace across authorized callers and runs.</p>
+<p>User-created agent pools must resolve under <code>pool:{agent_owner}:…</code>; user-created team pools must resolve under <code>team:{team_owner}:…</code>. Owner IDs are encoded as one namespace segment. A user can instead reference an <strong>already deployed pool</strong> shared through another owner's accessible agent or team. Operator-seeded (<code>system</code>) specs may retain existing unscoped pool names such as <code>org:engineering-docs</code>. Merely declaring a name in a new spec never grants access to an unshared pool; private <code>:u:</code> namespaces cannot be configured as shared pools. Shared pools stay cross-user for people allowed to access their declaring agent/team, and the REST memory API enforces the same access policy.</p>
 <h2 id="best-practices">Best Practices<a class="headerlink" href="#best-practices" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Use <code>agent:{agent_name}</code></strong> for most cases (default). Memories persist across sessions and are user-scoped when auth is active.</li>
 <li><strong>Include <code>{session_id}</code></strong> only if you want session-isolated memory stores (rare).</li>
 <li><strong>Use <code>shared_namespaces</code></strong> on the agent spec for cross-user pools (e.g., organizational docs).</li>
 <li><strong>Use <code>shared_memory_namespace</code></strong> on the team spec for worker-to-worker collaboration inside a team run.</li>
-<li><strong>The UI memory panel</strong> shows all namespaces for an agent, including child namespaces.</li>
+<li><strong>The UI memory panel</strong> shows only the caller's exact private namespace for an agent, not arbitrary child namespaces.</li>
 </ul>
 
 

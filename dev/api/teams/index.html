@@ -3728,10 +3728,10 @@
 <a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="s1">    "workers": ["researcher", "coder"],</span>
 <a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="s1">    "global_max_turns": 100,</span>
 <a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="s1">    "global_timeout_seconds": 300,</span>
-<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="s1">    "shared_memory_namespace": "team:{team_name}:shared"</span>
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="s1">    "shared_memory_namespace": "team:{team_owner}:{team_name}:shared"</span>
 <a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="s1">  }'</span>
 </code></pre></div>
-<p>The <code>shared_memory_namespace</code> field enables team-scoped shared memory. When set, all workers receive <code>share_finding</code>, <code>read_shared</code>, <code>search_shared</code>, and <code>list_shared</code> tools that read/write to the same memory namespace. The <code>{team_name}</code> placeholder is expanded at runtime.</p>
+<p>The <code>shared_memory_namespace</code> field enables team-scoped shared memory. When set, all workers receive <code>share_finding</code>, <code>read_shared</code>, <code>search_shared</code>, and <code>list_shared</code> tools that read/write to the same memory namespace. User-owned teams create pools beneath <code>team:{team_owner}:…</code>; both placeholders expand at runtime. System-seeded teams may retain operator-defined namespaces.</p>
 <h2 id="export">Export<a class="headerlink" href="#export" title="Permanent link">&para;</a></h2>
 <table>
 <thead>

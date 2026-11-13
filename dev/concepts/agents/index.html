@@ -4097,7 +4097,7 @@
 <a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="w">    </span><span class="nt">memory</span><span class="p">:</span>
 <a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="w">      </span><span class="nt">enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
 <a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="w">      </span><span class="nt">namespace</span><span class="p">:</span><span class="w"> </span><span class="s">"agent:{agent_name}"</span>
-<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a><span class="w">      </span><span class="nt">shared_namespaces</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">"findings"</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">"references"</span><span class="p p-Indicator">]</span>
+<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a><span class="w">      </span><span class="nt">shared_namespaces</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">"pool:{agent_owner}:findings"</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">"pool:{agent_owner}:references"</span><span class="p p-Indicator">]</span>
 </code></pre></div>
 <p>When <code>shared_namespaces</code> is configured, the agent gets additional tools:</p>
 <table>
@@ -4126,7 +4126,7 @@
 </tr>
 </tbody>
 </table>
-<p>Each pool resolves to its declared namespace <strong>cross-user</strong> — the whole point of a shared pool is that Alice and Bob hit the same data. If the pool declares placeholders like <code>{agent_name}</code> or <code>{agent_owner}</code> they're substituted, but the <code>:u:</code> user-scoping suffix is <strong>not</strong> appended. Use the default private memory tools (<code>remember</code>/<code>recall</code>/<code>search_memory</code>) whenever you want per-user isolation.</p>
+<p>Each pool resolves <strong>cross-user</strong> without the <code>:u:</code> private-memory suffix. User-owned agents must declare new pools beneath <code>pool:{agent_owner}:…</code>, or reference an existing deployed pool shared by its owner; operator-seeded agents may retain legacy unscoped names. A user cannot gain access to a foreign private pool merely by declaring its name. Use the default private memory tools (<code>remember</code>/<code>recall</code>/<code>search_memory</code>) whenever you want per-user isolation.</p>
 <p>This is <strong>Level 2</strong> shared memory (agent-level pools). For <strong>Level 1</strong> (team-scoped shared memory), see <a href="../teams/">Teams</a>.</p>
 <h2 id="export">Export<a class="headerlink" href="#export" title="Permanent link">&para;</a></h2>
 <p>Agents can be exported as standalone Python scripts via <code>GET /api/v1/agents/{name}/export</code>. The generated script uses <code>agentic-primitives-gateway-client</code> for primitive calls and raw <code>boto3</code> Bedrock <code>converse()</code> for the LLM loop. It includes all tool definitions, sub-agent delegation code, shared memory pool tools, JWT token refresh, and session management.</p>
