@@ -27,7 +27,9 @@ mem0 = [
     "pymilvus>=2.4.0",
 ]
 agentcore = [
-    "bedrock-agentcore>=1.0.0",
+    # Upper bound: providers rebind SDK-internal client attributes (see
+    # primitives/_agentcore.py); re-verify before allowing a new major.
+    "bedrock-agentcore>=1.4.2,<2.0.0",
     "opentelemetry-api>=1.20.0",
     "opentelemetry-sdk>=1.20.0",
     "opentelemetry-exporter-otlp-proto-http>=1.20.0",

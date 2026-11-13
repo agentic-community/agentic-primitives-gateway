@@ -7,7 +7,7 @@ from typing import Any
 import boto3
 from botocore.session import Session as BotocoreSession
 
-from agentic_primitives_gateway.context import get_boto3_session
+from agentic_primitives_gateway.context import get_boto3_session, require_server_credentials
 from agentic_primitives_gateway.primitives._sync import SyncRunnerMixin
 from agentic_primitives_gateway.primitives.observability.base import ObservabilityProvider
 
@@ -20,6 +20,13 @@ class AgentCoreObservabilityProvider(SyncRunnerMixin, ObservabilityProvider):
     Uses the AwsAuthSession from the AWS OpenTelemetry distro for SigV4-signed
     OTLP exports to the X-Ray endpoint. Traces appear in CloudWatch under
     Application Signals > Traces.
+
+    Writes (``ingest_trace`` / ``ingest_log`` / ``log_generation``) are
+    operator-owned: they go through one process-wide batch exporter signed
+    with the gateway's own AWS identity, so they're refused under
+    ``allow_server_credentials: never`` and audited as
+    ``provider.server_credentials_used`` otherwise.  Reads (X-Ray queries) use
+    the request's ``get_boto3_session()``.
 
     Prerequisites:
       - ``pip install aws-opentelemetry-distro``
@@ -130,6 +137,8 @@ class AgentCoreObservabilityProvider(SyncRunnerMixin, ObservabilityProvider):
             logger.exception("Error closing AgentCore observability provider")
 
     async def ingest_trace(self, trace_data: dict[str, Any]) -> None:
+        require_server_credentials("agentcore_observability")
+
         def _ingest() -> None:
             from opentelemetry import baggage, context
 
@@ -172,6 +181,8 @@ class AgentCoreObservabilityProvider(SyncRunnerMixin, ObservabilityProvider):
         await self._run_sync(_ingest)
 
     async def ingest_log(self, log_entry: dict[str, Any]) -> None:
+        require_server_credentials("agentcore_observability")
+
         def _ingest() -> None:
             with self._tracer.start_as_current_span("log") as span:
                 span.set_attribute("log.level", log_entry.get("level", "info"))
@@ -261,6 +272,8 @@ class AgentCoreObservabilityProvider(SyncRunnerMixin, ObservabilityProvider):
         metadata: dict[str, Any] | None = None,
         level: str | None = None,
     ) -> dict[str, Any]:
+        require_server_credentials("agentcore_observability")
+
         def _log() -> dict[str, Any]:
             with self._tracer.start_as_current_span(name) as span:
                 span.set_attribute("trace.id", trace_id)
@@ -289,6 +302,8 @@ class AgentCoreObservabilityProvider(SyncRunnerMixin, ObservabilityProvider):
         return result
 
     async def flush(self) -> None:
+        require_server_credentials("agentcore_observability")
+
         def _flush() -> None:
             self._tracer_provider.force_flush()
 

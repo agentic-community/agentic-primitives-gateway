@@ -22,9 +22,9 @@ from agentic_primitives_gateway_client import AgenticPlatformClient, AgenticPlat
 def _init_registry():
     """Initialise registry with Mem0 memory provider (noop for everything else).
 
-    ``allow_server_credentials="always"`` lets ``_with_aws_env`` yield without real
-    AWS creds. We also patch the module-level ``settings`` singleton so that
-    ``_server_credentials_allowed()`` returns True during request handling.
+    ``allow_server_credentials="always"`` lets the provider use the server AWS
+    chain without real caller creds. We also patch the module-level ``settings``
+    singleton so the mode is visible during request handling.
     """
     test_settings = Settings(
         allow_server_credentials="always",

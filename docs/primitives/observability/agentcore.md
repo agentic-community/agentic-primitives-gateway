@@ -22,6 +22,8 @@ providers:
 | `service_name` | `agentic-primitives-gateway` | OpenTelemetry service name |
 | `agent_id` | `agentic-primitives-gateway` | Agent identifier for traces |
 
+**Credentials:** trace/log writes (`ingest_trace`, `ingest_log`, `log_generation`, and request-triggered `flush`) go through one process-wide OTLP exporter signed with the gateway's own AWS identity — they are operator-owned. They are refused under `allow_server_credentials: never` and audited as `provider.server_credentials_used` otherwise. Trace reads (X-Ray queries) use the request's AWS credentials.
+
 ## Using the Observability API
 
 All standard observability endpoints work with this provider:

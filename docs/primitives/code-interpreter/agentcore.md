@@ -22,6 +22,8 @@ providers:
 
 All standard code interpreter endpoints work with this provider. See the [Code Interpreter API reference](../../api/code-interpreter.md) for the full endpoint list.
 
+Execution history is held locally for an active session. Each history read checks that the current request's AWS credentials can access that session in AgentCore; expired or revoked access cannot retrieve previously recorded code or output.
+
 ```bash
 # Start a session
 curl -X POST http://localhost:8000/api/v1/code-interpreter/sessions

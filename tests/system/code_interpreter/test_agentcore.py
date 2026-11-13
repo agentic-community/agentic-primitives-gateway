@@ -135,6 +135,7 @@ class TestGetSession:
 class TestExecutionHistory:
     async def test_execution_history(self, client: AgenticPlatformClient, mock_code_interpreter: MagicMock) -> None:
         mock_code_interpreter.start.return_value = "ci-sess-1"
+        mock_code_interpreter.get_session.return_value = {"sessionId": "ci-sess-1", "status": "READY"}
         await client.start_code_session()
 
         mock_code_interpreter.execute_code.return_value = {

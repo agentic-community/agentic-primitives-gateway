@@ -143,11 +143,27 @@ def mock_memory_control_plane():
 
 @pytest.fixture
 def mock_identity_client():
-    """Patch ``IdentityClient`` used by the AgentCore identity provider."""
-    with patch("agentic_primitives_gateway.primitives.identity.agentcore.IdentityClient") as mock_cls:
-        mock_client = MagicMock()
-        mock_client.dp_client = MagicMock()
-        mock_client.cp_client = MagicMock()
+    """Patch ``IdentityClient`` used by the AgentCore identity provider.
+
+    The provider rebinds the SDK's cp/dp clients to the request session, so
+    the mocks are served from ``boto3.Session.client`` — which also asserts
+    that the session carries the caller's AWS key.
+    """
+    import boto3
+
+    mock_client = MagicMock()
+    mock_client.dp_client = MagicMock()
+    mock_client.cp_client = MagicMock()
+    by_service = {"bedrock-agentcore-control": mock_client.cp_client, "bedrock-agentcore": mock_client.dp_client}
+
+    def _session_client(session: boto3.Session, service_name: str, **_: object) -> MagicMock:
+        assert session.get_credentials().access_key == FAKE_AWS_ACCESS_KEY
+        return by_service[service_name]
+
+    with (
+        patch("agentic_primitives_gateway.primitives.identity.agentcore.IdentityClient") as mock_cls,
+        patch.object(boto3.Session, "client", autospec=True, side_effect=_session_client),
+    ):
         mock_cls.return_value = mock_client
         yield mock_client
 
@@ -156,7 +172,7 @@ def mock_identity_client():
 def mock_code_interpreter():
     """Patch ``AgentCoreCodeInterpreter`` used by the code interpreter provider."""
     with patch("agentic_primitives_gateway.primitives.code_interpreter.agentcore.AgentCoreCodeInterpreter") as mock_cls:
-        mock_ci = MagicMock()
+        mock_ci = MagicMock(region=FAKE_AWS_REGION)
         mock_cls.return_value = mock_ci
         yield mock_ci
 
@@ -165,7 +181,7 @@ def mock_code_interpreter():
 def mock_browser_client():
     """Patch ``BrowserClient`` used by the AgentCore browser provider."""
     with patch("agentic_primitives_gateway.primitives.browser.agentcore.BrowserClient") as mock_cls:
-        mock_bc = MagicMock()
+        mock_bc = MagicMock(region=FAKE_AWS_REGION)
         mock_cls.return_value = mock_bc
         yield mock_bc
 

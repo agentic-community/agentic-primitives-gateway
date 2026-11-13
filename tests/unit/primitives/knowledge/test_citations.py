@@ -281,11 +281,9 @@ class TestAgentCoreCitations:
     """
 
     @patch("agentic_primitives_gateway.primitives.knowledge.agentcore.get_boto3_session")
-    @patch("agentic_primitives_gateway.primitives.knowledge.agentcore.get_service_credentials")
-    async def test_s3_location_becomes_citation_uri(self, mock_svc_creds: MagicMock, mock_session: MagicMock) -> None:
+    async def test_s3_location_becomes_citation_uri(self, mock_session: MagicMock) -> None:
         from agentic_primitives_gateway.primitives.knowledge.agentcore import AgentCoreKnowledgeProvider
 
-        mock_svc_creds.return_value = {"knowledgebase_id": "kb"}
         runtime = MagicMock()
         runtime.retrieve.return_value = {
             "retrievalResults": [
@@ -301,7 +299,7 @@ class TestAgentCoreCitations:
         sess.client.return_value = runtime
         mock_session.return_value = sess
 
-        provider = AgentCoreKnowledgeProvider()
+        provider = AgentCoreKnowledgeProvider(knowledge_base_id="kb")
         chunks = await provider.retrieve("ns", "q", top_k=1, include_citations=True)
 
         assert chunks[0].citations is not None
