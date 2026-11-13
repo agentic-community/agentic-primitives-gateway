@@ -118,6 +118,9 @@ class TestEventStoreIndex:
             async def get_status(self, key): ...
             async def append_event(self, key, event, ttl=600): ...
             async def get_events(self, key): ...
+            async def clear_events(self, key): ...
+            async def claim_owner(self, key, owner_id, *, reuse=False): ...
+            async def get_owner(self, key): ...
             async def delete(self, key): ...
 
         store = StubStore()
@@ -130,6 +133,9 @@ class TestEventStoreIndex:
             async def get_status(self, key): ...
             async def append_event(self, key, event, ttl=600): ...
             async def get_events(self, key): ...
+            async def clear_events(self, key): ...
+            async def claim_owner(self, key, owner_id, *, reuse=False): ...
+            async def get_owner(self, key): ...
             async def delete(self, key): ...
 
         store = StubStore()
@@ -168,10 +174,10 @@ class TestRedisEventStoreIndex:
 
 
 class TestBackgroundRunManagerIndex:
-    """BackgroundRunManager passes index_key to EventStore on rekey."""
+    """BackgroundRunManager registers public run IDs in scoped indexes."""
 
     @pytest.mark.asyncio
-    async def test_index_key_registered_on_rekey(self) -> None:
+    async def test_index_key_registered_on_start(self) -> None:
         from agentic_primitives_gateway.routes._background import BackgroundRunManager
 
         mock_store = AsyncMock()
@@ -183,12 +189,14 @@ class TestBackgroundRunManagerIndex:
             yield {"type": "team_start", "team_run_id": "actual-run-id", "team_name": "my-team"}
             yield {"type": "done", "response": "ok"}
 
+        assert await bg.reserve("scoped-run", "alice")
         queue, _ = bg.start(
-            "__pending",
+            "scoped-run",
             _fake_stream(),
+            owner_id="alice",
             record_events=True,
-            rekey_field="team_run_id",
             index_key="team:my-team:runs",
+            index_run_id="actual-run-id",
         )
 
         # Drain the queue
@@ -199,7 +207,6 @@ class TestBackgroundRunManagerIndex:
                 break
             events.append(event)
 
-        # Verify index was registered
+        # The run is indexed by its public ID while events retain their scoped key.
         mock_store.add_to_index.assert_called_once_with("team:my-team:runs", "actual-run-id", ttl=600)
-        # Verify rename happened
-        mock_store.rename_key.assert_called_once_with("__pending", "actual-run-id")
+        mock_store.rename_key.assert_not_called()

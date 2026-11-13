@@ -433,20 +433,20 @@ class TestMemoryHelpers:
 
         assert result == ""
 
-    async def test_load_memory_context_child_namespaces(self) -> None:
+    async def test_load_memory_context_does_not_read_child_namespaces(self) -> None:
+        from agentic_primitives_gateway.primitives.memory.in_memory import InMemoryProvider
+
         runner = AgentRunner()
-        record = MagicMock()
-        record.key = "child-fact"
-        record.content = "From child"
-        record.updated_at = "2024-01-01"
-
+        memory = InMemoryProvider()
+        own = "agent:shared:u:bob"
+        await memory.store(own, "mine", "my fact")
+        await memory.store("agent:shared:u:bob%3Aadmin", "theirs", "other user's fact")
         with patch(f"{_RUNNER_MOD}.registry") as mock_reg:
-            mock_reg.memory = AsyncMock()
-            mock_reg.memory.list_memories.side_effect = [[], [record]]
-            mock_reg.memory.list_namespaces.return_value = ["ns:child1"]
-            result = await runner._load_memory_context("ns")
+            mock_reg.memory = memory
+            result = await runner._load_memory_context(own)
 
-        assert "child-fact" in result
+        assert "my fact" in result
+        assert "other user's fact" not in result
 
     async def test_load_memory_context_error(self) -> None:
         runner = AgentRunner()
