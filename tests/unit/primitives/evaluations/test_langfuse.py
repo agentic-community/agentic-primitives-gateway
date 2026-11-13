@@ -12,6 +12,9 @@ from agentic_primitives_gateway.primitives.evaluations.langfuse import (
     _to_data_type,
 )
 
+# The SDK is mocked; skip the binding's network verification of key pairs.
+pytestmark = pytest.mark.usefixtures("langfuse_pairs_valid")
+
 
 def _mock_score_config(
     id: str = "cfg-1",
@@ -317,6 +320,17 @@ class TestHealthcheck:
             assert result is True
 
     @pytest.mark.asyncio
+    async def test_healthcheck_failed_auth_does_not_fall_through_to_ping(self, mock_creds):
+        mock_creds.return_value = {"public_key": "pk", "secret_key": "wrong"}
+        provider = LangfuseEvaluationsProvider(base_url="https://operator.test")
+        with (
+            patch.object(provider, "_resolve_sdk_client", return_value=MagicMock(auth_check=lambda: False)),
+            patch("httpx.get") as get,
+        ):
+            assert await provider.healthcheck() is False
+            get.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_healthcheck_reachable(self, mock_creds):
         mock_creds.return_value = {"public_key": "", "secret_key": "", "base_url": "https://test"}
         provider = LangfuseEvaluationsProvider()
@@ -329,6 +343,23 @@ class TestHealthcheck:
             result = await provider.healthcheck()
 
             assert result == "reachable"
+
+    @pytest.mark.asyncio
+    async def test_healthcheck_uses_operator_host_not_request_host(self, mock_creds):
+        mock_creds.return_value = {
+            "public_key": "",
+            "secret_key": "",
+            "base_url": "https://request-host.test",
+        }
+        provider = LangfuseEvaluationsProvider(base_url="https://operator.test/")
+        with patch("httpx.get") as get:
+            get.return_value.status_code = 200
+            assert await provider.healthcheck() == "reachable"
+            get.assert_called_once_with("https://operator.test/api/public/health", timeout=5)
+
+    def test_host_env_fallback(self, mock_creds):
+        with patch.dict("os.environ", {"LANGFUSE_HOST": "https://host.test"}, clear=True):
+            assert LangfuseEvaluationsProvider()._default_base_url == "https://host.test"
 
     @pytest.mark.asyncio
     async def test_healthcheck_exception(self, mock_creds):
@@ -345,7 +376,7 @@ class TestCredentialResolution:
     @pytest.mark.asyncio
     async def test_resolve_rest_client(self, mock_creds):
         mock_creds.return_value = {"public_key": "pk", "secret_key": "sk", "base_url": "https://test"}
-        provider = LangfuseEvaluationsProvider(public_key="pk", secret_key="sk")
+        provider = LangfuseEvaluationsProvider(public_key="pk", secret_key="sk", base_url="https://test")
 
         with patch("agentic_primitives_gateway.primitives.evaluations.langfuse.FernLangfuse") as mock_cls:
             provider._resolve_rest_client()
@@ -355,18 +386,58 @@ class TestCredentialResolution:
                 password="sk",
             )
 
+    def test_rest_client_ignores_request_host(self, mock_creds):
+        mock_creds.return_value = {"public_key": "pk", "secret_key": "sk", "base_url": "https://request-host.test"}
+        provider = LangfuseEvaluationsProvider(base_url="https://operator.test")
+        with patch("agentic_primitives_gateway.primitives.evaluations.langfuse.FernLangfuse") as rest:
+            provider._resolve_rest_client()
+        rest.assert_called_once_with(base_url="https://operator.test", username="pk", password="sk")
+
+    def test_rest_client_rejects_changed_bound_secret_without_outbound(self, mock_creds):
+        from types import SimpleNamespace
+
+        from langfuse._client.resource_manager import LangfuseResourceManager
+
+        mock_creds.return_value = {"public_key": "pk", "secret_key": "wrong"}
+        provider = LangfuseEvaluationsProvider(base_url="https://operator.test")
+        previous = LangfuseResourceManager._instances.get("pk")
+        LangfuseResourceManager._instances["pk"] = SimpleNamespace(
+            secret_key="correct", base_url="https://operator.test"
+        )
+        try:
+            with patch("agentic_primitives_gateway.primitives.evaluations.langfuse.FernLangfuse") as rest:
+                with pytest.raises(ValueError, match="restart required"):
+                    provider._resolve_rest_client()
+                rest.assert_not_called()
+        finally:
+            LangfuseResourceManager._instances.pop("pk")
+            if previous is not None:
+                LangfuseResourceManager._instances["pk"] = previous
+
     @pytest.mark.asyncio
     async def test_resolve_sdk_client(self, mock_creds):
         mock_creds.return_value = {"public_key": "pk", "secret_key": "sk", "base_url": "https://test"}
-        provider = LangfuseEvaluationsProvider(public_key="pk", secret_key="sk")
+        provider = LangfuseEvaluationsProvider(public_key="pk", secret_key="sk", base_url="https://test")
 
         with patch("langfuse.Langfuse") as mock_cls:
-            provider._resolve_sdk_client()
+            await provider._resolve_sdk_client()
             mock_cls.assert_called_once_with(
                 public_key="pk",
                 secret_key="sk",
                 base_url="https://test",
             )
+
+    @pytest.mark.asyncio
+    async def test_sdk_client_ignores_request_host(self, mock_creds):
+        mock_creds.return_value = {
+            "public_key": "pk",
+            "secret_key": "sk",
+            "base_url": "https://request-host.test",
+        }
+        provider = LangfuseEvaluationsProvider(base_url="https://operator.test")
+        with patch("langfuse.Langfuse") as sdk:
+            await provider._resolve_sdk_client()
+            sdk.assert_called_once_with(public_key="pk", secret_key="sk", base_url="https://operator.test")
 
 
 class TestHelpers:

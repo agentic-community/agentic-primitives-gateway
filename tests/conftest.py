@@ -90,3 +90,16 @@ def _init_registry() -> None:
 @pytest.fixture
 def client() -> TestClient:
     return TestClient(app)
+
+
+@pytest.fixture
+def langfuse_pairs_valid():
+    """Treat every Langfuse key pair as valid without a network call.
+
+    ``bind_langfuse_sdk_client`` verifies unbound / mismatched pairs against
+    the Langfuse API; tests that mock the SDK opt in to skip that request.
+    """
+    from unittest.mock import patch
+
+    with patch("agentic_primitives_gateway.primitives._langfuse._verify_pair", return_value=True) as verify:
+        yield verify

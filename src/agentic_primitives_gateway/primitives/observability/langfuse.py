@@ -11,6 +11,12 @@ from langfuse import Langfuse
 
 from agentic_primitives_gateway.context import get_service_credentials_or_defaults
 from agentic_primitives_gateway.models.enums import LogLevel
+from agentic_primitives_gateway.primitives._langfuse import (
+    assert_langfuse_binding,
+    async_bind_langfuse_sdk_client,
+    effective_langfuse_base_url,
+    require_langfuse_keys,
+)
 from agentic_primitives_gateway.primitives._sync import SyncRunnerMixin
 from agentic_primitives_gateway.primitives.observability.base import ObservabilityProvider
 
@@ -41,18 +47,15 @@ _LEVEL_MAP = {
 class LangfuseObservabilityProvider(SyncRunnerMixin, ObservabilityProvider):
     """Observability provider backed by Langfuse.
 
-    Langfuse credentials (public_key, secret_key, base_url) are read from
-    request context on every call via the X-Cred-Langfuse-* headers. This
-    allows each agent to use its own Langfuse project.
-
-    If no credentials are in the request context, falls back to config-level
-    defaults (useful for shared/platform-owned Langfuse projects).
+    Langfuse public and secret keys resolve per request from accepted headers,
+    OIDC attributes, or operator defaults according to ``allow_server_credentials``.
+    SDK and REST targets use the operator-selected URL, never a caller URL.
 
     Provider config example::
 
         backend: agentic_primitives_gateway.primitives.observability.langfuse.LangfuseObservabilityProvider
         config:
-          # Optional fallback credentials (used when client doesn't send any)
+          # Optional operator credentials (used under fallback without caller keys, or always)
           public_key: "pk-..."
           secret_key: "sk-..."
           base_url: "https://cloud.langfuse.com"
@@ -68,7 +71,7 @@ class LangfuseObservabilityProvider(SyncRunnerMixin, ObservabilityProvider):
         # Server-side defaults: provider config → env vars
         self._default_public_key = public_key or os.environ.get("LANGFUSE_PUBLIC_KEY")
         self._default_secret_key = secret_key or os.environ.get("LANGFUSE_SECRET_KEY")
-        self._default_base_url = base_url or os.environ.get("LANGFUSE_BASE_URL")
+        self._default_base_url = effective_langfuse_base_url(base_url)
         logger.info("Langfuse observability provider initialized")
 
     def _resolve_credentials(self) -> dict[str, Any]:
@@ -82,18 +85,15 @@ class LangfuseObservabilityProvider(SyncRunnerMixin, ObservabilityProvider):
             },
         )
 
-    def _resolve_client(self) -> Langfuse:
-        """Resolve Langfuse client from context. Must be called from async context."""
+    async def _resolve_client(self) -> Langfuse:
+        """Resolve a Langfuse SDK client for the request's credentials."""
         creds = self._resolve_credentials()
-
-        return Langfuse(
-            public_key=creds.get("public_key"),
-            secret_key=creds.get("secret_key"),
-            base_url=creds.get("base_url"),
-        )
+        creds["base_url"] = self._default_base_url
+        client: Langfuse = await async_bind_langfuse_sdk_client(Langfuse, creds)
+        return client
 
     async def ingest_trace(self, trace: dict[str, Any]) -> None:
-        client = self._resolve_client()
+        client = await self._resolve_client()
 
         def _ingest() -> None:
             raw_trace_id = trace.get("trace_id", uuid.uuid4().hex)
@@ -137,7 +137,7 @@ class LangfuseObservabilityProvider(SyncRunnerMixin, ObservabilityProvider):
         await self._run_sync(_ingest)
 
     async def ingest_log(self, log_entry: dict[str, Any]) -> None:
-        client = self._resolve_client()
+        client = await self._resolve_client()
 
         def _ingest() -> None:
             level = _LEVEL_MAP.get(log_entry.get("level", "info").lower(), "DEFAULT")
@@ -158,7 +158,7 @@ class LangfuseObservabilityProvider(SyncRunnerMixin, ObservabilityProvider):
         await self._run_sync(_ingest)
 
     async def query_traces(self, filters: dict[str, Any] | None = None) -> list[dict[str, Any]]:
-        client = self._resolve_client()
+        client = await self._resolve_client()
 
         def _query() -> list[dict[str, Any]]:
             f = filters or {}
@@ -189,7 +189,7 @@ class LangfuseObservabilityProvider(SyncRunnerMixin, ObservabilityProvider):
     # ── Trace retrieval & LLM generation ────────────────────────────
 
     async def get_trace(self, trace_id: str) -> dict[str, Any]:
-        client = self._resolve_client()
+        client = await self._resolve_client()
 
         def _get() -> dict[str, Any]:
             try:
@@ -213,7 +213,7 @@ class LangfuseObservabilityProvider(SyncRunnerMixin, ObservabilityProvider):
         metadata: dict[str, Any] | None = None,
         level: str | None = None,
     ) -> dict[str, Any]:
-        client = self._resolve_client()
+        client = await self._resolve_client()
 
         def _log() -> dict[str, Any]:
             lf_trace_id = _to_langfuse_trace_id(trace_id)
@@ -247,7 +247,7 @@ class LangfuseObservabilityProvider(SyncRunnerMixin, ObservabilityProvider):
         return result
 
     async def flush(self) -> None:
-        client = self._resolve_client()
+        client = await self._resolve_client()
         await self._run_sync(client.flush)
 
     # ── Trace updates & scoring ──────────────────────────────────────
@@ -264,7 +264,7 @@ class LangfuseObservabilityProvider(SyncRunnerMixin, ObservabilityProvider):
         metadata: dict[str, Any] | None = None,
         tags: list[str] | None = None,
     ) -> dict[str, Any]:
-        client = self._resolve_client()
+        client = await self._resolve_client()
 
         def _update() -> dict[str, Any]:
             lf_trace_id = _to_langfuse_trace_id(trace_id)
@@ -304,7 +304,7 @@ class LangfuseObservabilityProvider(SyncRunnerMixin, ObservabilityProvider):
         comment: str | None = None,
         data_type: str | None = None,
     ) -> dict[str, Any]:
-        client = self._resolve_client()
+        client = await self._resolve_client()
 
         def _score() -> dict[str, Any]:
             lf_trace_id = _to_langfuse_trace_id(trace_id)
@@ -331,15 +331,14 @@ class LangfuseObservabilityProvider(SyncRunnerMixin, ObservabilityProvider):
 
     async def list_scores(self, trace_id: str) -> list[dict[str, Any]]:
         creds = self._resolve_credentials()
+        auth = require_langfuse_keys(creds)
+        base_url = self._default_base_url.rstrip("/")
+        assert_langfuse_binding(*auth, base_url)
 
         def _list() -> list[dict[str, Any]]:
             lf_trace_id = _to_langfuse_trace_id(trace_id)
-            base_url = (creds.get("base_url") or "https://cloud.langfuse.com").rstrip("/")
             url = f"{base_url}/api/public/scores?traceId={lf_trace_id}"
-            resp = httpx.get(
-                url,
-                auth=(creds.get("public_key", ""), creds.get("secret_key", "")),
-            )
+            resp = httpx.get(url, auth=auth)
             resp.raise_for_status()
             data = resp.json().get("data", [])
             return [
@@ -365,7 +364,7 @@ class LangfuseObservabilityProvider(SyncRunnerMixin, ObservabilityProvider):
         user_id: str | None = None,
         limit: int = 100,
     ) -> list[dict[str, Any]]:
-        client = self._resolve_client()
+        client = await self._resolve_client()
 
         def _list() -> list[dict[str, Any]]:
             result = client.api.sessions.list(page=1, limit=limit)
@@ -387,7 +386,7 @@ class LangfuseObservabilityProvider(SyncRunnerMixin, ObservabilityProvider):
         return sessions
 
     async def get_session(self, session_id: str) -> dict[str, Any]:
-        client = self._resolve_client()
+        client = await self._resolve_client()
 
         def _get() -> dict[str, Any]:
             s = client.api.sessions.get(session_id)
@@ -415,20 +414,21 @@ class LangfuseObservabilityProvider(SyncRunnerMixin, ObservabilityProvider):
         # (e.g. called from the authenticated /api/v1/providers/status).
         try:
             creds = self._resolve_credentials()
-            if creds.get("public_key") and creds.get("secret_key"):
-                client = self._resolve_client()
+        except ValueError:
+            creds = {}  # No credentials available at all
+        if creds.get("public_key") and creds.get("secret_key"):
+            try:
+                client = await self._resolve_client()
                 result: bool = await self._run_sync(client.auth_check)
                 return result
-        except ValueError:
-            pass  # No credentials available at all
-        except Exception:
-            logger.debug("Langfuse auth_check failed", exc_info=True)
-            # Credentials were present but auth failed — don't fall through
-            # to "reachable" (that would hide the auth error)
-            return False
+            except Exception:
+                logger.debug("Langfuse auth_check failed", exc_info=True)
+                # Credentials were present but auth failed — don't fall through
+                # to "reachable" (that would hide the auth error)
+                return False
 
         # No credentials — do a lightweight HTTP ping to check connectivity.
-        base_url = (self._default_base_url or "https://cloud.langfuse.com").rstrip("/")
+        base_url = self._default_base_url.rstrip("/")
 
         def _ping() -> bool:
             resp = httpx.get(f"{base_url}/api/public/health", timeout=5)

@@ -1,9 +1,12 @@
-"""End-to-end SSRF guard: poisoned endpoint keys never reach a provider's outbound target.
+"""Verify request endpoint keys never change a provider's outbound target.
 
-For identity, browser, and tools providers, send caller credentials carrying
-endpoint overrides through real header, OIDC and checkpoint-restore ingress
-under every ``allow_server_credentials`` mode. Assert the SDK or HTTP client
-receives only the operator-configured outbound target.
+For every provider that pairs an endpoint with credentials, send caller
+credentials carrying an endpoint override through each real ingress channel —
+``X-Cred-*`` headers (``RequestContextMiddleware``), OIDC ``apg.*`` attributes
+(``CredentialResolutionMiddleware`` + ``OidcCredentialResolver``), and
+checkpoint restore — under every ``allow_server_credentials`` mode, then
+inspect the actual target handed to the SDK / HTTP client inside the request.
+It must always be the operator-configured endpoint.
 """
 
 from __future__ import annotations
@@ -25,10 +28,15 @@ from agentic_primitives_gateway.credentials.oidc import OidcCredentialResolver
 from agentic_primitives_gateway.middleware import RequestContextMiddleware
 from agentic_primitives_gateway.models.enums import ServerCredentialMode
 from agentic_primitives_gateway.primitives.browser.selenium_grid import SeleniumGridBrowserProvider
+from agentic_primitives_gateway.primitives.evaluations.langfuse import LangfuseEvaluationsProvider
 from agentic_primitives_gateway.primitives.identity.keycloak import KeycloakIdentityProvider
 from agentic_primitives_gateway.primitives.identity.okta import OktaIdentityProvider
+from agentic_primitives_gateway.primitives.observability.langfuse import LangfuseObservabilityProvider
 from agentic_primitives_gateway.primitives.tools.agentcore import AgentCoreGatewayProvider
 from agentic_primitives_gateway.primitives.tools.mcp_registry import MCPRegistryProvider
+
+# The Langfuse SDK is mocked; skip the binding's network verification of key pairs.
+pytestmark = pytest.mark.usefixtures("langfuse_pairs_valid")
 
 _REDIRECT = "http://redirect.invalid:8081"
 
@@ -93,8 +101,36 @@ def _http_client_mock() -> MagicMock:
     return client
 
 
-# Each sink: poisoned caller creds, and a coroutine returning every outbound target it used.
+# Each sink: request-supplied endpoint and credentials, with the outbound target returned.
 Sink = Callable[[], Awaitable[list[str]]]
+
+
+async def _langfuse_observability() -> list[str]:
+    provider = LangfuseObservabilityProvider(public_key="op-pk", secret_key="op-sk", base_url="https://lf.internal")
+    targets: list[str] = []
+    with patch("agentic_primitives_gateway.primitives.observability.langfuse.Langfuse") as sdk:
+        await provider._resolve_client()
+        targets.append(sdk.call_args.kwargs["base_url"])
+    with patch("agentic_primitives_gateway.primitives.observability.langfuse.httpx.get") as get:
+        get.return_value.json.return_value = {"data": []}
+        await provider.list_scores("0123456789abcdef0123456789abcdef")
+        targets.append(get.call_args.args[0])
+    return targets
+
+
+async def _langfuse_evaluations() -> list[str]:
+    provider = LangfuseEvaluationsProvider(public_key="op-pk", secret_key="op-sk", base_url="https://lf.internal")
+    targets: list[str] = []
+    with patch("agentic_primitives_gateway.primitives.evaluations.langfuse.FernLangfuse") as rest:
+        provider._resolve_rest_client()
+        targets.append(rest.call_args.kwargs["base_url"])
+    with patch("langfuse.Langfuse") as sdk:
+        await provider._resolve_sdk_client()
+        targets.append(sdk.call_args.kwargs["base_url"])
+        sdk.return_value.auth_check.return_value = True
+        await provider.healthcheck()
+        targets.append(sdk.call_args.kwargs["base_url"])
+    return targets
 
 
 async def _keycloak() -> list[str]:
@@ -142,6 +178,18 @@ async def _agentcore_gateway() -> list[str]:
 
 
 _SINKS: list[tuple[str, dict[str, dict[str, str]], Sink, str]] = [
+    (
+        "langfuse-observability",
+        {"langfuse": {"base_url": _REDIRECT, "public_key": "pk", "secret_key": "sk"}},
+        _langfuse_observability,
+        "https://lf.internal",
+    ),
+    (
+        "langfuse-evaluations",
+        {"langfuse": {"base_url": _REDIRECT, "public_key": "pk", "secret_key": "sk"}},
+        _langfuse_evaluations,
+        "https://lf.internal",
+    ),
     (
         "keycloak",
         {"keycloak": {"server_url": _REDIRECT, "realm": "r", "client_id": "c", "client_secret": "s"}},

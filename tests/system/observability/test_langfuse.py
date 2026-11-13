@@ -15,6 +15,9 @@ from agentic_primitives_gateway.config import Settings
 from agentic_primitives_gateway.registry import registry
 from agentic_primitives_gateway_client import AgenticPlatformClient, AgenticPlatformError
 
+# The SDK is mocked; skip the binding's network verification of key pairs.
+pytestmark = pytest.mark.usefixtures("langfuse_pairs_valid")
+
 # ── Registry override ────────────────────────────────────────────────
 
 

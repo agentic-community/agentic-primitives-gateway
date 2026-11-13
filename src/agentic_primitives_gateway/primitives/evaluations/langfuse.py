@@ -11,6 +11,12 @@ from langfuse.api.resources.score_configs.types.create_score_config_request impo
 from langfuse.api.resources.score_configs.types.update_score_config_request import UpdateScoreConfigRequest
 
 from agentic_primitives_gateway.context import get_service_credentials_or_defaults
+from agentic_primitives_gateway.primitives._langfuse import (
+    assert_langfuse_binding,
+    async_bind_langfuse_sdk_client,
+    effective_langfuse_base_url,
+    require_langfuse_keys,
+)
 from agentic_primitives_gateway.primitives._sync import SyncRunnerMixin
 from agentic_primitives_gateway.primitives.evaluations.base import EvaluationsProvider
 
@@ -85,9 +91,9 @@ class LangfuseEvaluationsProvider(SyncRunnerMixin, EvaluationsProvider):
 
     Evaluators map to Langfuse Score Configs (definitions for score types).
 
-    Langfuse credentials (public_key, secret_key, base_url) are read from
-    request context on every call via the X-Cred-Langfuse-* headers. Falls
-    back to config-level defaults.
+    Langfuse public and secret keys resolve per request from accepted headers,
+    OIDC attributes, or operator defaults according to ``allow_server_credentials``.
+    The server URL is operator-selected for SDK, REST, and health requests.
 
     Provider config example::
 
@@ -107,7 +113,7 @@ class LangfuseEvaluationsProvider(SyncRunnerMixin, EvaluationsProvider):
     ) -> None:
         self._default_public_key = public_key or os.environ.get("LANGFUSE_PUBLIC_KEY")
         self._default_secret_key = secret_key or os.environ.get("LANGFUSE_SECRET_KEY")
-        self._default_base_url = base_url or os.environ.get("LANGFUSE_BASE_URL", "https://cloud.langfuse.com")
+        self._default_base_url = effective_langfuse_base_url(base_url)
         logger.info("LangfuseEvaluationsProvider initialized")
 
     def _resolve_credentials(self) -> dict[str, Any]:
@@ -123,22 +129,21 @@ class LangfuseEvaluationsProvider(SyncRunnerMixin, EvaluationsProvider):
     def _resolve_rest_client(self) -> FernLangfuse:
         """Create a Langfuse REST API client with per-request credentials."""
         creds = self._resolve_credentials()
+        public_key, secret_key = require_langfuse_keys(creds)
+        assert_langfuse_binding(public_key, secret_key, self._default_base_url)
         return FernLangfuse(
-            base_url=creds.get("base_url", "https://cloud.langfuse.com"),
-            username=creds.get("public_key", ""),
-            password=creds.get("secret_key", ""),
+            base_url=self._default_base_url,
+            username=public_key,
+            password=secret_key,
         )
 
-    def _resolve_sdk_client(self) -> Any:
-        """Create a high-level Langfuse SDK client for evaluate operations."""
+    async def _resolve_sdk_client(self) -> Any:
+        """Create a high-level Langfuse SDK client with operator-selected host."""
         from langfuse import Langfuse
 
         creds = self._resolve_credentials()
-        return Langfuse(
-            public_key=creds.get("public_key"),
-            secret_key=creds.get("secret_key"),
-            base_url=creds.get("base_url"),
-        )
+        creds["base_url"] = self._default_base_url
+        return await async_bind_langfuse_sdk_client(Langfuse, creds)
 
     # ── Evaluator CRUD (backed by Langfuse Score Configs) ─────────────
 
@@ -258,7 +263,7 @@ class LangfuseEvaluationsProvider(SyncRunnerMixin, EvaluationsProvider):
             metadata: Additional context. ``metadata.value`` sets the score
                 (defaults to 1.0 if not provided).
         """
-        client = self._resolve_sdk_client()
+        client = await self._resolve_sdk_client()
         meta = dict(metadata or {})
         score_value: float | str = meta.pop("value", 1.0)
         comment = output_data
@@ -389,24 +394,24 @@ class LangfuseEvaluationsProvider(SyncRunnerMixin, EvaluationsProvider):
     async def healthcheck(self) -> bool | str:
         """Check Langfuse connectivity."""
         try:
-            from langfuse import Langfuse
-
             creds = self._resolve_credentials()
             has_keys = creds.get("public_key") and creds.get("secret_key")
             if has_keys:
-                lf = Langfuse(
-                    public_key=creds["public_key"],
-                    secret_key=creds["secret_key"],
-                    base_url=creds.get("base_url"),
-                )
-                if lf.auth_check():
-                    return True
-            # Fall back to HTTP ping
+                try:
+                    lf = await self._resolve_sdk_client()
+                    if await self._run_sync(lf.auth_check):
+                        return True
+                except ValueError:
+                    return False  # credentials present but rejected
+                return False  # failed auth must not become an unauthenticated reachable status
+            # Fall back to HTTP ping only when no credentials are available.
             import httpx
 
-            base = creds.get("base_url") or self._default_base_url or "https://cloud.langfuse.com"
-            resp = httpx.get(f"{base}/api/public/health", timeout=5)
-            if resp.status_code == 200:
+            def _ping() -> bool:
+                base = self._default_base_url.rstrip("/")
+                return httpx.get(f"{base}/api/public/health", timeout=5).status_code == 200
+
+            if await self._run_sync(_ping):
                 return "reachable"
             return False
         except Exception:
