@@ -21,7 +21,7 @@
       
       
       <link rel="icon" href="../../images/square.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.1">
     
     
       
@@ -29,10 +29,10 @@
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.57a0d79d.min.css">
       
         
-        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.fb2fffe2.min.css">
       
       
 
@@ -3443,33 +3443,33 @@
 </ol>
 <h2 id="cedar-actions">Cedar Actions<a class="headerlink" href="#cedar-actions" title="Permanent link">&para;</a></h2>
 <p>Actions are derived automatically from route definitions:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>/api/v1/memory/{namespace}       POST    →  Action::&quot;memory:store_memory&quot;
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>/api/v1/memory/{namespace}/{key} GET     →  Action::&quot;memory:retrieve_memory&quot;
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>/api/v1/agents/{name}/chat       POST    →  Action::&quot;agents:chat_with_agent&quot;
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>/api/v1/memory/{namespace}       POST    →  Action::"memory:store_memory"
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>/api/v1/memory/{namespace}/{key} GET     →  Action::"memory:retrieve_memory"
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>/api/v1/agents/{name}/chat       POST    →  Action::"agents:chat_with_agent"
 </code></pre></div>
 <h2 id="example-policies">Example Policies<a class="headerlink" href="#example-policies" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>// Allow everyone to list and view agents
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>permit(principal, action == Action::&quot;agents:list_agents&quot;, resource);
-<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>permit(principal, action == Action::&quot;agents:get_agent&quot;, resource);
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>permit(principal, action == Action::"agents:list_agents", resource);
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>permit(principal, action == Action::"agents:get_agent", resource);
 <a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>
 <a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>// Allow a specific agent to use memory
 <a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>permit(
-<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>  principal == Agent::&quot;research-assistant&quot;,
-<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>  action == Action::&quot;memory:store_memory&quot;,
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>  principal == Agent::"research-assistant",
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>  action == Action::"memory:store_memory",
 <a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>  resource
 <a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>);
 <a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>
 <a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a>// Deny code execution for all agents
-<a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a>forbid(principal, action == Action::&quot;code_interpreter:execute_code&quot;, resource);
+<a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a>forbid(principal, action == Action::"code_interpreter:execute_code", resource);
 </code></pre></div>
 <h2 id="configuration">Configuration<a class="headerlink" href="#configuration" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nt">enforcement</span><span class="p">:</span>
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">backend</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;agentic_primitives_gateway.enforcement.cedar.CedarPolicyEnforcer&quot;</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">backend</span><span class="p">:</span><span class="w"> </span><span class="s">"agentic_primitives_gateway.enforcement.cedar.CedarPolicyEnforcer"</span>
 <a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">  </span><span class="nt">config</span><span class="p">:</span>
 <a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">    </span><span class="nt">policy_refresh_interval</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">30</span><span class="w">  </span><span class="c1"># Seconds between policy reloads</span>
 <a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">  </span><span class="nt">seed_policies</span><span class="p">:</span>
-<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">description</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;Allow</span><span class="nv"> </span><span class="s">all&quot;</span>
-<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="w">      </span><span class="nt">policy_body</span><span class="p">:</span><span class="w"> </span><span class="s">&#39;permit(principal,</span><span class="nv"> </span><span class="s">action,</span><span class="nv"> </span><span class="s">resource);&#39;</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">description</span><span class="p">:</span><span class="w"> </span><span class="s">"Allow</span><span class="nv"> </span><span class="s">all"</span>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="w">      </span><span class="nt">policy_body</span><span class="p">:</span><span class="w"> </span><span class="s">'permit(principal,</span><span class="nv"> </span><span class="s">action,</span><span class="nv"> </span><span class="s">resource);'</span>
 </code></pre></div>
 <h3 id="seed-policies">Seed Policies<a class="headerlink" href="#seed-policies" title="Permanent link">&para;</a></h3>
 <p>Policies in <code>seed_policies</code> are loaded into a "seed" policy engine at startup. This ensures enforcement works even with the noop (in-memory) policy provider.</p>
@@ -3551,10 +3551,10 @@
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.expand", "navigation.top", "content.code.copy", "content.tabs.link", "search.suggest", "toc.follow"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.expand", "navigation.top", "content.code.copy", "content.tabs.link", "search.suggest", "toc.follow"], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../../assets/javascripts/bundle.a5f9d56c.min.js"></script>
       
     
   </body>
