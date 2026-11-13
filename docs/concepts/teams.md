@@ -369,7 +369,7 @@ See [Configuration](../getting-started/configuration.md) for the `checkpointing`
 
 ## Run Cancellation
 
-An active team run can be cancelled via `DELETE /api/v1/teams/{name}/runs/{run_id}/cancel`. Cancellation is cooperative: the runner checks an `asyncio.Event` at every worker checkpoint. When triggered, all in-progress tasks are marked as failed and the run terminates. This works for both local runs and runs recovered from a checkpoint on another replica.
+An active team run can be cancelled via `DELETE /api/v1/teams/{name}/runs/{run_id}/cancel`. Cancellation is cooperative: the runner checks both its local signal and the persisted cross-replica signal. Streaming workers stop their in-flight tasks and wait for them to exit before the run ends; a late worker result cannot revive a task already failed by cancellation. Claimed and in-progress work is marked failed. This also applies to runs recovered from a checkpoint on another replica.
 
 ## SSE Reconnection
 

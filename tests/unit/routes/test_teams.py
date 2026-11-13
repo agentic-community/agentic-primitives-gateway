@@ -354,6 +354,18 @@ class TestCancelTeamRun:
 
         assert resp.status_code == 200
 
+    def test_cancel_marks_claimed_tasks_failed(self, teams_client: TestClient) -> None:
+        teams_client.post("/api/v1/teams", json=TEAM_PAYLOAD)
+        task = MagicMock(id="claimed-task", status="claimed")
+        with patch("agentic_primitives_gateway.routes.teams.registry") as registry_mock:
+            registry_mock.tasks.list_tasks = AsyncMock(return_value=[task])
+            registry_mock.tasks.update_task = AsyncMock()
+            resp = teams_client.delete("/api/v1/teams/test-team/runs/run-xyz/cancel")
+        assert resp.status_code == 200
+        registry_mock.tasks.update_task.assert_awaited_once_with(
+            "run-xyz", "claimed-task", status="failed", result="Run cancelled"
+        )
+
     def test_cancel_forbidden_for_non_owner(self, teams_client: TestClient) -> None:
         # Create team with shared_with=["*"] so access check passes
         payload = {**TEAM_PAYLOAD, "shared_with": ["*"]}

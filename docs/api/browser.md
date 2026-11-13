@@ -12,7 +12,7 @@ Cloud-based browser automation. All endpoints require authentication. Session op
 |---|---|---|
 | `POST` | `/sessions` | Start a browser session. Returns 201. |
 | `GET` | `/sessions` | List sessions (filtered to owned sessions for non-admins). |
-| `GET` | `/sessions/{session_id}` | Get session info. Returns 404 if not found. |
+| `GET` | `/sessions/{session_id}` | Get session info. Returns 404 if not found. With AgentCore, a fresh remote `READY` check must authorize the current request's AWS identity before the cached page URL is returned. Revoked access is refused; missing caller credentials are refused under `allow_server_credentials: never`. |
 | `DELETE` | `/sessions/{session_id}` | Stop a session. Returns 204. |
 | `GET` | `/sessions/{session_id}/live-view` | Get a live view URL. Query param: `expires` (1-3600, default 300). |
 
@@ -28,7 +28,7 @@ curl -X POST http://localhost:8000/api/v1/browser/sessions \
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `session_id` | string | auto-generated | Optional custom session ID. |
+| `session_id` | string | auto-generated | Optional custom session ID. Already-claimed or previously stopped IDs return `409 Conflict`; session IDs are never reused, so in-flight requests cannot reach a replacement session. |
 | `config` | object | `{}` | Provider-specific session config. |
 | `viewport` | object | none | Optional viewport size (`width`, `height`). |
 

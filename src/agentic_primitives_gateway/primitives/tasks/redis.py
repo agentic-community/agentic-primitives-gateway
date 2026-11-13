@@ -71,10 +71,31 @@ local raw = redis.call('HGET', key, task_id)
 if not raw then return nil end
 
 local task = cjson.decode(raw)
+if task['status'] == 'failed' and (new_status == 'in_progress' or new_status == 'done') then return raw end
 task['updated_at'] = now
 if new_status ~= '' then task['status'] = new_status end
 if new_result ~= '' then task['result'] = new_result end
 
+local updated = cjson.encode(task)
+redis.call('HSET', key, task_id, updated)
+return updated
+"""
+
+# Lua compare-and-set for an explicit retry. A normal worker update cannot
+# transition failed -> in_progress; a cancelled task cannot be retried.
+_RETRY_LUA = """
+local key = KEYS[1]
+local task_id = ARGV[1]
+local now = ARGV[2]
+
+local raw = redis.call('HGET', key, task_id)
+if not raw then return nil end
+local task = cjson.decode(raw)
+if task['status'] ~= 'failed' or task['result'] == 'Run cancelled' then return nil end
+
+task['status'] = 'in_progress'
+task['result'] = cjson.null
+task['updated_at'] = now
 local updated = cjson.encode(task)
 redis.call('HSET', key, task_id, updated)
 return updated
@@ -204,6 +225,13 @@ class RedisTasksProvider(TasksProvider):
             keys=[_task_key(team_run_id)],
             args=[task_id, status or "", result or "", now],
         )
+        if raw is None:
+            return None
+        return _parse_task(raw)
+
+    async def retry_task(self, team_run_id: str, task_id: str) -> Task | None:
+        script = await self._script("retry", _RETRY_LUA)
+        raw = await script(keys=[_task_key(team_run_id)], args=[task_id, datetime.now(UTC).isoformat()])
         if raw is None:
             return None
         return _parse_task(raw)

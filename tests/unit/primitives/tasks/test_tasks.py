@@ -149,6 +149,49 @@ async def test_update_task(provider: InMemoryTasksProvider) -> None:
 
 
 @pytest.mark.asyncio
+async def test_cancelled_task_cannot_be_revived_by_late_worker(provider: InMemoryTasksProvider) -> None:
+    task = await provider.create_task(RUN_ID, "Slow task")
+    await provider.claim_task(RUN_ID, task.id, "worker")
+    await provider.update_task(RUN_ID, task.id, status=TaskStatus.FAILED, result="Run cancelled")
+    late_start = await provider.update_task(RUN_ID, task.id, status=TaskStatus.IN_PROGRESS)
+    assert late_start is not None and late_start.status == TaskStatus.FAILED
+    late = await provider.update_task(RUN_ID, task.id, status=TaskStatus.DONE, result="Late result")
+    assert late is not None
+    assert late.status == TaskStatus.FAILED
+    assert late.result == "Run cancelled"
+    assert await provider.get_task(RUN_ID, task.id) == late
+
+
+@pytest.mark.asyncio
+async def test_explicit_retry_rearms_failed_task_and_unblocks_dependency(provider: InMemoryTasksProvider) -> None:
+    upstream = await provider.create_task(RUN_ID, "Retry upstream")
+    downstream = await provider.create_task(RUN_ID, "Dependent", depends_on=[upstream.id])
+    await provider.claim_task(RUN_ID, upstream.id, "worker")
+    await provider.update_task(RUN_ID, upstream.id, status=TaskStatus.FAILED, result="Temporary failure")
+    assert await provider.claim_task(RUN_ID, downstream.id, "worker") is None
+
+    first, second = await asyncio.gather(
+        provider.retry_task(RUN_ID, upstream.id), provider.retry_task(RUN_ID, upstream.id)
+    )
+    assert sum(task is not None for task in (first, second)) == 1
+    rearmed = first or second
+    assert rearmed is not None and rearmed.status == TaskStatus.IN_PROGRESS and rearmed.result is None
+    completed = await provider.update_task(RUN_ID, upstream.id, status=TaskStatus.DONE, result="Recovered")
+    assert completed is not None and completed.result == "Recovered"
+    assert await provider.claim_task(RUN_ID, downstream.id, "worker") is not None
+    assert await provider.retry_task(RUN_ID, upstream.id) is None
+
+
+@pytest.mark.asyncio
+async def test_cancelled_task_cannot_be_explicitly_retried(provider: InMemoryTasksProvider) -> None:
+    task = await provider.create_task(RUN_ID, "Cancelled")
+    await provider.update_task(RUN_ID, task.id, status=TaskStatus.FAILED, result="Run cancelled")
+    assert await provider.retry_task(RUN_ID, task.id) is None
+    assert await provider.retry_task(RUN_ID, "absent") is None
+    assert (await provider.get_task(RUN_ID, task.id)).result == "Run cancelled"  # type: ignore[union-attr]
+
+
+@pytest.mark.asyncio
 async def test_update_nonexistent(provider: InMemoryTasksProvider) -> None:
     result = await provider.update_task(RUN_ID, "nonexistent", status=TaskStatus.DONE)
     assert result is None

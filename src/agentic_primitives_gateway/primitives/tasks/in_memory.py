@@ -104,17 +104,31 @@ class InMemoryTasksProvider(TasksProvider):
         status: str | None = None,
         result: str | None = None,
     ) -> Task | None:
-        task = self._board(team_run_id).get(task_id)
-        if task is None:
-            return None
-        updates: dict[str, Any] = {"updated_at": datetime.now(UTC)}
-        if status is not None:
-            updates["status"] = status
-        if result is not None:
-            updates["result"] = result
-        updated = task.model_copy(update=updates)
-        self._board(team_run_id)[task_id] = updated
-        return updated
+        async with self._lock:
+            task = self._board(team_run_id).get(task_id)
+            if task is None:
+                return None
+            if task.status == TaskStatus.FAILED and status in (TaskStatus.IN_PROGRESS, TaskStatus.DONE):
+                return task  # cancellation won; a late worker cannot revive it
+            updates: dict[str, Any] = {"updated_at": datetime.now(UTC)}
+            if status is not None:
+                updates["status"] = status
+            if result is not None:
+                updates["result"] = result
+            updated = task.model_copy(update=updates)
+            self._board(team_run_id)[task_id] = updated
+            return updated
+
+    async def retry_task(self, team_run_id: str, task_id: str) -> Task | None:
+        async with self._lock:
+            task = self._board(team_run_id).get(task_id)
+            if task is None or task.status != TaskStatus.FAILED or task.result == "Run cancelled":
+                return None
+            updated = task.model_copy(
+                update={"status": TaskStatus.IN_PROGRESS, "result": None, "updated_at": datetime.now(UTC)}
+            )
+            self._board(team_run_id)[task_id] = updated
+            return updated
 
     async def add_note(
         self,

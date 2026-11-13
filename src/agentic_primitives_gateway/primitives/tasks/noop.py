@@ -55,6 +55,9 @@ class NoopTasksProvider(TasksProvider):
     ) -> Task | None:
         return None
 
+    async def retry_task(self, team_run_id: str, task_id: str) -> Task | None:
+        return None
+
     async def add_note(
         self,
         team_run_id: str,

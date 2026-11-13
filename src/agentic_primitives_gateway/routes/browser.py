@@ -1,4 +1,5 @@
 from typing import Any
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 
@@ -38,19 +39,35 @@ async def start_session(
         resource_type=ResourceType.SESSION,
         metadata={"primitive": "browser"},
     ) as audit:
-        result = await registry.browser.start_session(
-            session_id=request.session_id,
-            config=config,
-        )
-        info = BrowserSessionInfo(**result)
-        await browser_session_owners.set_owner(info.session_id, principal.id)
+        requested_id = request.session_id or uuid4().hex
+        if not await browser_session_owners.set_owner(requested_id, principal.id):
+            raise HTTPException(status_code=409, detail="Session ID already in use")
+        try:
+            result = await registry.browser.start_session(
+                session_id=requested_id,
+                config=config,
+            )
+            info = BrowserSessionInfo(**result)
+            # The backend may choose its own ID. Never stop a conflicting ID:
+            # it may be another owner's existing provider resource.
+            if info.session_id != requested_id and not await browser_session_owners.set_owner(
+                info.session_id, principal.id
+            ):
+                raise HTTPException(status_code=409, detail="Session ID already in use")
+        except BaseException:
+            await browser_session_owners.release_owner(requested_id, principal.id)
+            raise
+        if info.session_id != requested_id:
+            await browser_session_owners.release_owner(requested_id, principal.id)
         audit.resource_id = info.session_id
     return info
 
 
 @router.delete("/sessions/{session_id}")
 async def stop_session(session_id: str) -> Response:
-    await browser_session_owners.require_owner(session_id, require_principal())
+    principal = require_principal()
+    await browser_session_owners.require_owner(session_id, principal)
+    owner = await browser_session_owners.get_owner(session_id)
     async with audit_mutation(
         AuditAction.SESSION_TERMINATE,
         resource_type=ResourceType.SESSION,
@@ -58,7 +75,8 @@ async def stop_session(session_id: str) -> Response:
         metadata={"primitive": "browser"},
     ):
         await registry.browser.stop_session(session_id)
-        await browser_session_owners.delete(session_id)
+        if owner is not None:
+            await browser_session_owners.release_owner(session_id, owner)
     return Response(status_code=204)
 
 

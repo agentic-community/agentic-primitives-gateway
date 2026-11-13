@@ -1227,34 +1227,41 @@ class AgentRunner:
         if primitive not in ("code_interpreter", "browser") or primitive in ctx.session_ids:
             return
 
-        sid: str | None = None
+        sid = uuid.uuid4().hex
+        principal = get_authenticated_principal()
+        if principal is None:
+            raise RuntimeError("Cannot claim a session without an authenticated principal")
+        owner_store = _session_ownership_store(primitive)
+        if owner_store is None or not await owner_store.set_owner(sid, principal.id):
+            raise RuntimeError(f"{primitive} session ID already in use: {sid}")
+        claimed_id = sid
         try:
             logger.info("Starting %s session...", primitive)
             if primitive == "code_interpreter":
-                result = await registry.code_interpreter.start_session()
-                sid = result.get("session_id", uuid.uuid4().hex[:16])
-            elif primitive == "browser":
-                result = await registry.browser.start_session()
-                sid = result.get("session_id", uuid.uuid4().hex[:16])
+                result = await registry.code_interpreter.start_session(session_id=sid)
+            else:
+                result = await registry.browser.start_session(session_id=sid)
+            returned_id = result.get("session_id")
+            if not returned_id:
+                raise RuntimeError(f"{primitive} provider returned no session ID")
+            if returned_id != sid:
+                if not await owner_store.set_owner(returned_id, principal.id):
+                    # The provider may have returned another user's ID. Never
+                    # stop it or add it to this run's cleanup list.
+                    raise RuntimeError(f"{primitive} session ID already in use: {returned_id}")
+                claimed_id = returned_id
+            if self._session_registry:
+                await self._session_registry.register(primitive, returned_id, metadata={"user_id": principal.id})
+            if returned_id != sid:
+                await owner_store.release_owner(sid, principal.id)
+            sid = returned_id
             logger.info("Started %s session: %s", primitive, sid)
-            principal = get_authenticated_principal()
-            # Record session ownership so the HTTP routes' ``require_owner``
-            # check can reject cross-user access via a leaked session ID.
-            if principal is not None and sid is not None:
-                owner_store = _session_ownership_store(primitive)
-                if owner_store is not None:
-                    with contextlib.suppress(Exception):
-                        await owner_store.set_owner(sid, principal.id)
-            if self._session_registry and sid is not None:
-                if principal is None:
-                    raise RuntimeError("Cannot register session without an authenticated principal")
-                await self._session_registry.register(primitive, sid, metadata={"user_id": principal.id})
-        except (NotImplementedError, Exception):
-            logger.warning("Failed to start %s session", primitive, exc_info=True)
-            sid = uuid.uuid4().hex[:16]
+        except BaseException:
+            await owner_store.release_owner(claimed_id, principal.id)
+            if claimed_id != sid:
+                await owner_store.release_owner(sid, principal.id)
+            raise
 
-        if sid is None:
-            return
         ctx.session_ids[primitive] = sid
         # Install the session contextvar so downstream handlers pick it up.
         if primitive == "browser":
@@ -1265,16 +1272,23 @@ class AgentRunner:
     async def _cleanup_sessions(self, ctx: _RunContext) -> None:
         """Stop live sessions, unregister, and reset per-primitive contextvars."""
         for primitive, sid in ctx.session_ids.items():
+            stopped = False
             try:
                 if primitive == "browser":
                     await registry.browser.stop_session(session_id=sid)
                 elif primitive == "code_interpreter":
                     await registry.code_interpreter.stop_session(session_id=sid)
+                stopped = True
             except (NotImplementedError, Exception):
                 logger.debug("Failed to stop %s session %s", primitive, sid)
-            if self._session_registry:
-                with contextlib.suppress(Exception):
-                    await self._session_registry.unregister(primitive, sid)
+            if stopped:
+                owner_store = _session_ownership_store(primitive)
+                principal = get_authenticated_principal()
+                if owner_store is not None and principal is not None:
+                    await owner_store.release_owner(sid, principal.id)
+                if self._session_registry:
+                    with contextlib.suppress(Exception):
+                        await self._session_registry.unregister(primitive, sid)
         # Reset contextvars regardless of whether stop_session succeeded.
         if "browser_session" in ctx._cv_tokens:
             with contextlib.suppress(Exception):

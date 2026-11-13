@@ -33,14 +33,13 @@ class TestExistingEndpoints:
 
 class TestGetSession:
     def test_get_session_after_start(self, client: TestClient) -> None:
-        client.post(
-            "/api/v1/code-interpreter/sessions",
-            json={"session_id": "s-1", "language": "python"},
-        )
-        resp = client.get("/api/v1/code-interpreter/sessions/s-1")
+        start = client.post("/api/v1/code-interpreter/sessions", json={"language": "python"})
+        assert start.status_code == 201
+        session_id = start.json()["session_id"]
+        resp = client.get(f"/api/v1/code-interpreter/sessions/{session_id}")
         assert resp.status_code == 200
         data = resp.json()
-        assert data["session_id"] == "s-1"
+        assert data["session_id"] == session_id
         assert data["status"] == "active"
         assert "created_at" in data
 
@@ -51,11 +50,10 @@ class TestGetSession:
 
 class TestExecutionHistory:
     def test_history_empty(self, client: TestClient) -> None:
-        client.post(
-            "/api/v1/code-interpreter/sessions",
-            json={"session_id": "s-1", "language": "python"},
-        )
-        resp = client.get("/api/v1/code-interpreter/sessions/s-1/history")
+        start = client.post("/api/v1/code-interpreter/sessions", json={"language": "python"})
+        assert start.status_code == 201
+        session_id = start.json()["session_id"]
+        resp = client.get(f"/api/v1/code-interpreter/sessions/{session_id}/history")
         assert resp.status_code == 200
         assert resp.json()["entries"] == []
 
