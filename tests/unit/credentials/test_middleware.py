@@ -94,8 +94,30 @@ class TestCredentialResolutionMiddleware:
             assert data["langfuse"] == {"public_key": "pk-abc", "secret_key": "sk-xyz"}
 
     @pytest.mark.asyncio
+    async def test_empty_oidc_value_is_not_reported_as_resolved(self):
+        from unittest.mock import patch
+
+        from agentic_primitives_gateway.audit.models import AuditAction
+
+        resolver = AsyncMock()
+        resolver.resolve.return_value = ResolvedCredentials(
+            service_credentials={"langfuse": {"secret_key": ""}, "okta": {"api_token": "user-token"}}
+        )
+        app = _make_app(credential_resolver=resolver)
+        with patch("agentic_primitives_gateway.credentials.middleware.emit_audit_event") as emit:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                resp = await client.get("/api/v1/test", headers={"Authorization": "Bearer test-token"})
+        assert resp.status_code == 200
+        assert resp.json()["langfuse"] is None
+        resolved = [
+            call.kwargs for call in emit.call_args_list if call.kwargs["action"] == AuditAction.CREDENTIAL_RESOLVE
+        ]
+        assert len(resolved) == 1
+        assert resolved[0]["metadata"]["services"] == ["okta"]
+
+    @pytest.mark.asyncio
     async def test_explicit_headers_take_priority(self):
-        """X-Cred-* headers should prevent OIDC resolution."""
+        """Accepted X-AWS-* / X-Cred-* headers win over OIDC for their credentials."""
         resolver = AsyncMock()
         resolver.resolve = AsyncMock(
             return_value=ResolvedCredentials(service_credentials={"langfuse": {"public_key": "from-oidc"}})
@@ -115,7 +137,7 @@ class TestCredentialResolutionMiddleware:
             )
             assert resp.status_code == 200
             data = resp.json()
-            # Headers win — resolver should not even be called
+            # Headers win for AWS and for the langfuse service
             assert data["has_aws"] is True
             assert data["langfuse"]["public_key"] == "from-headers"
 
@@ -150,3 +172,59 @@ class TestCredentialResolutionMiddleware:
             assert resp.status_code == 200
             data = resp.json()
             assert data["langfuse"] is None
+
+
+class TestPerServicePrecedence:
+    """Only *accepted* header credentials override OIDC, and only for their own keys."""
+
+    async def _get(self, headers: dict[str, str]) -> dict:
+        resolver = AsyncMock()
+        resolver.resolve = AsyncMock(
+            return_value=ResolvedCredentials(
+                service_credentials={"langfuse": {"public_key": "user-pk", "secret_key": "user-sk"}}
+            )
+        )
+        app = _make_app(credential_resolver=resolver)
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get("/api/v1/test", headers={"Authorization": "Bearer jwt", **headers})
+        return resp.json()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "header",
+        [
+            {"X-Cred-Langfuse-Base-Url": "http://redirect.invalid"},  # dropped endpoint key
+            {"X-Cred-Unknown-Token": "t"},  # unrelated service
+            {"X-Cred-Langfuse-Public-Key": ""},  # empty value = not supplied
+        ],
+    )
+    async def test_rejected_or_unrelated_header_keeps_user_oidc_set(self, header):
+        data = await self._get(header)
+        assert data["langfuse"] == {"public_key": "user-pk", "secret_key": "user-sk"}
+
+    @pytest.mark.asyncio
+    async def test_accepted_header_overrides_only_its_key(self):
+        data = await self._get({"X-Cred-Langfuse-Public-Key": "header-pk"})
+        assert data["langfuse"] == {"public_key": "header-pk", "secret_key": "user-sk"}
+
+    @pytest.mark.asyncio
+    async def test_unrelated_key_header_keeps_users_gateway_token(self):
+        """An X-Cred-Agentcore-Memory-Id header must not drop the user's own gateway_token
+        (which under ``fallback`` would switch them to the operator's token)."""
+        from agentic_primitives_gateway.context import get_service_credentials
+
+        resolver = AsyncMock()
+        resolver.resolve = AsyncMock(
+            return_value=ResolvedCredentials(service_credentials={"agentcore": {"gateway_token": "user-token"}})
+        )
+        app = _make_app(credential_resolver=resolver)
+
+        @app.get("/agentcore")
+        async def agentcore() -> dict:
+            return {"agentcore": get_service_credentials("agentcore")}
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.get(
+                "/agentcore", headers={"Authorization": "Bearer jwt", "X-Cred-Agentcore-Memory-Id": "m-1"}
+            )
+        assert resp.json()["agentcore"] == {"memory_id": "m-1", "gateway_token": "user-token"}

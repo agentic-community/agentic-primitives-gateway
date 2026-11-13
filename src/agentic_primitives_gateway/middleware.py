@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 from uuid import uuid4
 
 from fastapi import Request
@@ -15,12 +14,10 @@ from agentic_primitives_gateway.context import (
     set_correlation_id,
     set_provider_overrides,
     set_request_id,
+    set_request_path,
     set_service_credentials,
 )
-from agentic_primitives_gateway.credentials.security import emit_credential_key_denied, is_forbidden_credential_key
 from agentic_primitives_gateway.registry import PRIMITIVES
-
-logger = logging.getLogger(__name__)
 
 
 class RequestContextMiddleware(BaseHTTPMiddleware):
@@ -51,6 +48,7 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
         # Request ID
         request_id = request.headers.get("x-request-id") or uuid4().hex
         set_request_id(request_id)
+        set_request_path(request.url.path)
 
         # Correlation ID — threads across sub-agent calls + background runs.
         # Falls back to the request_id so callers that don't pass one still
@@ -75,10 +73,9 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
             set_aws_credentials(None)
 
         # Service credentials (X-Cred-{Service}-{Key} headers).
-        # URL/host/endpoint keys are filtered out — treat those as
-        # server-side configuration, not caller-supplied credentials.
-        # Otherwise any authenticated request could redirect a provider
-        # to an attacker-chosen host (SSRF).
+        # URL/host/endpoint keys are dropped (and audited) by
+        # ``set_service_credentials`` — server-side configuration, not
+        # caller-supplied credentials (SSRF guard).
         service_creds: dict[str, dict[str, str]] = {}
         for header_name, header_value in request.headers.items():
             if not header_name.startswith("x-cred-"):
@@ -86,19 +83,8 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
             parts = header_name.removeprefix("x-cred-").split("-", 1)
             if len(parts) != 2:
                 continue
-            service = parts[0]
-            key = parts[1].replace("-", "_")
-            if is_forbidden_credential_key(key):
-                logger.warning(
-                    "Ignoring forbidden X-Cred-* key %r on service %r — "
-                    "URL/host/endpoint fields are server-config only",
-                    key,
-                    service,
-                )
-                emit_credential_key_denied(service=service, key=key, source="header", http_path=request.url.path)
-                continue
-            service_creds.setdefault(service, {})[key] = header_value
-        set_service_credentials(service_creds)
+            service_creds.setdefault(parts[0], {})[parts[1].replace("-", "_")] = header_value
+        set_service_credentials(service_creds, source="header")
 
         # Provider routing
         overrides: dict[str, str] = {}

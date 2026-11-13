@@ -33,7 +33,8 @@ Client sends: POST /api/v1/memory/my-ns
    - Reads apg.* attributes from Keycloak Admin API (or userinfo fallback)
    - Maps apg.{service}.{key} → service_credentials[service][key]
      (endpoint keys — url/host/endpoint/port/domain — are dropped)
-   - Skips if explicit X-Cred-* headers are present (headers always win)
+   - Per-key precedence: an accepted non-empty X-Cred-* header overrides that key's OIDC
+     value; other OIDC keys remain, and rejected or unrelated headers never disable OIDC
    - Caches resolved credentials in-memory per user (configurable TTL)
 
 4. PolicyEnforcementMiddleware (enforcement/middleware.py)
@@ -89,7 +90,7 @@ The `credentials/` subsystem resolves per-user service credentials from OIDC use
 
 **Convention-based mapping:** All gateway credentials use `apg.{service}.{key}` naming. The resolver auto-discovers `apg.*` attributes and maps them to `service_credentials[service][key]`. No explicit attribute mapping config is needed.
 
-**Endpoints are operator-only:** Users can edit their own `apg.*` attributes, so this channel is as caller-controlled as `X-Cred-*` headers. Keys containing `url`, `uri`, `host`, `endpoint`, `origin`, `port`, or `domain` are rejected by `PUT /api/v1/credentials` (400), dropped by the resolver and header parser (audited as `network.access.denied`), and ignored by `get_service_credentials_or_defaults`, which always uses the operator-configured endpoint. A caller can never point a provider — or the operator secrets it carries under `fallback` — at another host.
+**Endpoints are operator-only:** Users can edit their own `apg.*` attributes, so this channel is as caller-controlled as `X-Cred-*` headers. Keys containing `url`, `uri`, `host`, `endpoint`, `origin`, `port`, or `domain` are rejected by `PUT /api/v1/credentials` (400) and dropped by `set_service_credentials` — the only writer of the service-credential context, used by the header parser, the OIDC resolver, and checkpoint restore — with a `network.access.denied` audit event. `get_service_credentials_or_defaults` always uses the operator-configured endpoint. A caller can never point a provider — or the operator secrets it carries under `fallback` — at another host.
 
 **Two resolution modes** (tried in order):
 

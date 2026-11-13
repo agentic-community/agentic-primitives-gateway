@@ -12,6 +12,10 @@ it from a caller is a one-step SSRF and server-secret exfiltration.
 
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 _FORBIDDEN_KEY_SUBSTRINGS: frozenset[str] = frozenset({"url", "uri", "host", "endpoint", "origin", "port", "domain"})
 
 
@@ -40,15 +44,46 @@ def split_credential_attribute(remainder: str) -> tuple[str, str] | None:
     return "_global", parts[0]
 
 
-def emit_credential_key_denied(*, service: str, key: str, source: str, http_path: str | None = None) -> None:
+def drop_forbidden_credential_keys(creds: dict[str, dict[str, str]], *, source: str) -> dict[str, dict[str, str]]:
+    """Return ``creds`` without endpoint-shaped keys, auditing each one dropped.
+
+    Services left with no keys are omitted.  Returns ``creds`` itself when
+    nothing is dropped (the common case) to avoid copying on every request.
+    """
+    if not any(is_forbidden_credential_key(k) for keys in creds.values() for k in keys):
+        return creds
+    clean: dict[str, dict[str, str]] = {}
+    for service, keys in creds.items():
+        kept: dict[str, str] = {}
+        for key, value in keys.items():
+            if is_forbidden_credential_key(key):
+                logger.warning(
+                    "Ignoring endpoint-shaped %s credential key %r on service %r — "
+                    "URL/host/endpoint fields are server-config only",
+                    source,
+                    key,
+                    service,
+                )
+                emit_credential_key_denied(service=service, key=key, source=source)
+                continue
+            kept[key] = value
+        if kept:
+            clean[service] = kept
+    return clean
+
+
+def emit_credential_key_denied(*, service: str, key: str, source: str) -> None:
     """Audit the rejection of an endpoint-shaped caller credential key.
 
     Emits ``network.access.denied`` so SIEM can alert on attempted SSRF via
-    credential injection.  ``source`` is ``header``, ``oidc`` or ``write``.
+    credential injection.  ``source`` is ``header``, ``oidc``, ``write`` or
+    ``checkpoint``; ``http_path`` is the path of the triggering request (set
+    by ``RequestContextMiddleware``; empty for background checkpoint resume).
     Key names only — values are never recorded.
     """
     from agentic_primitives_gateway.audit.emit import emit_audit_event
     from agentic_primitives_gateway.audit.models import AuditAction, AuditOutcome, ResourceType
+    from agentic_primitives_gateway.context import get_request_path
 
     emit_audit_event(
         action=AuditAction.NETWORK_ACCESS_DENIED,
@@ -56,6 +91,6 @@ def emit_credential_key_denied(*, service: str, key: str, source: str, http_path
         resource_type=ResourceType.CREDENTIAL,
         resource_id=f"{service}:{key}",
         reason="blocked_cred_key",
-        http_path=http_path,
+        http_path=get_request_path() or None,
         metadata={"service": service, "key": key, "source": source},
     )

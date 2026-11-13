@@ -15,7 +15,7 @@ from typing import Any
 from agentic_primitives_gateway.auth.models import AuthenticatedPrincipal
 from agentic_primitives_gateway.context import (
     AWSCredentials,
-    _service_credentials,
+    get_all_service_credentials,
     get_authenticated_principal,
     get_aws_credentials,
     get_correlation_id,
@@ -49,7 +49,7 @@ def serialize_auth_context() -> dict[str, Any]:
             "session_token": aws_creds.session_token,
             "region": aws_creds.region,
         }
-    svc_creds = _service_credentials.get()
+    svc_creds = get_all_service_credentials()
     if svc_creds:
         data["service_credentials"] = svc_creds
     # Store credential metadata for diagnostics on recovery
@@ -92,7 +92,9 @@ def restore_auth_context(data: dict[str, Any]) -> AuthenticatedPrincipal:
         )
     svc_data = data.get("service_credentials")
     if svc_data:
-        set_service_credentials(svc_data)
+        # Checkpoints written before endpoint-key filtering (or tampered in
+        # Redis) may carry caller URLs; the setter drops and audits them.
+        set_service_credentials(svc_data, source="checkpoint")
 
     correlation_id = data.get("correlation_id")
     if correlation_id:

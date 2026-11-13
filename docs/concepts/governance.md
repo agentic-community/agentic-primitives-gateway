@@ -50,7 +50,7 @@ middleware layer.
 | Policy | `policy.allow` / `policy.deny` / `policy.load` | `PolicyEnforcementMiddleware` + `CedarPolicyEnforcer.load_policies()` |
 | Credentials | `credential.resolve` / `credential.read` / `credential.write` / `credential.delete` | `CredentialResolutionMiddleware` + `routes/{credentials,identity}.py` |
 | Ownership | `resource.access.denied` | `auth/access.py::require_access` / `require_owner_or_admin` |
-| Network | `network.access.denied` | `credentials/security.py` — endpoint-shaped credential keys rejected on `X-Cred-*` headers, OIDC `apg.*` attributes, and `PUT /api/v1/credentials` (`metadata.source` = `header`/`oidc`/`write`) |
+| Network | `network.access.denied` | `credentials/security.py` — endpoint-shaped credential keys rejected on `X-Cred-*` headers, OIDC `apg.*` attributes, checkpoint restore, and `PUT /api/v1/credentials` (`metadata.source` = `header`/`oidc`/`checkpoint`/`write`) |
 | Primitive (universal) | `provider.call` | `MetricsProxy` — every wrapped primitive method (coroutine + async generator) |
 
 **Per-primitive CRUD + lifecycle:**

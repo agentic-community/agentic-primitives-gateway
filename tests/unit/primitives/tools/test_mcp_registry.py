@@ -5,10 +5,31 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from agentic_primitives_gateway.config import settings
+from agentic_primitives_gateway.context import set_service_credentials
+from agentic_primitives_gateway.models.enums import ServerCredentialMode
 from agentic_primitives_gateway.primitives.tools.mcp_registry import MCPRegistryProvider
 
 
-@patch("agentic_primitives_gateway.primitives.tools.mcp_registry.get_service_credentials")
+@pytest.fixture
+def cred_mode():
+    """Swap ``allow_server_credentials`` for one test."""
+    prev = settings.allow_server_credentials
+
+    def _set(mode: ServerCredentialMode) -> None:
+        settings.allow_server_credentials = mode
+
+    yield _set
+    settings.allow_server_credentials = prev
+
+
+@pytest.fixture(autouse=True)
+def _fallback_mode(cred_mode):
+    """Behavior tests below use operator defaults; mode tests override."""
+    cred_mode(ServerCredentialMode.FALLBACK)
+
+
+@patch("agentic_primitives_gateway.context.get_service_credentials")
 class TestMCPRegistryProvider:
     """Tests for the MCP Registry tools provider."""
 
@@ -752,3 +773,40 @@ class TestMCPRegistryProvider:
             path = await provider._resolve_server_path("Weather", "http://localhost:8080", None)
 
         assert path == "/weather/"
+
+
+class TestMCPRegistryCredentialMode:
+    """The server token obeys ``allow_server_credentials`` like any credential."""
+
+    def setup_method(self):
+        set_service_credentials({})
+
+    def _provider(self) -> MCPRegistryProvider:
+        return MCPRegistryProvider(base_url="http://registry:8080", token="server-token")
+
+    def test_never_without_caller_token_refuses_server_token(self, cred_mode):
+        cred_mode(ServerCredentialMode.NEVER)
+        with pytest.raises(ValueError, match="No mcp_registry credentials"):
+            self._provider()._resolve_config()
+
+    def test_never_uses_caller_token(self, cred_mode):
+        cred_mode(ServerCredentialMode.NEVER)
+        set_service_credentials({"mcp_registry": {"token": "user-token"}})
+        assert self._provider()._resolve_config() == ("http://registry:8080", "user-token")
+
+    def test_always_ignores_caller_token(self, cred_mode):
+        cred_mode(ServerCredentialMode.ALWAYS)
+        set_service_credentials({"mcp_registry": {"token": "user-token"}})
+        assert self._provider()._resolve_config() == ("http://registry:8080", "server-token")
+
+    @pytest.mark.asyncio
+    async def test_never_healthcheck_probes_without_server_token(self, cred_mode):
+        cred_mode(ServerCredentialMode.NEVER)
+        with patch("httpx.Client") as mock_client_cls:
+            client = MagicMock()
+            client.__enter__ = MagicMock(return_value=client)
+            client.__exit__ = MagicMock(return_value=False)
+            client.get.return_value = MagicMock(status_code=200)
+            mock_client_cls.return_value = client
+            assert await self._provider().healthcheck() == "reachable"
+        assert "Authorization" not in client.get.call_args.kwargs["headers"]

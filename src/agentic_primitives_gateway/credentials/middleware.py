@@ -12,6 +12,7 @@ from agentic_primitives_gateway import metrics
 from agentic_primitives_gateway.audit.emit import emit_audit_event
 from agentic_primitives_gateway.audit.models import AuditAction, AuditOutcome, ResourceType
 from agentic_primitives_gateway.context import (
+    get_all_service_credentials,
     get_authenticated_principal,
     get_aws_credentials,
     set_access_token,
@@ -34,8 +35,14 @@ class CredentialResolutionMiddleware(BaseHTTPMiddleware):
     2. OIDC-resolved credentials — fetched from userinfo (this middleware)
     3. Server ambient credentials — handled downstream by providers
 
-    If explicit headers already populated credentials, this middleware skips
-    resolution to preserve the "headers win" behavior.
+    Service-credential precedence is per *key* and counts only non-empty
+    header keys ``RequestContextMiddleware`` actually accepted: a header value
+    replaces the user's OIDC value for that key, and the user's other OIDC
+    keys are kept.  A rejected, empty, or unrelated header must never knock
+    out the user's own OIDC credentials — under ``fallback`` that would
+    silently switch them to operator credentials (e.g. an
+    ``X-Cred-Agentcore-Memory-Id`` header dropping the user's
+    ``apg.agentcore.gateway_token``).
     """
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
@@ -52,41 +59,39 @@ class CredentialResolutionMiddleware(BaseHTTPMiddleware):
         if access_token:
             set_access_token(access_token)
 
-        # Check if explicit headers already provided credentials
-        has_aws_headers = get_aws_credentials() is not None
-        has_service_headers = any(h.startswith("x-cred-") for h in request.headers)
-
-        if has_aws_headers and has_service_headers:
-            # Both header types present — headers win completely
-            return await call_next(request)
-
-        # Resolve credentials from OIDC
         resolved = await resolver.resolve(principal, access_token)
         if resolved is None:
             return await call_next(request)
 
-        # Populate AWS credentials if not already set by headers
-        if not has_aws_headers and resolved.aws is not None:
+        applied: list[str] = []
+        if get_aws_credentials() is None and resolved.aws is not None:
             set_aws_credentials(resolved.aws)
+            applied.append("aws")
 
-        # Populate service credentials if not already set by headers
-        if not has_service_headers and resolved.service_credentials:
-            set_service_credentials(resolved.service_credentials)
+        # Per key: an accepted header value wins for that key; the user's own
+        # OIDC values fill the rest of the service.  Both sides are the
+        # caller's — operator defaults are never merged in here.
+        header_creds = get_all_service_credentials()
+        merged = {svc: dict(kv) for svc, kv in header_creds.items()}
+        oidc_services: list[str] = []
+        for svc, kv in resolved.service_credentials.items():
+            fill = {k: v for k, v in kv.items() if v and k not in merged.get(svc, {})}
+            if fill:
+                merged.setdefault(svc, {}).update(fill)
+                oidc_services.append(svc)
+        if oidc_services:
+            set_service_credentials(merged, source="oidc")
 
-        # Audit what was resolved (names only — never values).
-        resolved_services: list[str] = (
-            sorted(resolved.service_credentials.keys()) if resolved.service_credentials else []
-        )
-        if resolved.aws is not None:
-            resolved_services.append("aws")
-        if resolved_services:
+        # Audit what was applied from OIDC (names only — never values).
+        applied = sorted(oidc_services) + applied
+        if applied:
             emit_audit_event(
                 action=AuditAction.CREDENTIAL_RESOLVE,
                 outcome=AuditOutcome.SUCCESS,
                 resource_type=ResourceType.CREDENTIAL,
-                metadata={"services": resolved_services, "source": "oidc"},
+                metadata={"services": applied, "source": "oidc"},
             )
-            for service in resolved_services:
+            for service in applied:
                 metrics.CREDENTIAL_OPS.labels(op="resolve", service=service, outcome="success").inc()
 
         return await call_next(request)

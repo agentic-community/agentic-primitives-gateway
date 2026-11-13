@@ -37,9 +37,9 @@ class TestGetServiceCredentialsOrDefaults:
 
     ``NEVER``: caller supplies the full shape; ``defaults`` values are
     not consulted.  ``ALWAYS``: caller is ignored; ``defaults`` is
-    returned unchanged.  ``FALLBACK``: merge (caller wins), emit
-    ``provider.server_credentials_used`` once if any key was filled
-    from ``defaults``.
+    returned unchanged.  ``FALLBACK``: caller's set whole if any, else
+    ``defaults`` whole (emitting ``provider.server_credentials_used``) —
+    never a mix.
     """
 
     # ── NEVER ────────────────────────────────────────────────────
@@ -123,15 +123,15 @@ class TestGetServiceCredentialsOrDefaults:
 
     # ── FALLBACK ─────────────────────────────────────────────────
 
-    def test_fallback_merges_client_wins(self):
-        set_service_credentials({"svc": {"key_a": "alice"}})
+    def test_fallback_partial_caller_set_is_not_mixed_with_defaults(self):
+        """A caller's partial set must not borrow operator values (e.g. realm + operator secret)."""
+        set_service_credentials({"keycloak": {"realm": "other-realm"}})
         with _ModeOverride(ServerCredentialMode.FALLBACK):
             result = get_service_credentials_or_defaults(
-                "svc",
-                {"key_a": "default_a", "key_b": "default_b"},
+                "keycloak",
+                {"server_url": "https://kc", "realm": "op-realm", "client_id": "op", "client_secret": "op-secret"},
             )
-        assert result["key_a"] == "alice"
-        assert result["key_b"] == "default_b"
+        assert result == {"server_url": "https://kc", "realm": "other-realm", "client_id": None, "client_secret": None}
 
     def test_fallback_empty_client_creds_uses_defaults(self):
         set_service_credentials({})
@@ -152,21 +152,15 @@ class TestGetServiceCredentialsOrDefaults:
             )
         assert result["key_a"] == "default_a"
 
-    def test_fallback_full_override_no_audit_emit(self):
-        """No server-filled keys → no audit event."""
-        set_service_credentials({"svc": {"key_a": "alice", "key_b": "alice"}})
-        with (
-            _ModeOverride(ServerCredentialMode.FALLBACK),
-            patch("agentic_primitives_gateway.context._emit_server_credentials_used") as emit,
-        ):
-            get_service_credentials_or_defaults(
-                "svc",
-                {"key_a": "default_a", "key_b": "default_b"},
-            )
-        emit.assert_not_called()
+    def test_fallback_unrelated_service_key_does_not_count_as_caller_set(self):
+        """``agentcore.memory_id`` must not disable the gateway's operator ``gateway_token``."""
+        set_service_credentials({"agentcore": {"memory_id": "m-1"}})
+        with _ModeOverride(ServerCredentialMode.FALLBACK):
+            result = get_service_credentials_or_defaults("agentcore", {"gateway_token": "op-tok"})
+        assert result == {"gateway_token": "op-tok"}
 
-    def test_fallback_partial_override_emits_once(self):
-        """Any server-filled key → emit exactly once (not per key)."""
+    def test_fallback_partial_caller_set_does_not_emit(self):
+        """No operator credential is used for a caller's set → no audit event."""
         set_service_credentials({"svc": {"key_a": "alice"}})
         with (
             _ModeOverride(ServerCredentialMode.FALLBACK),
@@ -176,7 +170,7 @@ class TestGetServiceCredentialsOrDefaults:
                 "svc",
                 {"key_a": "default_a", "key_b": "default_b", "key_c": "default_c"},
             )
-        emit.assert_called_once_with("svc")
+        emit.assert_not_called()
 
     def test_fallback_emit_for_empty_client_creds(self):
         set_service_credentials({})

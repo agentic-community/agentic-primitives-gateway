@@ -60,7 +60,7 @@ These can be managed from the gateway's Settings page in the web UI. The registr
 **Credential resolution order:**
 
 1. OIDC-resolved attributes (`apg.mcp_registry.*`) per-user
-2. Provider config / environment variables server ambient
+2. Provider config / environment variables server token — only under `allow_server_credentials: fallback` or `always` (`always` also ignores per-user tokens)
 
 ## Using the Tools API
 

@@ -28,7 +28,7 @@ providers:
 
 ### Per-Request Credentials
 
-The Okta domain is operator configuration only — caller-supplied `domain` values are ignored.
+The Okta domain is operator configuration only — caller-supplied `domain` values are ignored. A caller-supplied set is used whole; the operator's `client_secret` / `api_token` never fill gaps.
 
 ```bash
 curl -H "X-Cred-Okta-Client-Id: my-client" \

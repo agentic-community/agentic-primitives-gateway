@@ -77,24 +77,39 @@ class KeycloakIdentityProvider(SyncRunnerMixin, IdentityProvider):
             },
         )
 
+    def _connection(self) -> tuple[str, str, str, str | None]:
+        """Return ``(server_url, realm, client_id, client_secret)`` from resolved config.
+
+        ``_resolve_config`` is the single mode-aware merge; never re-fill
+        from ``self._*`` here or ``never`` would silently use operator secrets.
+        """
+        cfg = self._resolve_config()
+        server_url, realm, client_id = cfg.get("server_url"), cfg.get("realm"), cfg.get("client_id")
+        if not (server_url and realm and client_id):
+            raise ValueError(
+                "Keycloak realm and client_id are required. Pass them via X-Cred-Keycloak-* headers "
+                "or apg.keycloak.* attributes, or enable allow_server_credentials: fallback."
+            )
+        return server_url, realm, client_id, cfg.get("client_secret")
+
     def _get_openid(self) -> KeycloakOpenID:
         """Create a KeycloakOpenID client from resolved config."""
-        cfg = self._resolve_config()
+        server_url, realm, client_id, client_secret = self._connection()
         return KeycloakOpenID(
-            server_url=cfg.get("server_url") or self._server_url,
-            realm_name=cfg.get("realm") or self._realm,
-            client_id=cfg.get("client_id") or self._client_id,
-            client_secret_key=cfg.get("client_secret") or self._client_secret,
+            server_url=server_url,
+            realm_name=realm,
+            client_id=client_id,
+            client_secret_key=client_secret,
         )
 
     def _get_admin(self) -> KeycloakAdmin:
         """Create a KeycloakAdmin client from resolved config."""
-        cfg = self._resolve_config()
+        server_url, realm, client_id, client_secret = self._connection()
         return KeycloakAdmin(
-            server_url=cfg.get("server_url") or self._server_url,
-            realm_name=cfg.get("realm") or self._realm,
-            client_id=cfg.get("client_id") or self._client_id,
-            client_secret_key=cfg.get("client_secret") or self._client_secret,
+            server_url=server_url,
+            realm_name=realm,
+            client_id=client_id,
+            client_secret_key=client_secret,
         )
 
     # ── Data plane — runtime token operations ─────────────────────

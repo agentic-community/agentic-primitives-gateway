@@ -24,6 +24,8 @@ providers:
 
 ### Per-Request Credentials
 
+A caller-supplied set is used whole — send `tenant_id`, `client_id`, and `client_secret` together; the operator's values never fill gaps.
+
 ```bash
 curl -H "X-Cred-Entra-Tenant-Id: my-tenant" \
      -H "X-Cred-Entra-Client-Id: my-client" \

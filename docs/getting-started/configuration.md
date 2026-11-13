@@ -105,8 +105,12 @@ curl -H "X-Cred-Langfuse-Public-Key: pk-..." \
 | Mode | Behavior |
 |------|----------|
 | `never` (default) | Require per-user or header-provided credentials. Fail if missing. |
-| `fallback` | Try per-user OIDC credentials first, then fall back to server ambient. |
-| `always` | Always use server credentials (dev mode). |
+| `fallback` | Per service: if the caller supplied any non-empty credential, the caller's set is used alone (missing fields stay unset). Server credentials are used only when the caller supplied none for that service. Caller and server values are never mixed, so a caller can't pick the realm/tenant/client a server secret is used against. |
+| `always` | Always use server credentials (dev mode). Caller service credentials **and caller AWS keys** are ignored. |
+
+In every mode, endpoint keys (anything containing `url`, `uri`, `host`, `endpoint`, `origin`, `port`, or `domain`) come from the server config only; caller values for them are dropped and audited as `network.access.denied`.
+
+Caller-selected AWS resource IDs (`X-Cred-Agentcore-Memory-Id`, `-Knowledgebase-Id`, `-Data-Source-Id`, or the matching `apg.agentcore.*` attributes) are honored only when the request also runs under the caller's own AWS credentials. When the gateway's ambient AWS identity is used (`fallback` without caller AWS keys, or `always`), the provider's configured IDs apply, so a caller can't aim the operator's role at arbitrary resources.
 
 ```yaml
 allow_server_credentials: fallback
