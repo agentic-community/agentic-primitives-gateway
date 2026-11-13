@@ -18,7 +18,7 @@ class TestAgentCoreCodeInterpreterProvider:
     @pytest.mark.asyncio
     async def test_start_session_string_result(self, mock_ci_cls, mock_get_session):
         mock_get_session.return_value = MagicMock(region_name="us-east-1")
-        mock_client = MagicMock()
+        mock_client = MagicMock(region="us-east-1")
         mock_client.start.return_value = "sess-abc"
         mock_ci_cls.return_value = mock_client
 
@@ -34,7 +34,7 @@ class TestAgentCoreCodeInterpreterProvider:
     @pytest.mark.asyncio
     async def test_start_session_dict_result(self, mock_ci_cls, mock_get_session):
         mock_get_session.return_value = MagicMock(region_name="us-east-1")
-        mock_client = MagicMock()
+        mock_client = MagicMock(region="us-east-1")
         mock_client.start.return_value = {"sessionId": "dict-sess"}
         mock_ci_cls.return_value = mock_client
 
@@ -46,7 +46,7 @@ class TestAgentCoreCodeInterpreterProvider:
     @pytest.mark.asyncio
     async def test_stop_session(self, mock_ci_cls, mock_get_session):
         mock_get_session.return_value = MagicMock(region_name="us-east-1")
-        mock_client = MagicMock()
+        mock_client = MagicMock(region="us-east-1")
         mock_client.start.return_value = "s1"
         mock_ci_cls.return_value = mock_client
 
@@ -66,7 +66,7 @@ class TestAgentCoreCodeInterpreterProvider:
     @pytest.mark.asyncio
     async def test_execute_success(self, mock_ci_cls, mock_get_session):
         mock_get_session.return_value = MagicMock(region_name="us-east-1")
-        mock_client = MagicMock()
+        mock_client = MagicMock(region="us-east-1")
         mock_client.start.return_value = "s1"
         mock_client.execute_code.return_value = {
             "stdout": "hello\n",
@@ -93,7 +93,7 @@ class TestAgentCoreCodeInterpreterProvider:
     @pytest.mark.asyncio
     async def test_upload_file(self, mock_ci_cls, mock_get_session):
         mock_get_session.return_value = MagicMock(region_name="us-east-1")
-        mock_client = MagicMock()
+        mock_client = MagicMock(region="us-east-1")
         mock_client.start.return_value = "s1"
         mock_ci_cls.return_value = mock_client
 
@@ -114,7 +114,7 @@ class TestAgentCoreCodeInterpreterProvider:
     @pytest.mark.asyncio
     async def test_download_file(self, mock_ci_cls, mock_get_session):
         mock_get_session.return_value = MagicMock(region_name="us-east-1")
-        mock_client = MagicMock()
+        mock_client = MagicMock(region="us-east-1")
         mock_client.start.return_value = "s1"
 
         # download_file(path=filename) now returns bytes directly
@@ -137,7 +137,7 @@ class TestAgentCoreCodeInterpreterProvider:
     @pytest.mark.asyncio
     async def test_list_sessions(self, mock_ci_cls, mock_get_session):
         mock_get_session.return_value = MagicMock(region_name="us-east-1")
-        mock_client = MagicMock()
+        mock_client = MagicMock(region="us-east-1")
         mock_client.start.return_value = "s1"
         mock_ci_cls.return_value = mock_client
 
@@ -178,7 +178,7 @@ class TestAgentCoreCodeInterpreterProvider:
     @pytest.mark.asyncio
     async def test_get_session(self, mock_ci_cls, mock_get_session):
         provider = AgentCoreCodeInterpreterProvider(region="us-east-1")
-        mock_client = MagicMock()
+        mock_client = MagicMock(region="us-east-1")
         mock_client.start.return_value = "session-1"
         mock_ci_cls.return_value = mock_client
         mock_get_session.return_value = MagicMock(region_name="us-east-1")
@@ -199,7 +199,7 @@ class TestAgentCoreCodeInterpreterProvider:
     @pytest.mark.asyncio
     async def test_execution_history(self, mock_ci_cls, mock_get_session):
         provider = AgentCoreCodeInterpreterProvider(region="us-east-1")
-        mock_client = MagicMock()
+        mock_client = MagicMock(region="us-east-1")
         mock_client.start.return_value = "session-1"
         mock_client.execute_code.return_value = {"stdout": "2", "stderr": "", "exitCode": 0}
         mock_client.get_session.return_value = {"sessionId": "session-1", "status": "READY"}
@@ -218,7 +218,7 @@ class TestAgentCoreCodeInterpreterProvider:
     @pytest.mark.asyncio
     async def test_execution_history_empty(self, mock_ci_cls, mock_get_session):
         provider = AgentCoreCodeInterpreterProvider(region="us-east-1")
-        mock_client = MagicMock()
+        mock_client = MagicMock(region="us-east-1")
         mock_client.start.return_value = "session-1"
         mock_ci_cls.return_value = mock_client
         mock_get_session.return_value = MagicMock(region_name="us-east-1")
@@ -231,7 +231,7 @@ class TestAgentCoreCodeInterpreterProvider:
     @pytest.mark.asyncio
     async def test_execution_history_respects_limit(self, mock_ci_cls, mock_get_session):
         provider = AgentCoreCodeInterpreterProvider(region="us-east-1")
-        mock_client = MagicMock()
+        mock_client = MagicMock(region="us-east-1")
         mock_client.start.return_value = "session-1"
         mock_client.execute_code.return_value = {"stdout": "", "stderr": "", "exitCode": 0}
         mock_ci_cls.return_value = mock_client
@@ -247,7 +247,7 @@ class TestAgentCoreCodeInterpreterProvider:
     @pytest.mark.asyncio
     async def test_history_rejects_revoked_remote_access(self, mock_ci_cls, mock_get_session):
         provider = AgentCoreCodeInterpreterProvider()
-        client = MagicMock()
+        client = MagicMock(region="us-east-1")
         client.start.return_value = "session-1"
         client.execute_code.return_value = {"stdout": "secret", "stderr": "", "exitCode": 0}
         client.get_session.side_effect = PermissionError("AWS access revoked")
@@ -263,7 +263,7 @@ class TestAgentCoreCodeInterpreterProvider:
     @pytest.mark.asyncio
     async def test_history_rejects_unverified_remote_session(self, mock_ci_cls, mock_get_session):
         provider = AgentCoreCodeInterpreterProvider()
-        client = MagicMock()
+        client = MagicMock(region="us-east-1")
         client.start.return_value = "session-1"
         client.get_session.return_value = {"sessionId": "other-session"}
         mock_ci_cls.return_value = client
@@ -275,7 +275,7 @@ class TestAgentCoreCodeInterpreterProvider:
     @pytest.mark.asyncio
     async def test_history_rejects_terminated_remote_session(self, mock_ci_cls, mock_get_session):
         provider = AgentCoreCodeInterpreterProvider()
-        client = MagicMock()
+        client = MagicMock(region="us-east-1")
         client.start.return_value = "session-1"
         client.get_session.return_value = {"sessionId": "session-1", "status": "TERMINATED"}
         mock_ci_cls.return_value = client
@@ -287,7 +287,7 @@ class TestAgentCoreCodeInterpreterProvider:
     @pytest.mark.asyncio
     async def test_history_rebinds_before_remote_authorization(self, mock_ci_cls, mock_get_session):
         provider = AgentCoreCodeInterpreterProvider()
-        client = MagicMock()
+        client = MagicMock(region="us-east-1")
         client.start.return_value = "session-1"
         client.get_session.return_value = {"sessionId": "session-1", "status": "READY"}
         mock_ci_cls.return_value = client
@@ -306,7 +306,7 @@ class TestAgentCoreCodeInterpreterProvider:
     @pytest.mark.asyncio
     async def test_stop_session_clears_history(self, mock_ci_cls, mock_get_session):
         provider = AgentCoreCodeInterpreterProvider(region="us-east-1")
-        mock_client = MagicMock()
+        mock_client = MagicMock(region="us-east-1")
         mock_client.start.return_value = "session-1"
         mock_client.execute_code.return_value = {"stdout": "", "stderr": "", "exitCode": 0}
         mock_ci_cls.return_value = mock_client
