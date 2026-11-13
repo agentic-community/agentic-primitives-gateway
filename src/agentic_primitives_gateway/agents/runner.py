@@ -412,6 +412,13 @@ class AgentRunner:
         principal = get_authenticated_principal()
         if principal is None:
             raise RuntimeError("Cannot run agent without an authenticated principal")
+        if spec.primitives.get("memory") and spec.primitives["memory"].shared_namespaces:
+            from agentic_primitives_gateway.auth.access import validate_agent_pool_references
+            from agentic_primitives_gateway.routes.teams import _get_store as _get_team_store
+
+            if self._store is None:
+                raise RuntimeError("Agent store not initialized")
+            await validate_agent_pool_references(spec, principal, self._store, _get_team_store())
         prev_overrides = self._apply_overrides(spec)
         memory_ns = resolve_memory_namespace(spec, principal)
         knowledge_ns = resolve_knowledge_namespace(spec, principal)  # always a string, like memory_ns
@@ -945,6 +952,13 @@ class AgentRunner:
                 spec_name,
             )
             return
+        if spec.primitives.get("memory") and spec.primitives["memory"].shared_namespaces:
+            from agentic_primitives_gateway.auth.access import validate_agent_pool_references
+            from agentic_primitives_gateway.routes.teams import _get_store as _get_team_store
+
+            if resume_principal is None or self._store is None:
+                return
+            await validate_agent_pool_references(spec, resume_principal, self._store, _get_team_store())
 
         # Rebuild tools (handlers can't be serialized) and reinstall
         # the per-primitive contextvars so handlers see the same

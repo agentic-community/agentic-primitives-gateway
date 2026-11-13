@@ -12,8 +12,8 @@ Memory and conversation-history keys are scoped on three axes:
    and Bob's forked ``researcher`` are fully isolated even though they
    share a bare name.
 2. **Caller identity** (``principal.id``) — two users chatting with the
-   same agent never share memory.  Applied here via the trailing
-   ``:u:{principal.id}`` suffix.
+   same agent never share memory. Applied via the trailing
+   ``:u:{pool_owner_segment(principal.id)}`` suffix.
 3. **Session** (``session_id``) — applied separately via
    :func:`resolve_actor_id`.
 
@@ -33,25 +33,31 @@ Templates accept ``{agent_owner}`` and ``{agent_name}`` placeholders.
 User-scope format convention — IMPORTANT
 ----------------------------------------
 
-Every user-scoped key uses ``:u:{user_id}`` with ``{user_id}`` as the
-**terminal segment** — no trailing colons or extra segments after
-the user id.  The route-level parser in
-:func:`routes._helpers.require_user_scoped` takes everything after
-the ``:u:`` marker as the owner id, so::
+Every user-scoped key uses ``:u:{encoded_user_id}`` with the complete
+percent-encoded ID as the **terminal segment**. Colons and percent signs
+inside an ID must be escaped so ``bob`` and ``bob:admin`` cannot overlap.
+The route-level parser in :func:`routes._helpers.require_user_scoped`
+compares the terminal segment to the encoded authenticated principal ID.
 
-    agent:alice:bot:u:alice          # parsed owner = "alice"          ✓
-    knowledge:system:support:u:alice # parsed owner = "alice"          ✓
-    :u:alice:kb                      # parsed owner = "alice:kb"       ✗
+    agent:alice:bot:u:alice           # owner = "alice"
+    agent:alice:bot:u:bob%3Aadmin     # owner = "bob:admin"
 
-The last form would 403 alice from what looks like her own
-namespace.  If you're constructing a namespace in a new code path,
-put the user segment at the end.
+Never append a child segment after ``:u:{encoded_user_id}``.
 """
 
 from __future__ import annotations
 
+from urllib.parse import quote
+
 from agentic_primitives_gateway.auth.models import AuthenticatedPrincipal
 from agentic_primitives_gateway.models.agents import AgentSpec
+from agentic_primitives_gateway.models.teams import TeamSpec
+
+
+def pool_owner_segment(owner_id: str) -> str:
+    """Encode the complete owner ID as one unambiguous namespace segment."""
+    return quote(owner_id, safe="")
+
 
 _DEFAULT_NS_TEMPLATE = "agent:{agent_owner}:{agent_name}"
 _DEFAULT_KNOWLEDGE_NS_TEMPLATE = "knowledge:{agent_owner}:{agent_name}"
@@ -75,7 +81,7 @@ def resolve_memory_namespace(spec: AgentSpec, principal: AuthenticatedPrincipal)
     mem_config = spec.primitives.get("memory")
     template = mem_config.namespace if mem_config and mem_config.namespace else _DEFAULT_NS_TEMPLATE
     base = _substitute(template, agent_owner=spec.owner_id, agent_name=spec.name)
-    return f"{base}:u:{principal.id}"
+    return f"{base}:u:{pool_owner_segment(principal.id)}"
 
 
 def resolve_memory_namespace_for_identity(
@@ -88,7 +94,7 @@ def resolve_memory_namespace_for_identity(
     """Identity-based variant of :func:`resolve_memory_namespace`."""
     template = namespace_template or _DEFAULT_NS_TEMPLATE
     base = _substitute(template, agent_owner=owner_id, agent_name=name)
-    return f"{base}:u:{principal.id}"
+    return f"{base}:u:{pool_owner_segment(principal.id)}"
 
 
 def resolve_knowledge_namespace(spec: AgentSpec, principal: AuthenticatedPrincipal) -> str:
@@ -120,6 +126,18 @@ def resolve_knowledge_namespace(spec: AgentSpec, principal: AuthenticatedPrincip
     return ns.replace("{principal_id}", principal.id)
 
 
+def resolve_team_shared_namespace(spec: TeamSpec) -> str | None:
+    """Expand a team's shared namespace without adding a per-user suffix."""
+    if not spec.shared_memory_namespace:
+        return None
+    namespace = spec.shared_memory_namespace.replace("{team_owner}", pool_owner_segment(spec.owner_id)).replace(
+        "{team_name}", spec.name
+    )
+    if ":u:" in namespace:
+        raise ValueError("Shared memory namespaces must not contain ':u:'")
+    return namespace
+
+
 def resolve_shared_pools(spec: AgentSpec) -> dict[str, str] | None:
     """Resolve shared memory pools from the agent's memory primitive config.
 
@@ -136,21 +154,24 @@ def resolve_shared_pools(spec: AgentSpec) -> dict[str, str] | None:
         return None
     pools: dict[str, str] = {}
     for ns in mem_config.shared_namespaces:
-        pools[ns] = _substitute(ns, agent_owner=spec.owner_id, agent_name=spec.name)
+        resolved = _substitute(ns, agent_owner=pool_owner_segment(spec.owner_id), agent_name=spec.name)
+        if ":u:" in resolved:
+            raise ValueError("Shared memory namespaces must not contain ':u:'")
+        pools[ns] = resolved
     return pools
 
 
 def resolve_actor_id(spec: AgentSpec, principal: AuthenticatedPrincipal) -> str:
     """Resolve the actor_id for conversation history scoping.
 
-    Format: ``"{owner_id}:{name}:u:{principal.id}"``.  Owner-scoped so
-    forks don't share conversation history with the upstream agent.
+    Format: ``"{owner_id}:{name}:u:{encoded_principal_id}"``. Owner-scoped
+    so forks don't share conversation history with the upstream agent.
     The ``:u:`` separator prevents collision with agent names that end
     with a user-id-shaped string.
     """
-    return f"{spec.owner_id}:{spec.name}:u:{principal.id}"
+    return f"{spec.owner_id}:{spec.name}:u:{pool_owner_segment(principal.id)}"
 
 
 def resolve_actor_id_for_identity(*, name: str, owner_id: str, principal: AuthenticatedPrincipal) -> str:
     """Identity-based variant of :func:`resolve_actor_id`."""
-    return f"{owner_id}:{name}:u:{principal.id}"
+    return f"{owner_id}:{name}:u:{pool_owner_segment(principal.id)}"

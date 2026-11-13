@@ -15,6 +15,8 @@ from agentic_primitives_gateway.auth.models import AuthenticatedPrincipal
 if TYPE_CHECKING:
     from agentic_primitives_gateway.agents.store import AgentStore
     from agentic_primitives_gateway.agents.team_store import TeamStore
+    from agentic_primitives_gateway.models.agents import AgentSpec
+    from agentic_primitives_gateway.models.teams import TeamSpec
 
 
 class ProviderOverrideSource(StrEnum):
@@ -130,32 +132,52 @@ def require_owner_or_admin(
     return principal
 
 
-# ── Transitive access to shared memory pools ─────────────────────────
-#
-# Shared memory pools are a gateway-authored resource: the gateway
-# decides the pool-name → backend-namespace mapping, and agent specs
-# declare which pools they reference via ``PrimitiveConfig.shared_namespaces``.
-# The REST surface at ``/api/v1/memory/{namespace}/*`` has no native
-# per-pool ACL — without a check, any authenticated caller can read,
-# write, or delete any unscoped namespace by guessing its name.
-#
-# The chosen ACL grain is "transitive through accessible agents / teams":
-# a caller has access to pool ``P`` if they can access some agent whose
-# ``primitives["memory"].shared_namespaces`` contains ``P``, or some team
-# whose ``shared_memory_namespace == P``.  Admin bypasses all checks.
-#
-# Rationale: the tool surface already exposes the same read/write
-# operations against these pools (``pool_memory_store`` / ``_retrieve`` /
-# ``_search`` / ``_list``), so a caller with access to such an agent
-# already has full read/write via the agent-run path.  Granting REST
-# parity for those same callers keeps the two surfaces aligned and does
-# not widen the blast radius.  Delete is REST-only; it is handled by a
-# narrower check (:func:`require_pool_delete`) below.
-#
-# Orphan pools — pools that exist in the backend (e.g. created out of
-# band or left behind after an agent was deleted) but are not declared
-# in any spec visible to the caller — resolve to admin-only under this
-# rule, which is the safer default.
+# Shared pool names in user-owned specs are not authority to claim a
+# namespace. Only owner-scoped pools or already shared, deployed pools
+# can be referenced. System-seeded pools retain operator-defined names.
+
+
+def _trusted_declaration(pool: str, owner_id: str, kind: str) -> bool:
+    if ":u:" in pool:
+        return False
+    if owner_id == "system":
+        return True
+    from agentic_primitives_gateway.agents.namespace import pool_owner_segment
+
+    prefix = f"{kind}:{pool_owner_segment(owner_id)}:"
+    suffix = pool.removeprefix(prefix)
+    return pool.startswith(prefix) and bool(suffix) and not suffix.startswith(":")
+
+
+async def _pool_declarations(
+    pool: str, *, agent_store: AgentStore, team_store: TeamStore
+) -> list[tuple[str, list[str], bool]]:
+    """Inspect deployed declarations, including ones hidden from the caller."""
+    from agentic_primitives_gateway.agents.namespace import resolve_shared_pools, resolve_team_shared_namespace
+
+    declarations: list[tuple[str, list[str], bool]] = []
+    for agent in await agent_store.list():
+        mem = agent.primitives.get("memory")
+        if mem is not None and mem.shared_namespaces:
+            # Resolve each declaration using the same owner/name substitution
+            # as the agent runner. Persisted legacy specs may have invalid
+            # private aliases; they are ignored rather than trusted.
+            try:
+                pools = resolve_shared_pools(agent)
+            except ValueError:
+                continue
+            if pools is not None and pool in pools.values():
+                declarations.append(
+                    (agent.owner_id, agent.shared_with, _trusted_declaration(pool, agent.owner_id, "pool"))
+                )
+    for team in await team_store.list():
+        try:
+            resolved = resolve_team_shared_namespace(team)
+        except ValueError:
+            continue
+        if resolved == pool:
+            declarations.append((team.owner_id, team.shared_with, _trusted_declaration(pool, team.owner_id, "team")))
+    return declarations
 
 
 async def has_transitive_pool_access(
@@ -165,20 +187,97 @@ async def has_transitive_pool_access(
     agent_store: AgentStore,
     team_store: TeamStore,
 ) -> bool:
-    """Whether ``principal`` can access shared pool ``pool``.
-
-    Admin short-circuits to True.  Otherwise walks specs visible to the
-    principal (via each store's ``list_for_user``) and returns True on
-    the first match.  Pool-level only — does not filter events within
-    the pool.
-    """
+    """Require an accessible, trusted deployed declaration of the pool."""
+    if ":u:" in pool:
+        return False
     if principal.is_admin:
         return True
-    for agent in await agent_store.list_for_user(principal):
-        mem = agent.primitives.get("memory")
-        if mem is not None and mem.shared_namespaces and pool in mem.shared_namespaces:
-            return True
-    return any(team.shared_memory_namespace == pool for team in await team_store.list_for_user(principal))
+    declarations = [
+        (owner, shared)
+        for owner, shared, trusted in await _pool_declarations(pool, agent_store=agent_store, team_store=team_store)
+        if trusted
+    ]
+    return bool(declarations) and all(check_access(principal, owner, shared) for owner, shared in declarations)
+
+
+async def _validate_pool_reference(
+    pool: str,
+    *,
+    kind: str,
+    owner_id: str,
+    principal: AuthenticatedPrincipal,
+    agent_store: AgentStore,
+    team_store: TeamStore,
+) -> None:
+    if ":u:" in pool:
+        raise HTTPException(status_code=403, detail="Shared memory cannot reference private user memory")
+    if principal.is_admin:
+        return
+    if principal.id == "system":
+        raise HTTPException(status_code=403, detail="System pool ownership requires admin access")
+    declarations = [
+        (owner, shared)
+        for owner, shared, trusted in await _pool_declarations(pool, agent_store=agent_store, team_store=team_store)
+        if trusted
+    ]
+    if declarations:
+        if all(check_access(principal, owner, shared) for owner, shared in declarations):
+            return
+        raise HTTPException(status_code=403, detail="Shared memory pool is not accessible")
+    if owner_id != "system" and owner_id == principal.id and _trusted_declaration(pool, owner_id, kind):
+        return
+    raise HTTPException(
+        status_code=403,
+        detail="Shared memory pool requires an owner-scoped namespace or an accessible existing share",
+    )
+
+
+async def validate_agent_pool_references(
+    spec: AgentSpec,
+    principal: AuthenticatedPrincipal,
+    agent_store: AgentStore,
+    team_store: TeamStore,
+) -> None:
+    """Validate every resolved pool before storing or running an agent spec."""
+    from agentic_primitives_gateway.agents.namespace import resolve_shared_pools
+
+    try:
+        pools = resolve_shared_pools(spec) or {}
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail="Shared memory cannot reference private user memory") from exc
+    for pool in pools.values():
+        await _validate_pool_reference(
+            pool,
+            kind="pool",
+            owner_id=spec.owner_id,
+            principal=principal,
+            agent_store=agent_store,
+            team_store=team_store,
+        )
+
+
+async def validate_team_pool_reference(
+    spec: TeamSpec,
+    principal: AuthenticatedPrincipal,
+    agent_store: AgentStore,
+    team_store: TeamStore,
+) -> None:
+    """Validate team shared memory before storing or running a team."""
+    from agentic_primitives_gateway.agents.namespace import resolve_team_shared_namespace
+
+    try:
+        pool = resolve_team_shared_namespace(spec)
+    except ValueError as exc:
+        raise HTTPException(status_code=403, detail="Shared memory cannot reference private user memory") from exc
+    if pool is not None:
+        await _validate_pool_reference(
+            pool,
+            kind="team",
+            owner_id=spec.owner_id,
+            principal=principal,
+            agent_store=agent_store,
+            team_store=team_store,
+        )
 
 
 async def require_pool_access(
@@ -223,19 +322,12 @@ async def require_pool_delete(
     less-scoped rule ("any sharee can delete any key") would let a
     sharee wipe the owner's data, which is strictly worse.
     """
-    if principal.is_admin:
+    if principal.is_admin and ":u:" not in pool:
         return
-    for agent in await agent_store.list_for_user(principal):
-        if agent.owner_id != principal.id:
-            continue
-        mem = agent.primitives.get("memory")
-        if mem is not None and mem.shared_namespaces and pool in mem.shared_namespaces:
-            return
-    for team in await team_store.list_for_user(principal):
-        if team.owner_id != principal.id:
-            continue
-        if team.shared_memory_namespace == pool:
-            return
+    if await has_transitive_pool_access(pool, principal=principal, agent_store=agent_store, team_store=team_store):
+        for owner, _shared, trusted in await _pool_declarations(pool, agent_store=agent_store, team_store=team_store):
+            if trusted and owner == principal.id:
+                return
     _emit_denial("pool_delete_requires_owner", resource_owner="", resource_type="memory_pool")
     raise HTTPException(status_code=403, detail="Forbidden")
 

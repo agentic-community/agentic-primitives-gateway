@@ -3,6 +3,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import pytest
+from bedrock_agentcore.memory.models import MemoryRecord as AgentCoreRecord
 
 from agentic_primitives_gateway.context import AWSCredentials, get_boto3_session, set_aws_credentials
 from agentic_primitives_gateway.primitives.memory.agentcore import AgentCoreMemoryProvider
@@ -222,7 +223,13 @@ class TestAgentCoreMemoryProvider:
         with patch("agentic_primitives_gateway.primitives.memory.agentcore.MemorySessionManager") as mock_mgr_cls:
             mock_mgr = MagicMock()
             mock_mgr.search_long_term_memories.return_value = [
-                {"id": "rec-1", "memory": "found content", "metadata": {"_agentic_key": "my-key"}, "score": 0.9},
+                {
+                    "memoryRecordId": "rec-1",
+                    "content": {"text": "found content"},
+                    "namespaces": ["ns"],
+                    "metadata": {"_agentic_key": "my-key"},
+                    "score": 0.9,
+                },
             ]
             mock_mgr.create_memory_session.return_value = MagicMock(get_last_k_turns=MagicMock(return_value=[]))
             mock_mgr_cls.return_value = mock_mgr
@@ -262,7 +269,7 @@ class TestAgentCoreMemoryProvider:
         with patch("agentic_primitives_gateway.primitives.memory.agentcore.MemorySessionManager") as mock_mgr_cls:
             mock_mgr = MagicMock()
             mock_mgr.search_long_term_memories.return_value = [
-                {"id": "lt-1", "memory": "long term result", "metadata": {}, "score": 0.8},
+                {"id": "lt-1", "memory": "long term result", "namespaces": ["ns"], "metadata": {}, "score": 0.8},
             ]
             mock_mem_session = MagicMock()
             mock_mem_session.get_last_k_turns.return_value = [[msg]]
@@ -283,8 +290,8 @@ class TestAgentCoreMemoryProvider:
         with patch("agentic_primitives_gateway.primitives.memory.agentcore.MemorySessionManager") as mock_mgr_cls:
             mock_mgr = MagicMock()
             mock_mgr.search_long_term_memories.return_value = [
-                {"id": "1", "memory": "same content", "metadata": {}, "score": 0.9},
-                {"id": "2", "memory": "same content", "metadata": {}, "score": 0.7},
+                {"id": "1", "memory": "same content", "namespaces": ["ns"], "metadata": {}, "score": 0.9},
+                {"id": "2", "memory": "same content", "namespaces": ["ns"], "metadata": {}, "score": 0.7},
             ]
             mock_mgr.create_memory_session.return_value = MagicMock(get_last_k_turns=MagicMock(return_value=[]))
             mock_mgr_cls.return_value = mock_mgr
@@ -295,6 +302,107 @@ class TestAgentCoreMemoryProvider:
         assert len(results) == 1
 
     @pytest.mark.asyncio
+    async def test_prefix_search_and_exact_retrieve_skip_private_records(self, mock_get_svc_creds, mock_get_session):
+        mock_get_svc_creds.return_value = {"memory_id": "mem-1"}
+        mock_get_session.return_value = MagicMock(region_name="us-east-1")
+        pool = "team:alice:work"
+        private = "team:alice:work:run-1:u:alice"
+        with patch("agentic_primitives_gateway.primitives.memory.agentcore.MemorySessionManager") as manager:
+            manager.return_value.search_long_term_memories.return_value = [
+                AgentCoreRecord(
+                    {
+                        "memoryRecordId": "private",
+                        "content": {"text": "private plan"},
+                        "namespaces": [private],
+                        "metadata": {"_agentic_key": "plan"},
+                        "score": 0.95,
+                    }
+                ),
+                AgentCoreRecord(
+                    {
+                        "memoryRecordId": "shared",
+                        "content": {"text": "shared plan"},
+                        "namespaces": [pool],
+                        "metadata": {"_agentic_key": "plan"},
+                        "score": 0.8,
+                    }
+                ),
+                AgentCoreRecord(
+                    {
+                        "memoryRecordId": "unknown",
+                        "content": {"text": "unattributed plan"},
+                        "metadata": {"_agentic_key": "plan"},
+                        "score": 0.7,
+                    }
+                ),
+            ]
+            manager.return_value.create_memory_session.return_value.get_last_k_turns.return_value = []
+            provider = self._make_provider()
+
+            results = await provider.search(pool, "plan")
+            record = await provider.retrieve(pool, "plan")
+
+        assert [(item.record.namespace, item.record.content) for item in results] == [(pool, "shared plan")]
+        assert record is not None and record.content == "shared plan"
+
+    @pytest.mark.asyncio
+    async def test_prefix_list_and_delete_skip_private_records(self, mock_get_svc_creds, mock_get_session):
+        mock_get_svc_creds.return_value = {"memory_id": "mem-1"}
+        mock_get_session.return_value = MagicMock(region_name="us-east-1")
+        pool = "team:alice:work"
+        private = "team:alice:work:run-1:u:alice"
+        with patch("agentic_primitives_gateway.primitives.memory.agentcore.MemorySessionManager") as manager:
+            manager.return_value.search_long_term_memories.return_value = [
+                AgentCoreRecord(
+                    {
+                        "memoryRecordId": "private",
+                        "content": {"text": "private plan"},
+                        "namespaces": [private],
+                        "metadata": {"_agentic_key": "plan"},
+                    }
+                ),
+                AgentCoreRecord(
+                    {
+                        "memoryRecordId": "shared",
+                        "content": {"text": "shared plan"},
+                        "namespaces": [pool],
+                        "metadata": {"_agentic_key": "plan"},
+                    }
+                ),
+            ]
+            remote = manager.return_value.create_memory_session.return_value
+            remote.list_long_term_memory_records.return_value = [
+                AgentCoreRecord(
+                    {
+                        "memoryRecordId": "private",
+                        "content": {"text": "private plan"},
+                        "namespaces": [private],
+                        "metadata": {},
+                    }
+                ),
+                AgentCoreRecord(
+                    {
+                        "memoryRecordId": "shared",
+                        "content": {"text": "shared plan"},
+                        "namespaces": [pool],
+                        "metadata": {},
+                    }
+                ),
+                AgentCoreRecord(
+                    {"memoryRecordId": "unknown", "content": {"text": "unattributed plan"}, "metadata": {}}
+                ),
+            ]
+            remote.get_last_k_turns.return_value = []
+            provider = self._make_provider()
+
+            records = await provider.list_memories(pool)
+            deleted = await provider.delete(pool, "plan")
+
+        assert [(record.namespace, record.content) for record in records] == [(pool, "shared plan")]
+        assert deleted is True
+        remote.delete_memory_record.assert_called_once_with("shared")
+
+    @pytest.mark.asyncio
     async def test_delete_success(self, mock_get_svc_creds, mock_get_session):
         mock_get_svc_creds.return_value = {"memory_id": "mem-1"}
         mock_session = MagicMock(region_name="us-east-1")
@@ -303,7 +411,7 @@ class TestAgentCoreMemoryProvider:
         with patch("agentic_primitives_gateway.primitives.memory.agentcore.MemorySessionManager") as mock_mgr_cls:
             mock_mgr = MagicMock()
             mock_mgr.search_long_term_memories.return_value = [
-                {"id": "rec-1", "memory": "to delete", "metadata": {"_agentic_key": "my-key"}},
+                {"id": "rec-1", "memory": "to delete", "namespaces": ["ns"], "metadata": {"_agentic_key": "my-key"}},
             ]
             mock_mem_session = MagicMock()
             mock_mgr.create_memory_session.return_value = mock_mem_session
@@ -357,7 +465,7 @@ class TestAgentCoreMemoryProvider:
             mock_mgr = MagicMock()
             mock_mem_session = MagicMock()
             mock_mem_session.list_long_term_memory_records.return_value = [
-                {"id": "1", "memory": "mem-1", "metadata": {}},
+                {"id": "1", "memory": "mem-1", "namespaces": ["ns"], "metadata": {}},
             ]
             mock_mem_session.get_last_k_turns.return_value = [
                 [{"content": "turn-1"}],
@@ -380,8 +488,8 @@ class TestAgentCoreMemoryProvider:
             mock_mgr = MagicMock()
             mock_mem_session = MagicMock()
             mock_mem_session.list_long_term_memory_records.return_value = [
-                {"id": "1", "memory": "correct", "metadata": {"category": "A"}},
-                {"id": "2", "memory": "filtered", "metadata": {"category": "B"}},
+                {"id": "1", "memory": "correct", "namespaces": ["ns"], "metadata": {"category": "A"}},
+                {"id": "2", "memory": "filtered", "namespaces": ["ns"], "metadata": {"category": "B"}},
             ]
             mock_mem_session.get_last_k_turns.return_value = []
             mock_mgr.create_memory_session.return_value = mock_mem_session

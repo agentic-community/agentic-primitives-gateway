@@ -1,6 +1,47 @@
 from __future__ import annotations
 
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 from fastapi.testclient import TestClient
+
+from agentic_primitives_gateway.auth.models import AuthenticatedPrincipal
+from agentic_primitives_gateway.context import set_authenticated_principal
+from agentic_primitives_gateway.routes import memory as memory_routes
+from agentic_primitives_gateway.routes.memory import list_actors, list_namespaces
+
+
+@pytest.mark.asyncio
+async def test_namespace_discovery_separates_colon_user_ids() -> None:
+    namespaces = ["agent:bot:u:bob", "agent:bot:u:bob:admin", "agent:bot:u:bob%3Aadmin", "agent:bot:u:bob%253Aadmin"]
+    mock_registry = MagicMock()
+    mock_registry.memory.list_namespaces = AsyncMock(return_value=namespaces)
+    with patch.object(memory_routes, "registry", mock_registry):
+        try:
+            for user_id, expected in (
+                ("bob", namespaces[0]),
+                ("bob:admin", namespaces[2]),
+                ("bob%3Aadmin", namespaces[3]),
+            ):
+                set_authenticated_principal(AuthenticatedPrincipal(id=user_id, type="user"))
+                assert await list_namespaces() == {"namespaces": [expected]}
+        finally:
+            set_authenticated_principal(None)
+
+
+@pytest.mark.asyncio
+async def test_actor_discovery_separates_colon_user_ids() -> None:
+    actors = [{"actor_id": name} for name in ("agent:bot:u:bob", "agent:bot:u:bob:admin", "agent:bot:u:bob%3Aadmin")]
+    mock_registry = MagicMock()
+    mock_registry.memory.list_actors = AsyncMock(return_value=actors)
+    with patch.object(memory_routes, "registry", mock_registry):
+        try:
+            set_authenticated_principal(AuthenticatedPrincipal(id="bob", type="user"))
+            assert await list_actors() == {"actors": [actors[0]]}
+            set_authenticated_principal(AuthenticatedPrincipal(id="bob:admin", type="user"))
+            assert await list_actors() == {"actors": [actors[2]]}
+        finally:
+            set_authenticated_principal(None)
 
 
 class TestConversationEvents:

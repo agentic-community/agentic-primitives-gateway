@@ -45,7 +45,7 @@ The memory primitive supports shared namespaces for cross-agent collaboration. B
 
 - **Level 2: Agent-level shared pools:** Individual agents set `shared_namespaces` on their `PrimitiveConfig.memory`. Each declared pool resolves to its own cross-user namespace. Agents receive `share_to`, `read_from_pool`, `search_pool`, and `list_pool` tools that accept a `pool` parameter. Enables cross-agent sharing outside of a team context.
 
-Private memory (every agent's default `remember`/`recall`/`search_memory` tools) remains user-scoped with a trailing `:u:{user_id}` — two users on the same agent never see each other's private facts. Shared namespaces deliberately drop the `:u:` suffix; if you want per-user isolation, use private memory instead of a pool.
+Private memory (every agent's default `remember`/`recall`/`search_memory` tools) remains user-scoped with a trailing `:u:{user_id}` — two users on the same agent never see each other's private facts. Shared namespaces never contain `:u:`. A user-owned new agent pool must resolve under `pool:{agent_owner}:…`, a new team pool under `team:{team_owner}:…`; another owner's pool can only be referenced when its deployed declaring agent/team grants access. System-seeded pools preserve operator-configured legacy names. See [Memory Namespaces](../guides/memory-namespaces.md) for examples.
 
 ## Healthcheck
 

@@ -2,9 +2,19 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import StrEnum
-from typing import Any
+from typing import Annotated, Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field
+
+
+def _validate_shared_pool_namespace(namespace: str) -> str:
+    """Shared pools can never alias the terminal private-memory user segment."""
+    if ":u:" in namespace:
+        raise ValueError("Shared memory namespaces must not contain ':u:'")
+    return namespace
+
+
+SharedPoolNamespace = Annotated[str, AfterValidator(_validate_shared_pool_namespace)]
 
 
 class PrimitiveConfig(BaseModel):
@@ -20,7 +30,7 @@ class PrimitiveConfig(BaseModel):
     enabled: bool = True
     tools: list[str] | None = None
     namespace: str | None = None
-    shared_namespaces: list[str] | None = None
+    shared_namespaces: list[SharedPoolNamespace] | None = None
     options: dict[str, Any] = Field(default_factory=dict)
 
 

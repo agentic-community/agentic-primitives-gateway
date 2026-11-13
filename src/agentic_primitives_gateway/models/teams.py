@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from agentic_primitives_gateway.models.agents import (
     ForkRef,
     Identity,
+    SharedPoolNamespace,
     VersionStatus,
 )
 
@@ -24,7 +25,7 @@ class TeamSpec(BaseModel):
     max_concurrent: int | None = None
     global_max_turns: int = 100
     global_timeout_seconds: int = 300
-    shared_memory_namespace: str | None = None
+    shared_memory_namespace: SharedPoolNamespace | None = None
     owner_id: str = "system"
     shared_with: list[str] = Field(default_factory=list)
     checkpointing_enabled: bool = False
@@ -41,7 +42,7 @@ class CreateTeamRequest(BaseModel):
     max_concurrent: int | None = None
     global_max_turns: int = 100
     global_timeout_seconds: int = 300
-    shared_memory_namespace: str | None = None
+    shared_memory_namespace: SharedPoolNamespace | None = None
     shared_with: list[str] = Field(default_factory=list)
 
 
@@ -55,7 +56,7 @@ class UpdateTeamRequest(BaseModel):
     max_concurrent: int | None = None
     global_max_turns: int | None = None
     global_timeout_seconds: int | None = None
-    shared_memory_namespace: str | None = None
+    shared_memory_namespace: SharedPoolNamespace | None = None
     shared_with: list[str] | None = None
     checkpointing_enabled: bool | None = None
 
@@ -132,7 +133,7 @@ class CreateTeamVersionRequest(BaseModel):
     max_concurrent: int | None = None
     global_max_turns: int | None = None
     global_timeout_seconds: int | None = None
-    shared_memory_namespace: str | None = None
+    shared_memory_namespace: SharedPoolNamespace | None = None
     shared_with: list[str] | None = None
     checkpointing_enabled: bool | None = None
     commit_message: str | None = None

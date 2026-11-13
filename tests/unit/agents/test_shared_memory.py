@@ -188,6 +188,32 @@ class TestTeamRunnerSharedNamespace:
         )
         assert runner._resolve_shared_namespace(spec) is None
 
+    def test_private_working_memory_is_disjoint_from_team_pool_and_other_callers(self):
+        from agentic_primitives_gateway.agents.team_runner import TeamRunner
+        from agentic_primitives_gateway.context import set_authenticated_principal
+
+        runner = TeamRunner()
+        spec = TeamSpec(
+            name="research-team",
+            planner="p",
+            synthesizer="s",
+            workers=["w"],
+            owner_id="alice",
+            shared_memory_namespace="team:{team_owner}:{team_name}",
+        )
+        try:
+            set_authenticated_principal(AuthenticatedPrincipal(id="bob", type="user"))
+            bob_ns = runner._working_memory_ns(spec, "run-1")
+            set_authenticated_principal(AuthenticatedPrincipal(id="bob:admin", type="user"))
+            nested_ns = runner._working_memory_ns(spec, "run-1")
+        finally:
+            set_authenticated_principal(None)
+
+        assert runner._resolve_shared_namespace(spec) == "team:alice:research-team"
+        assert bob_ns == "team-private:alice:research-team:run-1:u:bob"
+        assert nested_ns == "team-private:alice:research-team:run-1:u:bob%3Aadmin"
+        assert not nested_ns.startswith(bob_ns + ":")
+
     def test_build_worker_tools_includes_shared_memory(self):
         from agentic_primitives_gateway.agents.team_runner import TeamRunner
 
@@ -318,6 +344,26 @@ class TestResolveSharedPools:
         # Pools are cross-user; ``:u:`` suffix no longer applied.
         assert pools["project:{agent_name}:shared"] == "project:researcher:shared"
 
+    def test_owner_placeholder_is_one_segment_for_agent_and_team(self):
+        from agentic_primitives_gateway.agents.namespace import resolve_shared_pools, resolve_team_shared_namespace
+
+        agent = AgentSpec(
+            name="a",
+            model="m",
+            owner_id="bob:admin",
+            primitives={"memory": PrimitiveConfig(shared_namespaces=["pool:{agent_owner}:docs"])},
+        )
+        team = TeamSpec(
+            name="t",
+            planner="p",
+            synthesizer="s",
+            workers=["w"],
+            owner_id="bob:admin",
+            shared_memory_namespace="team:{team_owner}:{team_name}",
+        )
+        assert resolve_shared_pools(agent) == {"pool:{agent_owner}:docs": "pool:bob%3Aadmin:docs"}
+        assert resolve_team_shared_namespace(team) == "team:bob%3Aadmin:t"
+
     @pytest.mark.asyncio
     async def test_two_users_see_same_pool_data(self):
         """Regression guard: a shared pool must genuinely be shared.
@@ -430,6 +476,20 @@ class TestPoolMemoryHandlers:
         try:
             with pytest.raises(ValueError, match="Unknown pool"):
                 await pool_memory_store("nonexistent", "key", "content")
+        finally:
+            reset_memory_pools(token)
+
+    @pytest.mark.asyncio
+    async def test_pool_cannot_read_private_user_namespace_even_if_context_is_forged(self):
+        from agentic_primitives_gateway.agents.tools.handlers import pool_memory_retrieve
+        from agentic_primitives_gateway.primitives.memory.context import reset_memory_pools, set_memory_pools
+
+        token = set_memory_pools({"forged": "agent:victim:u:alice"})
+        try:
+            with patch("agentic_primitives_gateway.agents.tools.handlers.registry") as mock_reg:
+                with pytest.raises(ValueError, match="private user memory"):
+                    await pool_memory_retrieve("forged", "secret")
+                mock_reg.memory.retrieve.assert_not_called()
         finally:
             reset_memory_pools(token)
 
