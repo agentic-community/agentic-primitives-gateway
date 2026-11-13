@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
 import uuid
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -12,6 +14,8 @@ from agentic_primitives_gateway.auth.models import AuthenticatedPrincipal
 from agentic_primitives_gateway.context import set_authenticated_principal
 from agentic_primitives_gateway.models.agents import AgentSpec, ChatResponse, PrimitiveConfig
 from agentic_primitives_gateway.routes import a2a as a2a_module
+from agentic_primitives_gateway.routes._background import BackgroundRunManager, run_event_key
+from agentic_primitives_gateway.routes._helpers import require_principal
 
 # ── Helpers ───────────────────────────────────────────────────────────
 
@@ -81,13 +85,21 @@ def mock_runner() -> AsyncMock:
 
 
 @pytest.fixture()
-def mock_bg() -> MagicMock:
-    bg = MagicMock()
+def mock_bg() -> BackgroundRunManager:
+    bg = BackgroundRunManager()
     bg.get_status_async = AsyncMock(return_value="idle")
     bg.get_events_async = AsyncMock(return_value=[])
-    bg.get_owner_async = AsyncMock(return_value=None)
+    bg.get_owner_async = AsyncMock(return_value="noop")
     bg.cancel = AsyncMock(return_value=True)
     return bg
+
+
+@pytest.fixture()
+def run_bg(_inject_mocks: Any) -> BackgroundRunManager:
+    """A genuine in-memory run manager to exercise claims and active leases."""
+    bg = BackgroundRunManager()
+    with patch("agentic_primitives_gateway.routes.agents._bg", bg):
+        yield bg
 
 
 @pytest.fixture(autouse=True)
@@ -440,6 +452,80 @@ class TestSendMessage:
         assert '"key"' in call_kwargs["message"]
         assert '"value"' in call_kwargs["message"]
 
+    @pytest.mark.asyncio
+    async def test_claimed_task_blocks_overlap_and_exposes_completed_result(
+        self, mock_store: AsyncMock, mock_runner: AsyncMock, run_bg: BackgroundRunManager
+    ) -> None:
+        from fastapi import HTTPException
+
+        mock_store.get = AsyncMock(return_value=_make_spec())
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def run(**kwargs: Any) -> ChatResponse:
+            started.set()
+            await release.wait()
+            return _chat_response("secret response", kwargs["session_id"])
+
+        mock_runner.run = AsyncMock(side_effect=run)
+        req = a2a_module.A2ASendMessageRequest(
+            message=a2a_module.A2AMessage(
+                message_id="1", role="user", parts=[a2a_module.A2APart(text="Hello")], task_id="chosen"
+            )
+        )
+        first = asyncio.create_task(a2a_module.send_message("test-agent", req))
+        try:
+            await started.wait()
+            key = run_event_key("agent", "admin", "admin", "test-agent", "chosen")
+            assert await run_bg.get_owner_async(key) == "admin"
+            assert (await a2a_module.get_task("test-agent", "chosen")).status.state == "working"
+            with pytest.raises(HTTPException) as collision:
+                await a2a_module.send_message("test-agent", req)
+            assert collision.value.status_code == 409
+            assert mock_runner.run.await_count == 1
+        finally:
+            release.set()
+        result = await first
+        assert result.status.state == "completed"
+        assert (await a2a_module.get_task("test-agent", "chosen")).artifacts[0].parts[0].text == "secret response"
+        with pytest.raises(HTTPException) as replay:
+            await a2a_module.send_message("test-agent", req)
+        assert replay.value.status_code == 409
+        assert mock_runner.run.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_foreign_claim_cannot_start_or_read_task(
+        self, mock_store: AsyncMock, mock_runner: AsyncMock, run_bg: BackgroundRunManager
+    ) -> None:
+        from fastapi import HTTPException
+
+        mock_store.get = AsyncMock(return_value=_make_spec())
+        req = a2a_module.A2ASendMessageRequest(
+            message=a2a_module.A2AMessage(
+                message_id="1", role="user", parts=[a2a_module.A2APart(text="Hi")], task_id="chosen"
+            )
+        )
+        key = run_event_key("agent", "admin", "admin", "test-agent", "chosen")
+        assert await run_bg.reserve(key, "admin", claim_key="agent-id:admin:chosen", claim_identity=key, reuse=True)
+        await run_bg.abandon(key)
+        set_authenticated_principal(AuthenticatedPrincipal(id="other", type="user", scopes=frozenset()))
+        mock_runner.run.return_value = ChatResponse(
+            response="other user's response",
+            session_id="chosen",
+            agent_name="test-agent",
+            turns_used=1,
+            tools_called=[],
+        )
+        independent = await a2a_module.send_message("test-agent", req)
+        assert independent.status.state == a2a_module.A2ATaskState.COMPLETED
+        assert (await a2a_module.get_task("test-agent", "chosen")).status.state == a2a_module.A2ATaskState.COMPLETED
+        set_authenticated_principal(AuthenticatedPrincipal(id="third", type="user", scopes=frozenset()))
+        for operation in (a2a_module.get_task, a2a_module.cancel_task, a2a_module.subscribe_task):
+            with pytest.raises(HTTPException) as denied:
+                await operation("test-agent", "chosen")
+            assert denied.value.status_code == 403
+        mock_runner.run.assert_awaited_once()
+
 
 # ── POST /a2a/agents/{name}/message:stream ───────────────────────────
 
@@ -548,6 +634,51 @@ class TestSendMessageStream:
         assert "remember" in body
         assert "tool_call_start" in body or "tool_call_result" in body
 
+    @pytest.mark.asyncio
+    async def test_stream_survives_disconnect_and_blocks_same_session(
+        self, mock_store: AsyncMock, mock_runner: AsyncMock, run_bg: BackgroundRunManager
+    ) -> None:
+        from fastapi import HTTPException
+
+        mock_store.get = AsyncMock(return_value=_make_spec())
+        req = a2a_module.A2ASendMessageRequest(
+            message=a2a_module.A2AMessage(
+                message_id="1",
+                role="user",
+                parts=[a2a_module.A2APart(text="Hi")],
+                task_id="stream-id",
+                context_id="conversation",
+            )
+        )
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def stream(**kwargs: Any) -> Any:
+            started.set()
+            yield {"type": "token", "content": "first", "full_result": "private"}
+            await release.wait()
+            yield {"type": "done", "response": "final"}
+
+        mock_runner.run_stream = MagicMock(side_effect=stream)
+        response = await a2a_module.send_message_stream("test-agent", req)
+        key = run_event_key("agent", "admin", "admin", "test-agent", "stream-id")
+        try:
+            await started.wait()
+            with pytest.raises(HTTPException) as collision:
+                await a2a_module.send_message_stream("test-agent", req)
+            assert collision.value.status_code == 409
+            assert "private" not in json.dumps(await run_bg.get_events_async(key))
+            assert (await a2a_module.get_task("test-agent", "stream-id")).status.state == "working"
+        finally:
+            release.set()
+        await run_bg.runs[key][0]
+        task = await a2a_module.get_task("test-agent", "stream-id")
+        assert task.context_id == "conversation"
+        assert task.status.state == "completed"
+        assert task.artifacts[0].parts[0].text == "final"
+        # Never consume the initial response body: its consumer has disconnected.
+        assert response.media_type == "text/event-stream"
+
 
 # ── GET /a2a/agents/{name}/tasks/{task_id} ───────────────────────────
 
@@ -573,6 +704,19 @@ class TestGetTask:
         assert data["id"] == "task-123"
         assert data["status"]["state"] == "working"
         assert data["metadata"]["agent_name"] == "test-agent"
+
+    @pytest.mark.asyncio
+    async def test_unclaimed_task_cannot_read_agent_events(self, mock_store: AsyncMock, mock_bg: MagicMock) -> None:
+        from starlette.testclient import TestClient
+
+        from agentic_primitives_gateway.main import app
+
+        mock_store.get = AsyncMock(return_value=_make_spec("test-agent", shared_with=["*"]))
+        mock_bg.get_owner_async = AsyncMock(return_value=None)
+        mock_bg.get_events_async = AsyncMock(return_value=[{"type": "token", "content": "other user's text"}])
+        resp = TestClient(app).get("/a2a/agents/test-agent/tasks/known-run")
+        assert resp.status_code == 403
+        mock_bg.get_events_async.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_get_completed_task(self, mock_store: AsyncMock, mock_bg: MagicMock) -> None:
@@ -669,7 +813,7 @@ class TestCancelTask:
         spec = _make_spec("test-agent", shared_with=["*"])
         mock_store.get = AsyncMock(return_value=spec)
         mock_bg.cancel = AsyncMock(return_value=True)
-        mock_bg.get_owner_async = AsyncMock(return_value=None)
+        mock_bg.get_owner_async = AsyncMock(return_value="noop")
 
         client = TestClient(app)
         resp = client.post("/a2a/agents/test-agent/tasks/task-123:cancel")
@@ -689,7 +833,8 @@ class TestCancelTask:
         spec = _make_spec("test-agent", shared_with=["*"])
         mock_store.get = AsyncMock(return_value=spec)
         mock_bg.cancel = AsyncMock(return_value=False)
-        mock_bg.get_owner_async = AsyncMock(return_value=None)
+        mock_bg.get_owner_async = AsyncMock(return_value="noop")
+        mock_bg.get_events_async = AsyncMock(return_value=[{"type": "done", "response": "Finished"}])
 
         client = TestClient(app)
         resp = client.post("/a2a/agents/test-agent/tasks/task-done:cancel")
@@ -731,19 +876,37 @@ class TestCancelTask:
         with patch("agentic_primitives_gateway.routes.agents._bg", mock_bg), pytest.raises(HTTPException, match="403"):
             await a2a_module.cancel_task(name="test-agent", task_id="task-123")
 
+    @pytest.mark.asyncio
+    async def test_cancel_live_task_and_report_canceled_state(
+        self, mock_store: AsyncMock, mock_runner: AsyncMock, run_bg: BackgroundRunManager
+    ) -> None:
+        mock_store.get = AsyncMock(return_value=_make_spec())
+        req = a2a_module.A2ASendMessageRequest(
+            message=a2a_module.A2AMessage(
+                message_id="1", role="user", parts=[a2a_module.A2APart(text="Hi")], task_id="cancel-id"
+            )
+        )
+        started = asyncio.Event()
+
+        async def run(**kwargs: Any) -> ChatResponse:
+            started.set()
+            await asyncio.Event().wait()
+            return _chat_response()
+
+        mock_runner.run = AsyncMock(side_effect=run)
+        pending = asyncio.create_task(a2a_module.send_message("test-agent", req))
+        await started.wait()
+        cancellation = await a2a_module.cancel_task("test-agent", "cancel-id")
+        assert cancellation.status.state == "canceled"
+        assert (await pending).status.state == "canceled"
+        assert (await a2a_module.get_task("test-agent", "cancel-id")).status.state == "canceled"
+
 
 # ── GET /a2a/agents/{name}/tasks/{task_id}:subscribe ─────────────────
 
 
 class TestSubscribeTask:
-    """Tests for task subscription SSE endpoint.
-
-    NOTE: The ``GET /a2a/agents/{name}/tasks/{task_id}:subscribe`` route has a
-    routing conflict with ``GET /a2a/agents/{name}/tasks/{task_id}`` because
-    Starlette's ``{task_id}`` path parameter greedily captures ``task-123:subscribe``.
-    As a result, HTTP-level tests via ``TestClient`` hit the wrong route.  These
-    tests therefore call the route function directly to validate the logic.
-    """
+    """Tests for task subscription SSE endpoint."""
 
     @pytest.mark.asyncio
     async def test_subscribe_returns_sse(self, mock_store: AsyncMock, mock_bg: MagicMock) -> None:
@@ -762,6 +925,7 @@ class TestSubscribeTask:
         )
         mock_bg.get_status_async = AsyncMock(return_value="idle")
 
+        mock_bg.get_owner_async.return_value = require_principal().id
         with patch("agentic_primitives_gateway.routes.agents._bg", mock_bg):
             result = await a2a_module.subscribe_task(name="test-agent", task_id="task-123")
 
@@ -774,6 +938,25 @@ class TestSubscribeTask:
             body_parts.append(chunk if isinstance(chunk, str) else chunk.decode())
         body = "".join(body_parts)
         assert "data:" in body
+
+    @pytest.mark.asyncio
+    async def test_subscribe_http_route_replays_terminal_task(self, mock_store: AsyncMock, mock_bg: MagicMock) -> None:
+        from starlette.testclient import TestClient
+
+        from agentic_primitives_gateway.main import app
+
+        mock_store.get = AsyncMock(return_value=_make_spec())
+        mock_bg.get_events_async = AsyncMock(
+            return_value=[
+                {"type": "a2a_started", "context_id": "context"},
+                {"type": "done", "response": "Hello"},
+            ]
+        )
+        resp = TestClient(app).get("/a2a/agents/test-agent/tasks/task-123:subscribe")
+        assert resp.status_code == 200
+        assert '"type": "artifact_update"' in resp.text
+        assert '"context_id": "context"' in resp.text
+        assert '"state": "completed"' in resp.text
 
     @pytest.mark.asyncio
     async def test_subscribe_404_for_missing_agent(self, mock_store: AsyncMock) -> None:
@@ -795,6 +978,7 @@ class TestSubscribeTask:
         mock_bg.get_events_async = AsyncMock(return_value=[])
         mock_bg.get_status_async = AsyncMock(return_value="cancelled")
 
+        mock_bg.get_owner_async.return_value = require_principal().id
         with patch("agentic_primitives_gateway.routes.agents._bg", mock_bg):
             result = await a2a_module.subscribe_task(name="test-agent", task_id="task-cancel")
 
@@ -805,8 +989,7 @@ class TestSubscribeTask:
         async for chunk in result.body_iterator:
             body_parts.append(chunk if isinstance(chunk, str) else chunk.decode())
         body = "".join(body_parts)
-        # No meaningful A2A events since there were no events and status was cancelled
-        assert body == "" or "data:" not in body or len(body_parts) == 0
+        assert '"state": "canceled"' in body
 
 
 # ── Unit tests for helper functions ──────────────────────────────────

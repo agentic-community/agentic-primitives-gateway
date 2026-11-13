@@ -166,6 +166,8 @@ curl -N -X POST http://localhost:8000/a2a/agents/research-assistant/message:stre
   }'
 ```
 
+A2A messages require authentication (except public agent cards). A client-supplied `task_id` is reserved for one agent identity and cannot be reused or run concurrently with a chat session. `GET /a2a/agents/{name}/tasks/{task_id}`, `GET /a2a/agents/{name}/tasks/{task_id}:subscribe`, and `POST /a2a/agents/{name}/tasks/{task_id}:cancel` require the task owner; the task continues if a streaming client disconnects.
+
 See `examples/a2a-client/` for a full Python example with discovery, streaming, and task management.
 
 ## Quick Example: Python Client
