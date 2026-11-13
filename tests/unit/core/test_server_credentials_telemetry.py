@@ -213,7 +213,7 @@ class TestServerCredentialsUsedEvent:
         assert matching[0].metadata["mode"] == "fallback"
 
     async def test_caller_creds_present_no_event(self) -> None:
-        """Ambient-cred path isn't taken when the caller presents their own."""
+        """Under ``fallback`` the ambient path isn't taken when the caller presents their own."""
         set_aws_credentials(
             AWSCredentials(
                 access_key_id="AKIAIOSFODNN7EXAMPLE",
@@ -224,7 +224,7 @@ class TestServerCredentialsUsedEvent:
         set_authenticated_principal(_non_admin())
         try:
             events = await _collect(
-                ServerCredentialMode.ALWAYS,
+                ServerCredentialMode.FALLBACK,
                 lambda: get_boto3_session(default_region="us-east-1"),
             )
         finally:

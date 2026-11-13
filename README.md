@@ -205,7 +205,7 @@ See the [Agents Guide](https://agentic-community.github.io/agentic-primitives-ga
 | **User-scoped memory** | Automatic `:u:{user_id}` namespace isolation for declarative agents |
 | **Session ownership** | Browser/code_interpreter sessions are tied to their creator |
 | **Credential isolation** | Per-request contextvars — no credential leakage between concurrent requests |
-| **Per-user credentials** | OIDC-resolved credentials from user attributes (Langfuse keys, MCP tokens, etc.) |
+| **Per-user credentials** | OIDC attributes supply secrets, never provider endpoints. Accepted headers override only matching OIDC keys; caller and operator secret sets never mix under `fallback`. |
 
 See the [Authentication](https://agentic-community.github.io/agentic-primitives-gateway/getting-started/configuration/#authentication), [Policy Enforcement](https://agentic-community.github.io/agentic-primitives-gateway/getting-started/configuration/#enforcement), and [Credentials](https://agentic-community.github.io/agentic-primitives-gateway/getting-started/configuration/#credential-resolution) sections of the Configuration Guide.
 

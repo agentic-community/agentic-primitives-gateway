@@ -79,10 +79,12 @@ class OktaIdentityProvider(SyncRunnerMixin, IdentityProvider):
             },
         )
 
+    # ``_resolve_config`` is the single mode-aware merge; never re-fill from
+    # ``self._*`` below or ``never`` would silently use operator secrets.
+
     def _base_url(self) -> str:
         cfg = self._resolve_config()
-        domain = cfg.get("domain") or self._domain
-        return f"https://{domain}"
+        return f"https://{cfg['domain']}"
 
     def _token_url(self) -> str:
         return f"{self._base_url()}/oauth2/{self._auth_server}/v1/token"
@@ -92,7 +94,7 @@ class OktaIdentityProvider(SyncRunnerMixin, IdentityProvider):
 
     def _admin_headers(self) -> dict[str, str]:
         cfg = self._resolve_config()
-        token = cfg.get("api_token") or self._api_token
+        token = cfg.get("api_token")
         if not token:
             raise ValueError(
                 "Okta API token required for admin operations. "
@@ -102,10 +104,7 @@ class OktaIdentityProvider(SyncRunnerMixin, IdentityProvider):
 
     def _client_auth(self) -> tuple[str, str]:
         cfg = self._resolve_config()
-        return (
-            cfg.get("client_id") or self._client_id or "",
-            cfg.get("client_secret") or self._client_secret or "",
-        )
+        return (cfg.get("client_id") or "", cfg.get("client_secret") or "")
 
     # ── Data plane — runtime token operations ─────────────────────
 
@@ -150,7 +149,7 @@ class OktaIdentityProvider(SyncRunnerMixin, IdentityProvider):
             state = custom_state or uuid.uuid4().hex
             cfg = self._resolve_config()
             params: dict[str, str] = {
-                "client_id": cfg.get("client_id") or self._client_id or "",
+                "client_id": cfg.get("client_id") or "",
                 "response_type": "code",
                 "scope": scope or "openid",
                 "redirect_uri": callback_url or "",

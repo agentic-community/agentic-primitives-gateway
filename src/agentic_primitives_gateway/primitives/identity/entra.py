@@ -74,14 +74,22 @@ class EntraIdentityProvider(SyncRunnerMixin, IdentityProvider):
         )
 
     def _get_app(self) -> msal.ConfidentialClientApplication:
-        """Create an MSAL ConfidentialClientApplication from resolved config."""
+        """Create an MSAL ConfidentialClientApplication from resolved config.
+
+        ``_resolve_config`` is the single mode-aware merge; never re-fill
+        from ``self._*`` here or ``never`` would silently use operator secrets.
+        """
         cfg = self._resolve_config()
-        tenant_id = cfg.get("tenant_id") or self._tenant_id
-        authority = f"https://login.microsoftonline.com/{tenant_id}"
+        tenant_id, client_id = cfg.get("tenant_id"), cfg.get("client_id")
+        if not (tenant_id and client_id):
+            raise ValueError(
+                "Entra tenant_id and client_id are required. Pass them via X-Cred-Entra-* headers "
+                "or apg.entra.* attributes, or enable allow_server_credentials: fallback."
+            )
         return msal.ConfidentialClientApplication(
-            client_id=cfg.get("client_id") or self._client_id,
-            client_credential=cfg.get("client_secret") or self._client_secret,
-            authority=authority,
+            client_id=client_id,
+            client_credential=cfg.get("client_secret"),
+            authority=f"https://login.microsoftonline.com/{tenant_id}",
         )
 
     def _graph_headers(self) -> dict[str, str]:

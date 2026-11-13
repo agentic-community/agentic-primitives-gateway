@@ -11,11 +11,7 @@ from agentic_primitives_gateway.auth.models import AuthenticatedPrincipal
 from agentic_primitives_gateway.credentials.base import CredentialResolver
 from agentic_primitives_gateway.credentials.cache import CredentialCache
 from agentic_primitives_gateway.credentials.models import APG_PREFIX, ResolvedCredentials
-from agentic_primitives_gateway.credentials.security import (
-    emit_credential_key_denied,
-    is_forbidden_credential_key,
-    split_credential_attribute,
-)
+from agentic_primitives_gateway.credentials.security import drop_forbidden_credential_keys, split_credential_attribute
 
 logger = logging.getLogger(__name__)
 
@@ -148,24 +144,35 @@ class OidcCredentialResolver(CredentialResolver):
         if not access_token or principal.is_anonymous:
             return None
 
-        # Check cache first
+        # Check cache first.  An empty entry is a cached "no usable apg.*
+        # attributes" result (e.g. a profile holding only endpoint keys).
         cached = self._cache.get(principal.id)
         if cached is not None:
-            return cached
+            return cached if cached.service_credentials or cached.aws else None
 
         # Try Admin API first (returns all attributes, no protocol mappers needed)
         attrs = await self._fetch_via_admin_api(principal.id)
+        # The Admin API is the authoritative source when configured; userinfo
+        # only carries attributes that have protocol mappers.
+        authoritative = attrs is not None or not self._admin_url
 
         # Fall back to userinfo (only returns claims with protocol mappers)
         if attrs is None and self._userinfo_url:
             attrs = await self._fetch_userinfo(access_token)
 
         if attrs is None:
-            return None
+            return None  # IdP error — don't cache, retry next request
 
         creds = self._map_credentials(attrs)
-        if creds is not None:
-            self._cache.put(principal.id, creds)
+        if authoritative:
+            # Cache empty results too ("no usable attributes"), so such a user
+            # doesn't cost an IdP round-trip and a denial audit per request.
+            self._cache.put(principal.id, creds or ResolvedCredentials())
+        # After a transient Admin API failure, the userinfo fallback only
+        # carries attributes that have protocol mappers — a partial view.
+        # Use it for this request but never cache it: under ``fallback`` the
+        # missing services would silently run on operator credentials for
+        # the whole TTL.
         return creds
 
     async def _fetch_via_admin_api(self, user_id: str) -> dict[str, Any] | None:
@@ -236,8 +243,9 @@ class OidcCredentialResolver(CredentialResolver):
         are stored as ``service_credentials["_global"]["something"]``.
 
         Endpoint-shaped keys (``base_url``, ``hub_url``, ``domain``, …) are
-        dropped: users can edit their own ``apg.*`` attributes, so this
-        channel is exactly as caller-controlled as ``X-Cred-*`` headers.
+        dropped here, once per cache fill: users can edit their own ``apg.*``
+        attributes, so this channel is exactly as caller-controlled as
+        ``X-Cred-*`` headers.
         """
         service_credentials: dict[str, dict[str, str]] = {}
 
@@ -248,18 +256,9 @@ class OidcCredentialResolver(CredentialResolver):
             if split is None:
                 continue
             service, key = split
-            if is_forbidden_credential_key(key):
-                logger.warning(
-                    "Ignoring endpoint-shaped OIDC credential attribute %r on service %r — "
-                    "URL/host/endpoint fields are server-config only",
-                    key,
-                    service,
-                )
-                emit_credential_key_denied(service=service, key=key, source="oidc")
-                continue
-
             service_credentials.setdefault(service, {})[key] = str(value)
 
+        service_credentials = drop_forbidden_credential_keys(service_credentials, source="oidc")
         if not service_credentials:
             return None
 

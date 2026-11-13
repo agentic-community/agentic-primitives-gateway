@@ -102,10 +102,68 @@ async def test_legitimate_xcred_secret_emits_no_denial(audit_router):
 
 
 @pytest.mark.asyncio
-async def test_forbidden_oidc_attribute_emits_audit_event(audit_router):
-    OidcCredentialResolver._map_credentials({"apg.langfuse.base_url": "http://169.254.169.254"})
+async def test_forbidden_oidc_attribute_audit_carries_request_path(audit_router):
+    from unittest.mock import AsyncMock
+
+    from agentic_primitives_gateway.auth.middleware import AuthenticationMiddleware
+    from agentic_primitives_gateway.auth.noop import NoopAuthBackend
+    from agentic_primitives_gateway.credentials.middleware import CredentialResolutionMiddleware
+
+    resolver = OidcCredentialResolver(userinfo_url="https://idp.invalid/userinfo")
+    resolver._fetch_userinfo = AsyncMock(return_value={"apg.langfuse.base_url": "http://169.254.169.254"})
+    app = FastAPI()
+
+    @app.get("/check")
+    async def check() -> dict[str, int]:
+        return {"ok": 1}
+
+    app.add_middleware(CredentialResolutionMiddleware)
+    app.add_middleware(AuthenticationMiddleware)
+    app.add_middleware(RequestContextMiddleware)
+    app.state.auth_backend = NoopAuthBackend()
+    app.state.credential_resolver = resolver
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        await client.get("/check", headers={"Authorization": "Bearer jwt"})
 
     await asyncio.sleep(0.05)
     events = [e for e in audit_router.events if e.action == AuditAction.NETWORK_ACCESS_DENIED]
     assert len(events) == 1
     assert events[0].metadata == {"service": "langfuse", "key": "base_url", "source": "oidc"}
+    assert events[0].http_path == "/check"
+
+
+@pytest.mark.asyncio
+async def test_forbidden_credential_write_audit_carries_request_path(audit_router):
+    from unittest.mock import AsyncMock
+
+    from agentic_primitives_gateway.auth.middleware import AuthenticationMiddleware
+    from agentic_primitives_gateway.auth.noop import NoopAuthBackend
+    from agentic_primitives_gateway.credentials.middleware import CredentialResolutionMiddleware
+    from agentic_primitives_gateway.credentials.noop import NoopCredentialResolver
+    from agentic_primitives_gateway.routes import credentials
+
+    prev_writer = credentials._writer
+    credentials.set_credential_writer(AsyncMock())
+    app = FastAPI()
+    app.include_router(credentials.router)
+    app.add_middleware(CredentialResolutionMiddleware)
+    app.add_middleware(AuthenticationMiddleware)
+    app.add_middleware(RequestContextMiddleware)
+    app.state.auth_backend = NoopAuthBackend()
+    app.state.credential_resolver = NoopCredentialResolver()
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.put(
+                "/api/v1/credentials",
+                json={"attributes": {"apg.selenium.hub_url": "http://169.254.169.254"}},
+                headers={"Authorization": "Bearer jwt"},
+            )
+    finally:
+        credentials._writer = prev_writer
+    assert resp.status_code == 400
+
+    await asyncio.sleep(0.05)
+    events = [e for e in audit_router.events if e.action == AuditAction.NETWORK_ACCESS_DENIED]
+    assert len(events) == 1
+    assert events[0].metadata["source"] == "write"
+    assert events[0].http_path == "/api/v1/credentials"

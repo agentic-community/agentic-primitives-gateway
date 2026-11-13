@@ -232,7 +232,7 @@ providers:
 
 ### Per-request credentials
 
-Users can override Keycloak client credentials per-request. The server URL is operator configuration only — caller-supplied `server_url` values are ignored.
+Users can override Keycloak client credentials per-request. A caller-supplied set is used whole — send `realm`, `client_id`, and `client_secret` together; the operator's values never fill gaps. The server URL is operator configuration only — caller-supplied `server_url` values are ignored.
 
 ```bash
 curl -H "X-Cred-Keycloak-Realm: my-realm" \

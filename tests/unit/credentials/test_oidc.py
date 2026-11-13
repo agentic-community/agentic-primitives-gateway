@@ -108,6 +108,16 @@ class TestOidcResolverUserinfoMode:
         await resolver.resolve(principal, "token")
         assert resolver._fetch_userinfo.call_count == 1
 
+    @pytest.mark.asyncio
+    async def test_endpoint_only_profile_is_negatively_cached(self, resolver, principal):
+        """No IdP round-trip (or denial audit) per request for an unusable profile."""
+        resolver._fetch_userinfo = AsyncMock(return_value={"apg.langfuse.base_url": "http://redirect.invalid"})
+        with patch("agentic_primitives_gateway.credentials.security.emit_credential_key_denied") as emit:
+            assert await resolver.resolve(principal, "token") is None
+            assert await resolver.resolve(principal, "token") is None
+        assert resolver._fetch_userinfo.call_count == 1
+        assert emit.call_count == 1
+
 
 class TestOidcResolverAdminApiMode:
     @pytest.mark.asyncio
@@ -216,3 +226,33 @@ class TestOidcClose:
     async def test_close(self):
         r = OidcCredentialResolver(userinfo_url="https://test.com/userinfo")
         await r.close()
+
+
+class TestOidcNegativeCacheAuthority:
+    @pytest.mark.asyncio
+    async def test_admin_api_failure_is_not_cached_as_empty(self, admin_resolver, principal):
+        """A transient Admin API failure + mapper-less userinfo must retry next request."""
+        admin_resolver._fetch_via_admin_api = AsyncMock(side_effect=[None, {"apg.langfuse.public_key": "user-pk"}])
+        admin_resolver._fetch_userinfo = AsyncMock(return_value={"sub": "user-123"})
+
+        assert await admin_resolver.resolve(principal, "token") is None
+        second = await admin_resolver.resolve(principal, "token")
+
+        assert second is not None
+        assert second.service_credentials == {"langfuse": {"public_key": "user-pk"}}
+        assert admin_resolver._fetch_via_admin_api.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_partial_userinfo_after_admin_failure_is_used_but_not_cached(self, admin_resolver, principal):
+        """Userinfo only carries mapped attributes; caching it would hide the rest for the whole TTL."""
+        admin_resolver._fetch_via_admin_api = AsyncMock(
+            side_effect=[None, {"apg.langfuse.public_key": "pk", "apg.agentcore.gateway_token": "user-token"}]
+        )
+        admin_resolver._fetch_userinfo = AsyncMock(return_value={"apg.langfuse.public_key": "pk"})
+
+        first = await admin_resolver.resolve(principal, "token")
+        second = await admin_resolver.resolve(principal, "token")
+
+        assert first is not None and first.service_credentials == {"langfuse": {"public_key": "pk"}}
+        assert second is not None and second.service_credentials["agentcore"] == {"gateway_token": "user-token"}
+        assert admin_resolver._fetch_via_admin_api.call_count == 2

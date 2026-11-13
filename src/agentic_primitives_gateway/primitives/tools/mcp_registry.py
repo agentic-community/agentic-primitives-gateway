@@ -6,7 +6,7 @@ import os
 import time
 from typing import Any, ClassVar
 
-from agentic_primitives_gateway.context import get_service_credentials
+from agentic_primitives_gateway.context import get_service_credentials_or_defaults
 from agentic_primitives_gateway.primitives._sync import SyncRunnerMixin
 from agentic_primitives_gateway.primitives.tools.base import ToolsProvider
 
@@ -31,10 +31,10 @@ class MCPRegistryProvider(SyncRunnerMixin, ToolsProvider):
     ``base_url`` or ``MCP_REGISTRY_URL``) — it is never taken from caller
     credentials, so a configured server token can't be sent elsewhere.
 
-    The JWT token can come from:
-    1. Per-user OIDC attribute ``apg.mcp_registry.token``
-    2. Provider config: token
-    3. Environment: MCP_REGISTRY_TOKEN
+    The JWT token is resolved under ``allow_server_credentials`` like every
+    other service credential: per-user OIDC attribute
+    ``apg.mcp_registry.token``, with the provider-config / ``MCP_REGISTRY_TOKEN``
+    server token used only under ``fallback`` / ``always``.
 
     Provider config example::
 
@@ -57,10 +57,9 @@ class MCPRegistryProvider(SyncRunnerMixin, ToolsProvider):
         logger.info("MCP Registry tools provider initialized (base_url=%s)", self._default_base_url)
 
     def _resolve_config(self) -> tuple[str, str | None]:
-        """Resolve base URL (operator config) and token (context or defaults)."""
-        creds = get_service_credentials("mcp_registry") or {}
-        token = creds.get("token") or self._default_token
-        return self._default_base_url.rstrip("/"), token
+        """Resolve base URL (operator config) and token (mode-aware)."""
+        creds = get_service_credentials_or_defaults("mcp_registry", {"token": self._default_token})
+        return self._default_base_url.rstrip("/"), creds.get("token")
 
     def _fetch_servers_raw(self, base_url: str, token: str | None) -> list[dict[str, Any]]:
         """Fetch server list from the registry, supporting both API formats.
@@ -584,7 +583,13 @@ class MCPRegistryProvider(SyncRunnerMixin, ToolsProvider):
         (per-user tokens will be resolved at request time), or ``False``
         when the server is unreachable.
         """
-        base_url, token = self._resolve_config()
+        base_url = self._default_base_url.rstrip("/")
+        try:
+            _, token = self._resolve_config()
+        except ValueError:
+            # ``never`` with no caller token (e.g. a readiness probe):
+            # check reachability without using the server token.
+            token = None
         try:
             import httpx
 
