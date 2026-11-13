@@ -56,17 +56,37 @@ class TestGetServiceCredentialsOrDefaults:
             )
 
     def test_never_full_client_creds_returns_them_without_defaults(self):
-        """Even when operator defaults exist, ``never`` ignores them."""
+        """Even when operator defaults exist, ``never`` ignores them for credentials."""
         set_service_credentials({"langfuse": {"public_key": "alice-pk", "secret_key": "alice-sk"}})
         with _ModeOverride(ServerCredentialMode.NEVER):
             result = get_service_credentials_or_defaults(
                 "langfuse",
-                {"public_key": "server-pk", "secret_key": "server-sk", "host": "https://server.com"},
+                {"public_key": "server-pk", "secret_key": "server-sk", "base_url": "https://server.com"},
             )
         assert result["public_key"] == "alice-pk"
         assert result["secret_key"] == "alice-sk"
-        # ``host`` wasn't vended by Alice and under NEVER defaults don't fill.
-        assert result["host"] is None
+        # Endpoint keys are operator config, not credentials — always filled.
+        assert result["base_url"] == "https://server.com"
+
+    def test_never_ignores_caller_endpoint_key(self):
+        set_service_credentials(
+            {"langfuse": {"public_key": "alice-pk", "secret_key": "alice-sk", "base_url": "http://redirect"}}
+        )
+        with _ModeOverride(ServerCredentialMode.NEVER):
+            result = get_service_credentials_or_defaults(
+                "langfuse",
+                {"public_key": None, "secret_key": None, "base_url": "https://server.com"},
+            )
+        assert result["base_url"] == "https://server.com"
+
+    def test_never_endpoint_only_client_creds_raises(self):
+        """A caller that only vends an endpoint key has supplied no credentials."""
+        set_service_credentials({"langfuse": {"base_url": "http://redirect"}})
+        with (
+            _ModeOverride(ServerCredentialMode.NEVER),
+            pytest.raises(ValueError, match="No langfuse credentials provided"),
+        ):
+            get_service_credentials_or_defaults("langfuse", {"public_key": "server-pk", "base_url": "https://s"})
 
     def test_never_partial_client_creds_returns_shape_preserving_dict(self):
         """Partial client creds → shape-preserving dict with ``None`` for missing keys."""
@@ -166,6 +186,33 @@ class TestGetServiceCredentialsOrDefaults:
         ):
             get_service_credentials_or_defaults("svc", {"key_a": "default_a"})
         emit.assert_called_once_with("svc")
+
+    def test_fallback_never_pairs_operator_secret_with_caller_endpoint(self):
+        """The OIDC SSRF: caller vends only ``base_url``, operator fills the keys."""
+        set_service_credentials({"langfuse": {"base_url": "http://redirect:8081"}})
+        with _ModeOverride(ServerCredentialMode.FALLBACK):
+            result = get_service_credentials_or_defaults(
+                "langfuse",
+                {"public_key": "server-pk", "secret_key": "server-sk", "base_url": "https://langfuse.internal"},
+            )
+        assert result == {
+            "public_key": "server-pk",
+            "secret_key": "server-sk",
+            "base_url": "https://langfuse.internal",
+        }
+
+    def test_fallback_operator_endpoint_alone_does_not_emit(self):
+        """Filling only the endpoint from config uses no operator secret."""
+        set_service_credentials({"langfuse": {"public_key": "alice-pk", "secret_key": "alice-sk"}})
+        with (
+            _ModeOverride(ServerCredentialMode.FALLBACK),
+            patch("agentic_primitives_gateway.context._emit_server_credentials_used") as emit,
+        ):
+            get_service_credentials_or_defaults(
+                "langfuse",
+                {"public_key": "server-pk", "secret_key": "server-sk", "base_url": "https://langfuse.internal"},
+            )
+        emit.assert_not_called()
 
     def test_always_emits_for_non_empty_defaults(self):
         """``always`` is also a "shared-cred" state — audit consumers want to see it."""

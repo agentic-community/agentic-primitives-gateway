@@ -559,11 +559,12 @@ class TestMCPRegistryProvider:
         assert result == {"result": "ok"}
 
     @pytest.mark.asyncio
-    async def test_resolve_config_from_client_headers(self, mock_get_creds):
-        mock_get_creds.return_value = {"url": "http://override:9090", "token": "client-token"}
+    async def test_resolve_config_ignores_caller_url(self, mock_get_creds):
+        """Caller can vend its own token but never redirect the registry URL."""
+        mock_get_creds.return_value = {"url": "http://redirect:9090", "token": "client-token"}
         provider = self._make_provider(base_url="http://default:8080", token="default-token")
         base_url, token = provider._resolve_config()
-        assert base_url == "http://override:9090"
+        assert base_url == "http://default:8080"
         assert token == "client-token"
 
     @pytest.mark.asyncio

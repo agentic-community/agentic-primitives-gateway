@@ -77,33 +77,6 @@ class TestSeleniumGridBrowserProvider:
         mock_driver.set_window_size.assert_called_once_with(800, 600)
 
     @pytest.mark.asyncio
-    async def test_start_session_uses_client_credentials(self):
-        """Client-provided hub_url via X-Cred-Selenium-Hub-Url should override config."""
-        mock_driver = MagicMock()
-        mock_driver.session_id = "wd-123"
-
-        client_creds = {"hub_url": "http://custom-grid:9999", "browser": "firefox"}
-
-        with (
-            patch("agentic_primitives_gateway.primitives.browser.selenium_grid.webdriver") as mock_wd,
-            patch(
-                "agentic_primitives_gateway.primitives.browser.selenium_grid.get_service_credentials_or_defaults",
-                return_value=client_creds,
-            ),
-        ):
-            mock_wd.Remote.return_value = mock_driver
-            mock_wd.FirefoxOptions = MagicMock
-            provider = SeleniumGridBrowserProvider(hub_url="http://default:4444", browser="chrome")
-
-            result = await provider.start_session(session_id="s1")
-
-        # Should have connected to the client-provided URL
-        mock_wd.Remote.assert_called_once()
-        call_kwargs = mock_wd.Remote.call_args
-        assert call_kwargs[1]["command_executor"] == "http://custom-grid:9999"
-        assert result["session_id"] == "s1"
-
-    @pytest.mark.asyncio
     async def test_stop_session(self):
         provider = SeleniumGridBrowserProvider.__new__(SeleniumGridBrowserProvider)
         provider._sessions = {}

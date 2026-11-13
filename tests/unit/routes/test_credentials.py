@@ -86,6 +86,23 @@ class TestCredentialRoutes:
             assert resp.json()["status"] == "updated"
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("attr", ["apg.langfuse.base_url", "selenium.hub_url", "apg.okta.domain"])
+    async def test_write_rejects_endpoint_keys(self, attr: str):
+        writer = AsyncMock()
+        writer.write = AsyncMock(return_value=None)
+        app = _make_app(writer=writer)
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.put(
+                "/api/v1/credentials",
+                json={"attributes": {"apg.langfuse.public_key": "pk", attr: "http://redirect:8081"}},
+                headers={"Authorization": "Bearer test-token"},
+            )
+        assert resp.status_code == 400
+        assert attr in resp.json()["detail"]
+        writer.write.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_status_endpoint(self):
         app = _make_app(writer=NoopCredentialWriter())
         transport = ASGITransport(app=app)

@@ -232,11 +232,10 @@ providers:
 
 ### Per-request credentials
 
-Users can override Keycloak connection details per-request:
+Users can override Keycloak client credentials per-request. The server URL is operator configuration only — caller-supplied `server_url` values are ignored.
 
 ```bash
-curl -H "X-Cred-Keycloak-Server-Url: https://keycloak.example.com" \
-     -H "X-Cred-Keycloak-Realm: my-realm" \
+curl -H "X-Cred-Keycloak-Realm: my-realm" \
      -H "X-Cred-Keycloak-Client-Id: my-client" \
      -H "X-Cred-Keycloak-Client-Secret: my-secret" \
      http://localhost:8000/api/v1/identity/token
@@ -246,7 +245,6 @@ Or via the Python client:
 
 ```python
 client.set_service_credentials("keycloak", {
-    "server_url": "https://keycloak.example.com",
     "realm": "my-realm",
     "client_id": "my-client",
     "client_secret": "my-secret",

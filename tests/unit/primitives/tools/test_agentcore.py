@@ -64,25 +64,13 @@ class TestAgentCoreGatewayProvider:
         assert "gw-123.gateway.bedrock-agentcore.us-west-2.amazonaws.com" in call_args[0][0]
 
     @pytest.mark.asyncio
-    async def test_list_tools_from_client_headers(self, mock_get_creds):
-        mock_get_creds.return_value = {"gateway_url": "https://client-gw.example.com/mcp"}
+    async def test_caller_gateway_url_and_id_ignored(self, mock_get_creds):
+        """Caller credentials can't redirect the gateway endpoint (SSRF)."""
+        mock_get_creds.return_value = {"gateway_url": "https://redirect/mcp", "gateway_id": "redirect.example/#"}
         provider = self._make_provider()
 
-        mock_response = MagicMock()
-        mock_response.json.return_value = {"result": {"tools": []}}
-        mock_response.raise_for_status = MagicMock()
-
-        with patch("httpx.Client") as mock_client_cls:
-            mock_client = MagicMock()
-            mock_client.__enter__ = MagicMock(return_value=mock_client)
-            mock_client.__exit__ = MagicMock(return_value=False)
-            mock_client.post.return_value = mock_response
-            mock_client_cls.return_value = mock_client
-
+        with pytest.raises(ValueError, match="Gateway URL is required"):
             await provider.list_tools()
-
-        call_args = mock_client.post.call_args
-        assert call_args[0][0] == "https://client-gw.example.com/mcp"
 
     @pytest.mark.asyncio
     async def test_no_gateway_url_raises(self, mock_get_creds):

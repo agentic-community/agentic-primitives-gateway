@@ -39,9 +39,9 @@ class OktaIdentityProvider(SyncRunnerMixin, IdentityProvider):
           api_token: "${OKTA_API_TOKEN}"
           auth_server: "default"
 
-    Per-request credential overrides via headers::
+    Per-request credential overrides via headers (``domain`` is operator
+    config only — caller values are ignored)::
 
-        X-Cred-Okta-Domain: dev-123456.okta.com
         X-Cred-Okta-Client-Id: <client>
         X-Cred-Okta-Client-Secret: <secret>
         X-Cred-Okta-Api-Token: <SSWS token>

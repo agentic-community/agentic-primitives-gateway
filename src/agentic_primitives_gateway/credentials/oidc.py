@@ -11,6 +11,11 @@ from agentic_primitives_gateway.auth.models import AuthenticatedPrincipal
 from agentic_primitives_gateway.credentials.base import CredentialResolver
 from agentic_primitives_gateway.credentials.cache import CredentialCache
 from agentic_primitives_gateway.credentials.models import APG_PREFIX, ResolvedCredentials
+from agentic_primitives_gateway.credentials.security import (
+    emit_credential_key_denied,
+    is_forbidden_credential_key,
+    split_credential_attribute,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -229,21 +234,29 @@ class OidcCredentialResolver(CredentialResolver):
 
         Attributes without two dots after the prefix (e.g. ``apg.something``)
         are stored as ``service_credentials["_global"]["something"]``.
+
+        Endpoint-shaped keys (``base_url``, ``hub_url``, ``domain``, …) are
+        dropped: users can edit their own ``apg.*`` attributes, so this
+        channel is exactly as caller-controlled as ``X-Cred-*`` headers.
         """
         service_credentials: dict[str, dict[str, str]] = {}
 
         for attr_name, value in attrs.items():
             if not attr_name.startswith(APG_PREFIX):
                 continue
-            remainder = attr_name[len(APG_PREFIX) :]
-            if not remainder:
+            split = split_credential_attribute(attr_name[len(APG_PREFIX) :])
+            if split is None:
                 continue
-
-            parts = remainder.split(".", 1)
-            if len(parts) == 2:
-                service, key = parts
-            else:
-                service, key = "_global", parts[0]
+            service, key = split
+            if is_forbidden_credential_key(key):
+                logger.warning(
+                    "Ignoring endpoint-shaped OIDC credential attribute %r on service %r — "
+                    "URL/host/endpoint fields are server-config only",
+                    key,
+                    service,
+                )
+                emit_credential_key_denied(service=service, key=key, source="oidc")
+                continue
 
             service_credentials.setdefault(service, {})[key] = str(value)
 

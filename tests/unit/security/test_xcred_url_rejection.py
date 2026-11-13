@@ -7,7 +7,8 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from agentic_primitives_gateway.context import get_service_credentials
-from agentic_primitives_gateway.middleware import RequestContextMiddleware, _is_forbidden_cred_key
+from agentic_primitives_gateway.credentials.security import is_forbidden_credential_key
+from agentic_primitives_gateway.middleware import RequestContextMiddleware
 
 
 class TestForbiddenKeyPredicate:
@@ -24,12 +25,14 @@ class TestForbiddenKeyPredicate:
             "host",
             "origin",
             "port",
+            "domain",  # Okta org domain selects the host
             "HOST",  # case-insensitive
             "BASE_URL",
+            "baseUrl",
         ],
     )
     def test_url_shaped_keys_rejected(self, key: str):
-        assert _is_forbidden_cred_key(key) is True
+        assert is_forbidden_credential_key(key) is True
 
     @pytest.mark.parametrize(
         "key",
@@ -44,7 +47,7 @@ class TestForbiddenKeyPredicate:
         ],
     )
     def test_credential_keys_accepted(self, key: str):
-        assert _is_forbidden_cred_key(key) is False
+        assert is_forbidden_credential_key(key) is False
 
 
 @pytest.mark.asyncio

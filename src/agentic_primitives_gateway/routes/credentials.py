@@ -13,10 +13,16 @@ from agentic_primitives_gateway.audit.models import AuditAction, AuditOutcome, R
 from agentic_primitives_gateway.context import get_access_token
 from agentic_primitives_gateway.credentials.base import CredentialResolver
 from agentic_primitives_gateway.credentials.models import (
+    APG_PREFIX,
     CredentialStatus,
     CredentialUpdateRequest,
     MaskedCredentials,
     mask_value,
+)
+from agentic_primitives_gateway.credentials.security import (
+    emit_credential_key_denied,
+    is_forbidden_credential_key,
+    split_credential_attribute,
 )
 from agentic_primitives_gateway.credentials.writer.base import CredentialWriter
 from agentic_primitives_gateway.routes._helpers import require_principal
@@ -92,6 +98,33 @@ async def write_credentials(body: CredentialUpdateRequest) -> dict[str, str]:
     access_token = _require_access_token()
 
     changed_keys = sorted((body.attributes or {}).keys())
+
+    # Endpoint selection is operator config.  The resolver drops these keys
+    # anyway; rejecting them here keeps them out of the IdP (and out of the
+    # Keycloak User Profile auto-declaration) and tells the caller why.
+    forbidden: list[str] = []
+    for attr in changed_keys:
+        split = split_credential_attribute(attr.removeprefix(APG_PREFIX))
+        if split is not None and is_forbidden_credential_key(split[1]):
+            forbidden.append(attr)
+            emit_credential_key_denied(service=split[0], key=split[1], source="write")
+    if forbidden:
+        emit_audit_event(
+            action=AuditAction.CREDENTIAL_WRITE,
+            outcome=AuditOutcome.FAILURE,
+            resource_type=ResourceType.CREDENTIAL,
+            resource_id=principal.id,
+            reason="forbidden_key",
+            metadata={"keys": changed_keys},
+        )
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Endpoint-shaped credential keys are server configuration and cannot be set per user: "
+                f"{', '.join(forbidden)}"
+            ),
+        )
+
     try:
         await writer.write(principal, access_token, body)
     except NotImplementedError:

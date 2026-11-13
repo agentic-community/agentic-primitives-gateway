@@ -240,10 +240,19 @@ def get_service_credentials_or_defaults(
       where mixing is allowed.  If any key in ``defaults`` was filled
       from the operator side (i.e. the caller didn't supply a truthy
       value for it), emit ``provider.server_credentials_used`` once.
+
+    Endpoint keys (``base_url``, ``server_url``, ``hub_url``, ``domain``,
+    … — see :func:`credentials.security.is_forbidden_credential_key`) are
+    operator configuration in every mode: caller values for them are
+    ignored and the operator default always applies, so a caller can never
+    point a provider (and any operator secret it carries) at another host.
     """
+    from agentic_primitives_gateway.credentials.security import is_forbidden_credential_key
     from agentic_primitives_gateway.models.enums import ServerCredentialMode
 
-    client_creds: dict[str, str] = {k: v for k, v in (get_service_credentials(service) or {}).items() if v}
+    client_creds: dict[str, str] = {
+        k: v for k, v in (get_service_credentials(service) or {}).items() if v and not is_forbidden_credential_key(k)
+    }
     mode = _resolve_server_credential_mode()
 
     if mode == ServerCredentialMode.ALWAYS:
@@ -262,8 +271,11 @@ def get_service_credentials_or_defaults(
         # bracket access (``cfg["realm"]``) don't raise ``KeyError``
         # when the caller omits a key.  ``None`` is the signal "not
         # configured", which providers should already be prepared to
-        # reject on downstream use.
-        shape_preserving: dict[str, str | None] = dict.fromkeys(defaults)
+        # reject on downstream use.  Endpoint keys keep the operator
+        # value — they are config, not caller credentials.
+        shape_preserving: dict[str, str | None] = {
+            k: (v if is_forbidden_credential_key(k) else None) for k, v in defaults.items()
+        }
         shape_preserving.update(client_creds)
         return shape_preserving
 
@@ -271,7 +283,9 @@ def get_service_credentials_or_defaults(
     # operator filled so the audit event fires at the right granularity.
     merged: dict[str, str | None] = dict(defaults)
     merged.update(client_creds)
-    server_filled = [k for k, v in defaults.items() if v and k not in client_creds]
+    server_filled = [
+        k for k, v in defaults.items() if v and k not in client_creds and not is_forbidden_credential_key(k)
+    ]
     if server_filled:
         _emit_server_credentials_used(service)
     return merged
