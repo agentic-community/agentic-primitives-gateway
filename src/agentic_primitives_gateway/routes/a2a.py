@@ -20,6 +20,7 @@ A2A tasks map to APG sessions: task_id == session_id.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import uuid
@@ -56,6 +57,7 @@ from agentic_primitives_gateway.models.a2a import (
     A2ATaskStatusUpdateEvent,
 )
 from agentic_primitives_gateway.models.agents import AgentSpec
+from agentic_primitives_gateway.routes._background import run_event_key
 from agentic_primitives_gateway.routes._helpers import require_principal
 
 logger = logging.getLogger(__name__)
@@ -113,6 +115,62 @@ async def _require_agent(name: str) -> AgentSpec:
         resource_id=spec.name,
     )
     return spec
+
+
+def _task_key(spec: AgentSpec, task_id: str) -> str:
+    return run_event_key("agent", require_principal().id, spec.owner_id, spec.name, task_id)
+
+
+async def _reserve_task(spec: AgentSpec, task_id: str) -> str:
+    from agentic_primitives_gateway.routes.agents import _bg
+
+    key = _task_key(spec, task_id)
+    if not await _bg.reserve(
+        key, require_principal().id, claim_key=f"agent-id:{require_principal().id}:{task_id}", claim_identity=key
+    ):
+        raise HTTPException(status_code=409, detail="Task run ID already in use")
+    try:
+        await _bg.reset_events(key)
+    except BaseException:
+        await _bg.abandon(key)
+        raise
+    return key
+
+
+def _safe_event(event: dict[str, Any]) -> dict[str, Any]:
+    """Persist only the same public fields exposed to agent chat subscribers."""
+    return {k: v for k, v in event.items() if k not in ("full_result", "tool_input")}
+
+
+def _task_state(status: str, events: list[dict[str, Any]]) -> A2ATaskState:
+    if status == "cancelled" or any(evt.get("type") == "cancelled" for evt in events):
+        return A2ATaskState.CANCELED
+    if any(evt.get("type") == "error" for evt in events):
+        return A2ATaskState.FAILED
+    if any(evt.get("type") == "done" for evt in events):
+        return A2ATaskState.COMPLETED
+    if status == "running":
+        return A2ATaskState.WORKING
+    return A2ATaskState.SUBMITTED
+
+
+def _task_from_events(task_id: str, name: str, status: str, events: list[dict[str, Any]]) -> A2ATask:
+    state = _task_state(status, events)
+    context_id = next((evt["context_id"] for evt in events if evt.get("type") == "a2a_started"), task_id)
+    response = "".join(str(evt.get("content", "")) for evt in events if evt.get("type") == "token")
+    for evt in events:
+        if evt.get("type") == "done":
+            response = str(evt.get("response", response))
+    artifacts = None
+    if response and state == A2ATaskState.COMPLETED:
+        artifacts = [A2AArtifact(artifact_id=str(uuid.uuid4()), name="response", parts=[A2APart(text=response)])]
+    return A2ATask(
+        id=task_id,
+        context_id=context_id,
+        status=A2ATaskStatus(state=state, timestamp=_now_iso()),
+        artifacts=artifacts,
+        metadata={"agent_name": name},
+    )
 
 
 # ── Security scheme helpers ─────────────────────────────────────────
@@ -251,54 +309,64 @@ async def get_per_agent_card(name: str, request: Request) -> A2AAgentCard:
 
 @router.post("/a2a/agents/{name}/message:send", response_model=A2ATask)
 async def send_message(name: str, request: A2ASendMessageRequest) -> A2ATask:
-    """Send a message to a specific agent and receive a completed task."""
+    """Execute a claimed task independently of the HTTP connection."""
     spec = await _require_agent(name)
-
-    message_text = _extract_text(request.message)
     task_id = request.message.task_id or str(uuid.uuid4())
     context_id = request.message.context_id or task_id
+    key = await _reserve_task(spec, task_id)
+    from agentic_primitives_gateway.routes.agents import _bg
+
+    async def _run() -> AsyncIterator[dict[str, Any]]:
+        yield {"type": "a2a_started", "context_id": context_id}
+        result = await _runner.run(spec=spec, message=_extract_text(request.message), session_id=task_id)
+        yield {
+            "type": "done",
+            "response": result.response,
+            "session_id": result.session_id,
+            "turns_used": result.turns_used,
+            "tools_called": result.tools_called,
+        }
 
     try:
-        result = await _runner.run(spec=spec, message=message_text, session_id=task_id)
-    except Exception as exc:
-        logger.exception("A2A send_message failed for agent=%s", name)
-        return A2ATask(
-            id=task_id,
-            context_id=context_id,
-            status=A2ATaskStatus(
-                state=A2ATaskState.FAILED,
-                message=A2AMessage(
-                    message_id=str(uuid.uuid4()),
-                    role="agent",
-                    parts=[A2APart(text=f"Error: {exc}")],
-                ),
-                timestamp=_now_iso(),
-            ),
-        )
+        queue, _ = _bg.start(key, _run(), owner_id=require_principal().id, record_events=True)
+    except BaseException:
+        await _bg.abandon(key)
+        raise
 
-    artifact = A2AArtifact(
-        artifact_id=str(uuid.uuid4()),
-        name="response",
-        parts=[A2APart(text=result.response)],
-        metadata={"turns_used": result.turns_used, "tools_called": result.tools_called},
-    )
+    events: list[dict[str, Any]] = []
+    while (event := await queue.get()) is not None:
+        events.append(event)
 
-    return A2ATask(
-        id=task_id,
-        context_id=context_id,
-        status=A2ATaskStatus(state=A2ATaskState.COMPLETED, timestamp=_now_iso()),
-        artifacts=[artifact],
-        history=[
+    result = _task_from_events(task_id, name, await _bg.get_status_async(key), events)
+    if result.status.state == A2ATaskState.COMPLETED:
+        done = next(evt for evt in reversed(events) if evt.get("type") == "done")
+        result.artifacts = [
+            A2AArtifact(
+                artifact_id=str(uuid.uuid4()),
+                name="response",
+                parts=[A2APart(text=done["response"])],
+                metadata={"turns_used": done["turns_used"], "tools_called": done["tools_called"]},
+            )
+        ]
+        result.history = [
             request.message,
             A2AMessage(
                 message_id=str(uuid.uuid4()),
                 role="agent",
-                parts=[A2APart(text=result.response)],
+                parts=[A2APart(text=done["response"])],
                 task_id=task_id,
             ),
-        ],
-        metadata={"agent_name": name, "session_id": result.session_id},
-    )
+        ]
+        result.metadata = {"agent_name": name, "session_id": done["session_id"]}
+    elif result.status.state == A2ATaskState.FAILED:
+        detail = next(
+            (str(evt.get("detail", "Unknown error")) for evt in reversed(events) if evt.get("type") == "error"),
+            "Unknown error",
+        )
+        result.status.message = A2AMessage(
+            message_id=str(uuid.uuid4()), role="agent", parts=[A2APart(text=f"Error: {detail}")]
+        )
+    return result
 
 
 # ── Send Streaming Message ───────────────────────────────────────────
@@ -306,15 +374,25 @@ async def send_message(name: str, request: A2ASendMessageRequest) -> A2ATask:
 
 @router.post("/a2a/agents/{name}/message:stream")
 async def send_message_stream(name: str, request: A2ASendMessageRequest) -> StreamingResponse:
-    """Send a message to an agent and receive streaming A2A events via SSE."""
+    """Stream task updates; the producer continues if the client disconnects."""
     spec = await _require_agent(name)
-
-    message_text = _extract_text(request.message)
     task_id = request.message.task_id or str(uuid.uuid4())
     context_id = request.message.context_id or task_id
+    key = await _reserve_task(spec, task_id)
+    from agentic_primitives_gateway.routes.agents import _bg
+
+    async def _run() -> AsyncIterator[dict[str, Any]]:
+        yield {"type": "a2a_started", "context_id": context_id}
+        async for event in _runner.run_stream(spec=spec, message=_extract_text(request.message), session_id=task_id):
+            yield _safe_event(event)
+
+    try:
+        queue, _ = _bg.start(key, _run(), owner_id=require_principal().id, record_events=True)
+    except BaseException:
+        await _bg.abandon(key)
+        raise
 
     async def _generate() -> AsyncIterator[str]:
-        # Emit initial status: working
         status_event = A2ATaskStatusUpdateEvent(
             task_id=task_id,
             context_id=context_id,
@@ -322,48 +400,14 @@ async def send_message_stream(name: str, request: A2ASendMessageRequest) -> Stre
         )
         yield f"data: {json.dumps({'type': 'status_update', **status_event.model_dump()})}\n\n"
 
-        accumulated_text = ""
-        final_state = A2ATaskState.COMPLETED
+        events: list[dict[str, Any]] = []
+        while (event := await queue.get()) is not None:
+            events.append(event)
+            translated = _translate_stream_event(event, task_id, context_id)
+            if translated:
+                yield f"data: {json.dumps(translated)}\n\n"
 
-        try:
-            async for event in _runner.run_stream(spec=spec, message=message_text, session_id=task_id):
-                a2a_event = _translate_stream_event(event, task_id, context_id)
-                if a2a_event:
-                    yield f"data: {json.dumps(a2a_event)}\n\n"
-
-                evt_type = event.get("type", "")
-                if evt_type in ("token", "sub_agent_token"):
-                    accumulated_text += event.get("content", "")
-                elif evt_type == "done":
-                    accumulated_text = event.get("response", accumulated_text)
-                elif evt_type == "error":
-                    final_state = A2ATaskState.FAILED
-                    accumulated_text = event.get("detail", "Unknown error")
-
-        except Exception as exc:
-            logger.exception("A2A streaming failed for agent=%s", name)
-            final_state = A2ATaskState.FAILED
-            accumulated_text = f"Error: {exc}"
-
-        # Emit final artifact
-        artifact = A2AArtifact(
-            artifact_id=str(uuid.uuid4()),
-            name="response",
-            parts=[A2APart(text=accumulated_text)],
-        )
-        artifact_event = A2ATaskArtifactUpdateEvent(
-            task_id=task_id, context_id=context_id, artifact=artifact, last_chunk=True
-        )
-        yield f"data: {json.dumps({'type': 'artifact_update', **artifact_event.model_dump()})}\n\n"
-
-        # Emit final task
-        final_task = A2ATask(
-            id=task_id,
-            context_id=context_id,
-            status=A2ATaskStatus(state=final_state, timestamp=_now_iso()),
-            artifacts=[artifact],
-            metadata={"agent_name": name},
-        )
+        final_task = _task_from_events(task_id, name, await _bg.get_status_async(key), events)
         yield f"data: {json.dumps({'type': 'task', **final_task.model_dump()})}\n\n"
 
     return StreamingResponse(
@@ -376,88 +420,45 @@ async def send_message_stream(name: str, request: A2ASendMessageRequest) -> Stre
 # ── Task operations ──────────────────────────────────────────────────
 
 
-@router.get("/a2a/agents/{name}/tasks/{task_id}", response_model=A2ATask)
-async def get_task(name: str, task_id: str) -> A2ATask:
-    """Get the current state of an A2A task."""
-    await _require_agent(name)
-
-    from agentic_primitives_gateway.routes.agents import _bg as agent_bg
-
-    # Verify run ownership
-    principal = require_principal()
-    owner = await agent_bg.get_owner_async(task_id)
-    if owner and owner != principal.id and not principal.is_admin:
-        raise HTTPException(status_code=403, detail="Forbidden")
-
-    status_str = await agent_bg.get_status_async(task_id)
-    events = await agent_bg.get_events_async(task_id)
-
-    if status_str == "running":
-        state = A2ATaskState.WORKING
-    elif events:
-        last = events[-1] if events else {}
-        if isinstance(last, dict) and last.get("type") == "error":
-            state = A2ATaskState.FAILED
-        else:
-            state = A2ATaskState.COMPLETED
-    else:
-        state = A2ATaskState.SUBMITTED
-
-    # Reconstruct response from events
-    accumulated_text = ""
-    for evt in events:
-        if not isinstance(evt, dict):
-            continue
-        if evt.get("type") == "token":
-            accumulated_text += evt.get("content", "")
-        elif evt.get("type") == "done":
-            accumulated_text = evt.get("response", accumulated_text)
-
-    artifacts: list[A2AArtifact] | None = None
-    if accumulated_text and state == A2ATaskState.COMPLETED:
-        artifacts = [
-            A2AArtifact(
-                artifact_id=str(uuid.uuid4()),
-                name="response",
-                parts=[A2APart(text=accumulated_text)],
-            )
-        ]
-
-    return A2ATask(
-        id=task_id,
-        context_id=task_id,
-        status=A2ATaskStatus(state=state, timestamp=_now_iso()),
-        artifacts=artifacts,
-        metadata={"agent_name": name},
-    )
-
-
 @router.post("/a2a/agents/{name}/tasks/{task_id}:cancel", response_model=A2ATask)
 async def cancel_task(name: str, task_id: str) -> A2ATask:
-    """Cancel a running A2A task."""
-    await _require_agent(name)
-    principal = require_principal()
+    """Cancel a claimed A2A task on this or another replica."""
+    spec = await _require_agent(name)
+    from agentic_primitives_gateway.agents.checkpoint import cancel_recovery_task
+    from agentic_primitives_gateway.routes.agents import _bg
 
-    from agentic_primitives_gateway.routes.agents import _bg as agent_bg
-
-    owner = await agent_bg.get_owner_async(task_id)
-    if owner and owner != principal.id and not principal.is_admin:
+    key = _task_key(spec, task_id)
+    if await _bg.get_owner_async(key) != require_principal().id:
         raise HTTPException(status_code=403, detail="Forbidden")
 
-    cancelled = await agent_bg.cancel(task_id)
-    state = A2ATaskState.CANCELED if cancelled else A2ATaskState.COMPLETED
+    events = await _bg.get_events_async(key)
+    status = await _bg.get_status_async(key)
+    state = _task_state(status, events)
+    if state in (A2ATaskState.SUBMITTED, A2ATaskState.WORKING):
+        checkpoint_store = _runner._checkpoint_store
+        if checkpoint_store:
+            # Signal first: a remote producer must see the marker even if cleanup fails.
+            await checkpoint_store.mark_cancelled(key)
+        await _bg.cancel(key)
+        cancel_recovery_task(key)
+        if checkpoint_store:
+            with contextlib.suppress(Exception):
+                await checkpoint_store.delete(key)
+        if _bg._event_store:
+            await _bg._event_store.set_status(key, "cancelled")
+            await _bg._event_store.append_event(key, {"type": "cancelled"})
+        state = A2ATaskState.CANCELED
 
     emit_audit_event(
         action=AuditAction.AGENT_RUN_CANCELLED,
-        outcome=AuditOutcome.SUCCESS if cancelled else AuditOutcome.FAILURE,
+        outcome=AuditOutcome.SUCCESS if state == A2ATaskState.CANCELED else AuditOutcome.FAILURE,
         resource_type=ResourceType.AGENT,
         resource_id=name,
         metadata={"task_id": task_id, "source": "a2a"},
     )
-
     return A2ATask(
         id=task_id,
-        context_id=task_id,
+        context_id=next((evt["context_id"] for evt in events if evt.get("type") == "a2a_started"), task_id),
         status=A2ATaskStatus(state=state, timestamp=_now_iso()),
         metadata={"agent_name": name},
     )
@@ -465,48 +466,36 @@ async def cancel_task(name: str, task_id: str) -> A2ATask:
 
 @router.get("/a2a/agents/{name}/tasks/{task_id}:subscribe")
 async def subscribe_task(name: str, task_id: str) -> StreamingResponse:
-    """Subscribe to task updates via SSE with event replay."""
-    await _require_agent(name)
+    """Replay updates for an owned task, then follow its remaining events."""
+    spec = await _require_agent(name)
+    from agentic_primitives_gateway.routes.agents import _bg
 
-    from agentic_primitives_gateway.routes.agents import _bg as agent_bg
-
-    # Verify run ownership
-    principal = require_principal()
-    owner = await agent_bg.get_owner_async(task_id)
-    if owner and owner != principal.id and not principal.is_admin:
+    key = _task_key(spec, task_id)
+    if await _bg.get_owner_async(key) != require_principal().id:
         raise HTTPException(status_code=403, detail="Forbidden")
 
     async def _generate() -> AsyncIterator[str]:
-        context_id = task_id
         sent = 0
         idle_count = 0
-        max_idle = 900  # 900 x 0.2s = 3 min
-
-        while idle_count < max_idle:
-            events = await agent_bg.get_events_async(task_id)
-            status_str = await agent_bg.get_status_async(task_id)
-
+        while idle_count < 900:
+            events = await _bg.get_events_async(key)
+            status = await _bg.get_status_async(key)
+            context_id = next((evt["context_id"] for evt in events if evt.get("type") == "a2a_started"), task_id)
+            for evt in events[sent:]:
+                translated = _translate_stream_event(evt, task_id, context_id)
+                if translated:
+                    yield f"data: {json.dumps(translated)}\n\n"
             if len(events) > sent:
-                for evt in events[sent:]:
-                    if not isinstance(evt, dict):
-                        continue
-                    a2a_event = _translate_stream_event(evt, task_id, context_id)
-                    if a2a_event:
-                        yield f"data: {json.dumps(a2a_event)}\n\n"
                 sent = len(events)
                 idle_count = 0
-
-                last_evt = events[-1] if events else {}
-                if isinstance(last_evt, dict) and last_evt.get("type") in ("done", "cancelled"):
-                    break
             else:
                 idle_count += 1
 
-            if status_str == "cancelled":
+            state = _task_state(status, events)
+            if state in (A2ATaskState.COMPLETED, A2ATaskState.FAILED, A2ATaskState.CANCELED):
+                final_task = _task_from_events(task_id, name, status, events)
+                yield f"data: {json.dumps({'type': 'task', **final_task.model_dump()})}\n\n"
                 break
-            if status_str == "idle" and idle_count > 25:
-                break
-
             await asyncio.sleep(0.2)
 
     return StreamingResponse(
@@ -514,6 +503,19 @@ async def subscribe_task(name: str, task_id: str) -> StreamingResponse:
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@router.get("/a2a/agents/{name}/tasks/{task_id}", response_model=A2ATask)
+async def get_task(name: str, task_id: str) -> A2ATask:
+    """Get task state only after proving ownership of the scoped run."""
+    spec = await _require_agent(name)
+    from agentic_primitives_gateway.routes.agents import _bg
+
+    key = _task_key(spec, task_id)
+    if await _bg.get_owner_async(key) != require_principal().id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    return _task_from_events(task_id, name, await _bg.get_status_async(key), await _bg.get_events_async(key))
 
 
 # ── Event translation ────────────────────────────────────────────────
