@@ -37,28 +37,51 @@ class TestOktaIdentityProvider:
         self._mock_post(mock_requests, {"access_token": "cc-token", "token_type": "Bearer"})
 
         provider = OktaIdentityProvider(domain="dev-test.okta.com", client_id="c", client_secret="s")
-        result = await provider.get_token(
-            credential_provider="my-api",
-            workload_token="wt-123",
-            auth_flow="M2M",
-            scopes=["my-api"],
-        )
+        with patch(f"{_PATCH_PREFIX}.get_authenticated_principal") as principal:
+            principal.return_value.is_admin = True
+            result = await provider.get_token(
+                credential_provider="my-api",
+                workload_token="wt-123",
+                auth_flow="M2M",
+                scopes=["my-api"],
+            )
 
         assert result["access_token"] == "cc-token"
         assert result["token_type"] == "Bearer"
+
+    @pytest.mark.asyncio
+    async def test_non_admin_cannot_mint_token_from_supplied_workload_token(self, mock_requests, mock_creds):
+        provider = OktaIdentityProvider()
+        with patch(f"{_PATCH_PREFIX}.get_authenticated_principal") as principal:
+            principal.return_value.is_admin = False
+            with pytest.raises(PermissionError, match="admin access"):
+                await provider.get_token(credential_provider="my-api", workload_token="untrusted")
+        mock_requests.post.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_missing_principal_cannot_mint_token(self, mock_requests, mock_creds):
+        provider = OktaIdentityProvider()
+        with (
+            patch(f"{_PATCH_PREFIX}.get_authenticated_principal", return_value=None),
+            pytest.raises(PermissionError, match="admin access"),
+        ):
+            await provider.get_token(credential_provider="my-api", workload_token="untrusted")
+        mock_requests.post.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_get_token_user_federation(self, mock_requests, mock_creds):
         self._setup(mock_creds)
 
         provider = OktaIdentityProvider(domain="dev-test.okta.com", client_id="c", client_secret="s")
-        result = await provider.get_token(
-            credential_provider="my-api",
-            workload_token="wt",
-            auth_flow="USER_FEDERATION",
-            callback_url="https://example.com/cb",
-            custom_state="state-abc",
-        )
+        with patch(f"{_PATCH_PREFIX}.get_authenticated_principal") as principal:
+            principal.return_value.is_admin = False
+            result = await provider.get_token(
+                credential_provider="my-api",
+                workload_token="wt",
+                auth_flow="USER_FEDERATION",
+                callback_url="https://example.com/cb",
+                custom_state="state-abc",
+            )
 
         assert "authorization_url" in result
         assert "dev-test.okta.com" in result["authorization_url"]
@@ -70,12 +93,14 @@ class TestOktaIdentityProvider:
         self._mock_post(mock_requests, {"access_token": "code-token"})
 
         provider = OktaIdentityProvider(domain="dev-test.okta.com", client_id="c", client_secret="s")
-        result = await provider.get_token(
-            credential_provider="my-api",
-            workload_token="wt",
-            session_uri="auth-code-xyz",
-            callback_url="https://example.com/cb",
-        )
+        with patch(f"{_PATCH_PREFIX}.get_authenticated_principal") as principal:
+            principal.return_value.is_admin = False
+            result = await provider.get_token(
+                credential_provider="my-api",
+                workload_token="wt",
+                session_uri="auth-code-xyz",
+                callback_url="https://example.com/cb",
+            )
 
         assert result["access_token"] == "code-token"
 
@@ -93,9 +118,20 @@ class TestOktaIdentityProvider:
         mock_requests.get.return_value = mock_resp
 
         provider = OktaIdentityProvider(domain="dev-test.okta.com", client_id="c", api_token="tok")
-        result = await provider.get_api_key(credential_provider="openai", workload_token="wt")
+        with patch(f"{_PATCH_PREFIX}.get_authenticated_principal") as principal:
+            principal.return_value.is_admin = True
+            result = await provider.get_api_key(credential_provider="openai", workload_token="wt")
 
         assert result == {"api_key": "sk-123", "credential_provider": "openai"}
+
+    @pytest.mark.asyncio
+    async def test_non_admin_cannot_read_application_secret(self, mock_requests, mock_creds):
+        provider = OktaIdentityProvider()
+        with patch(f"{_PATCH_PREFIX}.get_authenticated_principal") as principal:
+            principal.return_value.is_admin = False
+            with pytest.raises(PermissionError, match="admin access"):
+                await provider.get_api_key(credential_provider="target", workload_token="arbitrary")
+        mock_requests.get.assert_not_called()
 
     # ── get_workload_token ────────────────────────────────────
 
@@ -105,9 +141,31 @@ class TestOktaIdentityProvider:
         self._mock_post(mock_requests, {"access_token": "wt-token"})
 
         provider = OktaIdentityProvider(domain="dev-test.okta.com", client_id="c", client_secret="s")
-        result = await provider.get_workload_token(workload_name="my-agent")
+        with patch(f"{_PATCH_PREFIX}.get_authenticated_principal") as principal:
+            principal.return_value.is_admin = True
+            result = await provider.get_workload_token(workload_name="my-agent")
 
         assert result == {"workload_token": "wt-token", "workload_name": "my-agent"}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("user_token", [None, "", "user-token"])
+    async def test_non_admin_cannot_mint_workload_token(self, mock_requests, mock_creds, user_token):
+        provider = OktaIdentityProvider()
+        with patch(f"{_PATCH_PREFIX}.get_authenticated_principal") as principal:
+            principal.return_value.is_admin = False
+            with pytest.raises(PermissionError, match="admin access"):
+                await provider.get_workload_token("my-agent", user_token=user_token, user_id="other-user")
+        mock_requests.post.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_missing_principal_cannot_mint_workload_token(self, mock_requests, mock_creds):
+        provider = OktaIdentityProvider()
+        with (
+            patch(f"{_PATCH_PREFIX}.get_authenticated_principal", return_value=None),
+            pytest.raises(PermissionError, match="admin access"),
+        ):
+            await provider.get_workload_token("my-agent")
+        mock_requests.post.assert_not_called()
 
     # ── list_credential_providers ─────────────────────────────
 

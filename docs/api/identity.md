@@ -2,7 +2,7 @@
 
 `/api/v1/identity`
 
-Workload identity tokens, OAuth2 token exchange, API key retrieval, and credential/workload management. All endpoints require authentication. Control plane endpoints (create, update, delete) require admin.
+Workload identity tokens, OAuth2 token exchange, API key retrieval, and credential/workload management. All endpoints require authentication. Control plane endpoints (create, update, delete) require admin; backend-specific data-plane grants that mint operator client tokens also require admin.
 
 **Backends:** `NoopIdentityProvider`, [`AgentCoreIdentityProvider`](../primitives/identity/agentcore.md), [`KeycloakIdentityProvider`](../primitives/identity/keycloak.md), [`EntraIdentityProvider`](../primitives/identity/entra.md), [`OktaIdentityProvider`](../primitives/identity/okta.md)
 
@@ -10,9 +10,9 @@ Workload identity tokens, OAuth2 token exchange, API key retrieval, and credenti
 
 | Method | Path | Description |
 |---|---|---|
-| `POST` | `/token` | Exchange a workload token for an external service OAuth2 token. |
-| `POST` | `/api-key` | Retrieve a stored API key for a credential provider. |
-| `POST` | `/workload-token` | Obtain a workload identity token, optionally scoped to a user. |
+| `POST` | `/token` | Exchange a workload token for an external service OAuth2 token; Okta's M2M flow instead mints its client token and requires admin. |
+| `POST` | `/api-key` | Retrieve a stored API key for a credential provider. Operator-backed Keycloak/Entra/Okta secret lookup requires admin. |
+| `POST` | `/workload-token` | Obtain a workload identity token. Keycloak/Entra caller-token exchanges (`user_token`) remain available to authenticated users; without one, client credentials requires admin. Okta always uses client credentials and requires admin, even when `user_token` is supplied. |
 | `POST` | `/auth/complete` | Confirm user authorization for a 3-legged OAuth flow. Returns 204. |
 
 ### Token exchange
@@ -33,7 +33,7 @@ curl -X POST http://localhost:8000/api/v1/identity/token \
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `credential_provider` | string | yes | Name of the registered credential provider. |
-| `workload_token` | string | yes | The agent's workload identity token. |
+| `workload_token` | string | yes | Caller workload identity token for token-exchange backends; Okta's M2M flow does not use it and therefore requires admin. |
 | `auth_flow` | string | yes | `M2M` (machine-to-machine) or `USER_FEDERATION` (3-legged). |
 | `scopes` | list[string] | no | OAuth2 scopes to request. |
 | `callback_url` | string | no | Redirect URL for 3-legged flows. |

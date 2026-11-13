@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from agentic_primitives_gateway.main import app
@@ -66,6 +70,42 @@ class TestIdentityTokenRoutes:
             json={"workload_name": "my-agent", "user_id": "user-123"},
         )
         assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_non_admin_operator_token_grants_denied_before_backend() -> None:
+    from agentic_primitives_gateway.models.identity import TokenRequest, WorkloadTokenRequest
+    from agentic_primitives_gateway.primitives.identity.entra import EntraIdentityProvider
+    from agentic_primitives_gateway.primitives.identity.keycloak import KeycloakIdentityProvider
+    from agentic_primitives_gateway.primitives.identity.okta import OktaIdentityProvider
+    from agentic_primitives_gateway.routes import identity as identity_routes
+
+    providers = (
+        (KeycloakIdentityProvider(), WorkloadTokenRequest(workload_name="worker")),
+        (EntraIdentityProvider(), WorkloadTokenRequest(workload_name="worker")),
+        (OktaIdentityProvider(), WorkloadTokenRequest(workload_name="worker", user_token="user-token")),
+    )
+    for provider, request in providers:
+        with (
+            patch.object(identity_routes, "registry", MagicMock(identity=provider)),
+            patch.object(identity_routes, "require_admin", side_effect=HTTPException(403, "Forbidden")),
+            patch.object(provider, "get_workload_token", new_callable=AsyncMock) as fetch,
+            pytest.raises(HTTPException) as denied,
+        ):
+            await identity_routes.get_workload_token(request)
+        assert denied.value.status_code == 403
+        fetch.assert_not_awaited()
+
+    okta = OktaIdentityProvider()
+    with (
+        patch.object(identity_routes, "registry", MagicMock(identity=okta)),
+        patch.object(identity_routes, "require_admin", side_effect=HTTPException(403, "Forbidden")),
+        patch.object(okta, "get_token", new_callable=AsyncMock) as fetch,
+        pytest.raises(HTTPException) as denied,
+    ):
+        await identity_routes.get_token(TokenRequest(credential_provider="api", workload_token="token"))
+    assert denied.value.status_code == 403
+    fetch.assert_not_awaited()
 
 
 class TestIdentityControlPlaneRoutes:

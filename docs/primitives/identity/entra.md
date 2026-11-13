@@ -22,6 +22,10 @@ providers:
 | `client_id` | `""` | Application (client) ID |
 | `client_secret` | (none) | Client secret |
 
+Reading application secrets through `get_api_key` requires a gateway admin principal; `workload_token` does not authorize a Microsoft Graph admin lookup.
+
+For `get_workload_token`, passing a caller `user_token` uses on-behalf-of exchange and remains available to authenticated callers. Without `user_token`, the operation mints the configured gateway client's token and requires admin.
+
 ### Per-Request Credentials
 
 A caller-supplied set is used whole — send `tenant_id`, `client_id`, and `client_secret` together; the operator's values never fill gaps.

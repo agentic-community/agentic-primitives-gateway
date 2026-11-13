@@ -1,3 +1,38 @@
+{{- $auth := .Values.auth -}}
+{{- if not (kindIs "map" $auth) -}}
+{{- fail "auth.backend is required: set auth.backend to jwt (with jwt.issuer and jwt.audience) or api_key (with apiKey.existingSecret); noop admin access is forbidden in Helm" -}}
+{{- end -}}
+{{- $backend := get $auth "backend" -}}
+{{- if or (not (kindIs "string" $backend)) (not (has $backend (list "jwt" "api_key"))) -}}
+{{- fail "auth.backend is required: set auth.backend to jwt (with jwt.issuer and jwt.audience) or api_key (with apiKey.existingSecret); noop admin access is forbidden in Helm" -}}
+{{- end -}}
+{{- if eq $backend "jwt" -}}
+  {{- $jwt := get $auth "jwt" -}}
+  {{- if not (kindIs "map" $jwt) -}}
+    {{- fail "auth.jwt.issuer and auth.jwt.audience are required for jwt authentication" -}}
+  {{- end -}}
+  {{- range $field := list "issuer" "audience" -}}
+    {{- $value := get $jwt $field -}}
+    {{- if or (not (kindIs "string" $value)) (eq (trim $value) "") -}}
+      {{- fail (printf "auth.jwt.%s is required for jwt authentication" $field) -}}
+    {{- end -}}
+  {{- end -}}
+{{- else -}}
+  {{- $apiKey := get $auth "apiKey" -}}
+  {{- if not (kindIs "map" $apiKey) -}}
+    {{- fail "auth.apiKey.existingSecret.name and key are required for api_key authentication" -}}
+  {{- end -}}
+  {{- $secret := get $apiKey "existingSecret" -}}
+  {{- if not (kindIs "map" $secret) -}}
+    {{- fail "auth.apiKey.existingSecret.name and key are required for api_key authentication" -}}
+  {{- end -}}
+  {{- range $field := list "name" "key" -}}
+    {{- $value := get $secret $field -}}
+    {{- if or (not (kindIs "string" $value)) (eq (trim $value) "") -}}
+      {{- fail (printf "auth.apiKey.existingSecret.%s is required for api_key authentication" $field) -}}
+    {{- end -}}
+  {{- end -}}
+{{- end -}}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -7,5 +42,13 @@ metadata:
 data:
   config.yaml: |
     allow_server_credentials: {{ .Values.allow_server_credentials }}
+    auth:
+      backend: {{ $backend | quote }}
+      {{- if eq $backend "jwt" }}
+      jwt:
+        {{- pick .Values.auth.jwt "issuer" "audience" "jwks_url" "client_id" "algorithms" "claims_mapping" "jwks_cache_seconds" | toYaml | nindent 8 }}
+      {{- else }}
+      api_keys: ${APG_AUTH_API_KEYS}
+      {{- end }}
     providers:
       {{- .Values.providers | toYaml | nindent 6 }}

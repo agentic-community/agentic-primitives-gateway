@@ -124,12 +124,23 @@ class TestEntraIdentityProvider:
         mock_requests.get.side_effect = [mock_list_resp, mock_detail_resp]
 
         provider = EntraIdentityProvider(tenant_id="t", client_id="c", client_secret="s")
-        result = await provider.get_api_key(
-            credential_provider="openai",
-            workload_token="wt",
-        )
+        with patch(f"{_PATCH_PREFIX}.get_authenticated_principal") as principal:
+            principal.return_value.is_admin = True
+            result = await provider.get_api_key(
+                credential_provider="openai",
+                workload_token="wt",
+            )
 
         assert result == {"api_key": "sk-secret", "credential_provider": "openai"}
+
+    @pytest.mark.asyncio
+    async def test_non_admin_cannot_read_application_secret(self, mock_msal, mock_requests, mock_creds):
+        provider = EntraIdentityProvider()
+        with patch(f"{_PATCH_PREFIX}.get_authenticated_principal") as principal:
+            principal.return_value.is_admin = False
+            with pytest.raises(PermissionError, match="admin access"):
+                await provider.get_api_key(credential_provider="target", workload_token="arbitrary")
+        mock_requests.get.assert_not_called()
 
     # ── get_workload_token ────────────────────────────────────
 
@@ -139,7 +150,9 @@ class TestEntraIdentityProvider:
         mock_app.acquire_token_for_client.return_value = {"access_token": "cc-token"}
 
         provider = EntraIdentityProvider(tenant_id="t", client_id="c", client_secret="s")
-        result = await provider.get_workload_token(workload_name="my-agent")
+        with patch(f"{_PATCH_PREFIX}.get_authenticated_principal") as principal:
+            principal.return_value.is_admin = True
+            result = await provider.get_workload_token(workload_name="my-agent")
 
         assert result == {"workload_token": "cc-token", "workload_name": "my-agent"}
         mock_app.acquire_token_for_client.assert_called_once_with(
@@ -152,12 +165,39 @@ class TestEntraIdentityProvider:
         mock_app.acquire_token_on_behalf_of.return_value = {"access_token": "obo-user"}
 
         provider = EntraIdentityProvider(tenant_id="t", client_id="c", client_secret="s")
-        result = await provider.get_workload_token(
-            workload_name="my-agent",
-            user_token="user-jwt",
-        )
+        with patch(f"{_PATCH_PREFIX}.get_authenticated_principal") as principal:
+            principal.return_value.is_admin = False
+            result = await provider.get_workload_token(
+                workload_name="my-agent",
+                user_token="user-jwt",
+            )
 
         assert result["workload_token"] == "obo-user"
+        mock_app.acquire_token_on_behalf_of.assert_called_once_with(
+            user_assertion="user-jwt",
+            scopes=["api://my-agent/.default"],
+        )
+        mock_app.acquire_token_for_client.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("user_token", [None, ""])
+    async def test_non_admin_cannot_mint_client_credentials(self, mock_msal, mock_requests, mock_creds, user_token):
+        provider = EntraIdentityProvider()
+        with patch(f"{_PATCH_PREFIX}.get_authenticated_principal") as principal:
+            principal.return_value.is_admin = False
+            with pytest.raises(PermissionError, match="admin access"):
+                await provider.get_workload_token("my-agent", user_token=user_token, user_id="other-user")
+        mock_msal.ConfidentialClientApplication.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_missing_principal_cannot_mint_client_credentials(self, mock_msal, mock_requests, mock_creds):
+        provider = EntraIdentityProvider()
+        with (
+            patch(f"{_PATCH_PREFIX}.get_authenticated_principal", return_value=None),
+            pytest.raises(PermissionError, match="admin access"),
+        ):
+            await provider.get_workload_token("my-agent")
+        mock_msal.ConfidentialClientApplication.assert_not_called()
 
     # ── list_credential_providers ─────────────────────────────
 
@@ -266,7 +306,9 @@ class TestEntraIdentityProvider:
         mock_msal.ConfidentialClientApplication.return_value = mock_app
 
         provider = EntraIdentityProvider(tenant_id="default-tenant", client_id="default-client")
-        await provider.get_workload_token(workload_name="test")
+        with patch(f"{_PATCH_PREFIX}.get_authenticated_principal") as principal:
+            principal.return_value.is_admin = True
+            await provider.get_workload_token(workload_name="test")
 
         mock_msal.ConfidentialClientApplication.assert_called_with(
             client_id="override-client",

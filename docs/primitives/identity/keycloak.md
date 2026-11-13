@@ -258,8 +258,8 @@ client.set_service_credentials("keycloak", {
 | Operation | Description |
 |---|---|
 | **get_token** | Exchange a workload token for an external service token via Keycloak's token exchange. Requires "Standard Token Exchange" enabled on the client. |
-| **get_api_key** | Retrieve a client secret from Keycloak by client label lookup via the Admin API. |
-| **get_workload_token** | Obtain a workload identity token using client_credentials grant. Requires "Service accounts roles" enabled. |
+| **get_api_key** | Admin-only: retrieve a client secret from Keycloak by client label via the Admin API. The `workload_token` parameter does not authorize this lookup. |
+| **get_workload_token** | With a caller-supplied `user_token`, exchange that token for the requested workload audience (available to authenticated callers). Without `user_token`, mint the gateway client's token with `client_credentials` (admin-only; requires "Service accounts roles" enabled). |
 
 ### Control plane (admin operations)
 
@@ -284,8 +284,11 @@ from agentic_primitives_gateway_client import AgenticPlatformClient, Identity
 client = AgenticPlatformClient("http://localhost:8000")
 identity = Identity(client)
 
-# Get a workload token (client_credentials grant)
+# Get a workload token as a gateway admin (client_credentials grant)
 token = await identity.get_workload_token("my-agent")
+
+# Exchange a caller's token without granting gateway admin privileges
+user_token = await identity.get_workload_token("my-agent", user_token="user-jwt")
 
 # Get an API key (client secret lookup)
 key = await identity.get_api_key("my-service", workload_token="...")
@@ -294,10 +297,15 @@ key = await identity.get_api_key("my-service", workload_token="...")
 ### curl
 
 ```bash
-# Get a workload token
+# Get a workload token (admin only without user_token)
 curl -X POST http://localhost:8000/api/v1/identity/workload-token \
   -H "Content-Type: application/json" \
   -d '{"workload_name": "my-agent"}'
+
+# Caller-bound token exchange (authenticated non-admins allowed)
+curl -X POST http://localhost:8000/api/v1/identity/workload-token \
+  -H "Content-Type: application/json" \
+  -d '{"workload_name": "my-agent", "user_token": "user-jwt"}'
 
 # List workload identities
 curl http://localhost:8000/api/v1/identity/workload-identities

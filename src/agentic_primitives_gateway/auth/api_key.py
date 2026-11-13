@@ -33,7 +33,9 @@ class ApiKeyAuthBackend(AuthBackend):
     def __init__(self, api_keys: list[dict[str, object]]) -> None:
         self._keys: dict[str, AuthenticatedPrincipal] = {}
         for entry in api_keys:
-            key = str(entry["key"])
+            key = entry.get("key")
+            if not isinstance(key, str) or not key.strip():
+                raise ValueError("auth.api_keys contains a missing, empty, or whitespace-only key")
             raw_groups = entry.get("groups") or []
             raw_scopes = entry.get("scopes") or []
             assert isinstance(raw_groups, list)
@@ -60,7 +62,7 @@ class ApiKeyAuthBackend(AuthBackend):
 
     async def authenticate(self, request: Request) -> AuthenticatedPrincipal | None:
         key = self._extract_key(request)
-        if key is None:
+        if key is None or not key.strip():
             return None
         principal = self._keys.get(key)
         if principal is None:

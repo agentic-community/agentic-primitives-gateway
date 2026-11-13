@@ -4,7 +4,7 @@ from starlette.responses import Response
 
 from agentic_primitives_gateway.audit.emit import audit_mutation, emit_audit_event
 from agentic_primitives_gateway.audit.models import AuditAction, AuditOutcome, ResourceType
-from agentic_primitives_gateway.models.enums import Primitive
+from agentic_primitives_gateway.models.enums import AuthFlow, Primitive
 from agentic_primitives_gateway.models.identity import (
     ApiKeyRequest,
     ApiKeyResponse,
@@ -37,6 +37,16 @@ router = APIRouter(
 
 @router.post("/token", response_model=TokenResponse)
 async def get_token(request: TokenRequest) -> TokenResponse:
+    from agentic_primitives_gateway.primitives.identity.okta import OktaIdentityProvider
+
+    provider = registry.identity
+    backend = getattr(provider, "_provider", provider)
+    if (
+        isinstance(backend, OktaIdentityProvider)
+        and not request.session_uri
+        and request.auth_flow != AuthFlow.USER_FEDERATION
+    ):
+        require_admin()
     try:
         result = await registry.identity.get_token(
             credential_provider=request.credential_provider,
@@ -70,8 +80,18 @@ async def get_token(request: TokenRequest) -> TokenResponse:
 
 @router.post("/api-key", response_model=ApiKeyResponse)
 async def get_api_key(request: ApiKeyRequest) -> ApiKeyResponse:
+    # Keycloak/Okta/Entra implementations use operator admin credentials to
+    # read arbitrary client secrets; their provider guards also protect tools.
+    from agentic_primitives_gateway.primitives.identity.entra import EntraIdentityProvider
+    from agentic_primitives_gateway.primitives.identity.keycloak import KeycloakIdentityProvider
+    from agentic_primitives_gateway.primitives.identity.okta import OktaIdentityProvider
+
+    provider = registry.identity
+    backend = getattr(provider, "_provider", provider)
+    if isinstance(backend, KeycloakIdentityProvider | OktaIdentityProvider | EntraIdentityProvider):
+        require_admin()
     try:
-        result = await registry.identity.get_api_key(
+        result = await provider.get_api_key(
             credential_provider=request.credential_provider,
             workload_token=request.workload_token,
         )
@@ -96,6 +116,16 @@ async def get_api_key(request: ApiKeyRequest) -> ApiKeyResponse:
 
 @router.post("/workload-token", response_model=WorkloadTokenResponse)
 async def get_workload_token(request: WorkloadTokenRequest) -> WorkloadTokenResponse:
+    from agentic_primitives_gateway.primitives.identity.entra import EntraIdentityProvider
+    from agentic_primitives_gateway.primitives.identity.keycloak import KeycloakIdentityProvider
+    from agentic_primitives_gateway.primitives.identity.okta import OktaIdentityProvider
+
+    provider = registry.identity
+    backend = getattr(provider, "_provider", provider)
+    if isinstance(backend, OktaIdentityProvider) or (
+        not request.user_token and isinstance(backend, KeycloakIdentityProvider | EntraIdentityProvider)
+    ):
+        require_admin()
     result = await registry.identity.get_workload_token(
         workload_name=request.workload_name,
         user_token=request.user_token,

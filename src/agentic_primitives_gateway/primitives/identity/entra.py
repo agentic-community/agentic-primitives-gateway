@@ -7,7 +7,7 @@ from typing import Any
 import msal
 import requests
 
-from agentic_primitives_gateway.context import get_service_credentials_or_defaults
+from agentic_primitives_gateway.context import get_authenticated_principal, get_service_credentials_or_defaults
 from agentic_primitives_gateway.models.enums import (
     AuthFlow,
     CredentialProviderType,
@@ -155,6 +155,10 @@ class EntraIdentityProvider(SyncRunnerMixin, IdentityProvider):
         credential_provider: str,
         workload_token: str,
     ) -> dict[str, Any]:
+        principal = get_authenticated_principal()
+        if principal is None or not principal.is_admin:
+            raise PermissionError("Entra application secret lookup requires admin access")
+
         def _fetch() -> dict[str, Any]:
             headers = self._graph_headers()
             # Look up the application by displayName
@@ -192,6 +196,11 @@ class EntraIdentityProvider(SyncRunnerMixin, IdentityProvider):
         user_token: str | None = None,
         user_id: str | None = None,
     ) -> dict[str, Any]:
+        if not user_token:
+            principal = get_authenticated_principal()
+            if principal is None or not principal.is_admin:
+                raise PermissionError("Entra client credentials grant requires admin access")
+
         app = self._get_app()
 
         if user_token:

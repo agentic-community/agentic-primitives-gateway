@@ -17,10 +17,26 @@ resources:
     cpu: 500m
     memory: 512Mi
 
-# Allow the server to use its own credentials (env vars, IRSA, Pod Identity)
-# when clients don't provide credentials in request headers.
-# Default: false — clients must pass their own credentials.
-allow_server_credentials: false
+# Server credential mode: never (caller only), fallback (server when caller absent),
+# or always (operator only). Endpoint settings remain operator-owned in all modes.
+allow_server_credentials: never
+
+# Required for any Helm installation: choose jwt or api_key. Noop authentication
+# grants every unauthenticated request admin access and is forbidden by this chart.
+auth:
+  backend: "" # jwt or api_key
+  jwt:
+    # Public OIDC settings, rendered into the ConfigMap. Both are required for jwt.
+    issuer: ""
+    audience: ""
+    # jwks_url: "https://idp.example.com/realm/protocol/openid-connect/certs"
+    # client_id: "gateway-ui"
+  apiKey:
+    # For api_key, supply an existing Kubernetes Secret containing a JSON list
+    # of {"key":"...","principal_id":"..."} entries. Never put keys in values.
+    existingSecret:
+      name: ""
+      key: api-keys.json
 
 # Provider configuration — rendered into a ConfigMap.
 # Each primitive supports multiple named backends with a default.
