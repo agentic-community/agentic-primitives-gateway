@@ -165,3 +165,9 @@ class TestBrowserInteractionRoutes:
             assert resp.status_code == 200
             assert resp.json()["url"] == "https://live.example.com/view"
             assert resp.json()["expires_in"] == 60
+
+    def test_get_live_view_rejects_expiry_over_agentcore_max(self):
+        with self._patch_browser("get_live_view_url", return_value="https://live.example.com/view") as mock:
+            resp = self.client.get("/api/v1/browser/sessions/s1/live-view", params={"expires": 301})
+            assert resp.status_code == 422
+            mock.assert_not_called()

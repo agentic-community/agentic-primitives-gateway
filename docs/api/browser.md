@@ -14,7 +14,7 @@ Cloud-based browser automation. All endpoints require authentication. Session op
 | `GET` | `/sessions` | List sessions (filtered to owned sessions for non-admins). |
 | `GET` | `/sessions/{session_id}` | Get session info. Returns 404 if not found. With AgentCore, a fresh remote `READY` check must authorize the current request's AWS identity before the cached page URL is returned. Revoked access is refused; missing caller credentials are refused under `allow_server_credentials: never`. |
 | `DELETE` | `/sessions/{session_id}` | Stop a session. Returns 204. |
-| `GET` | `/sessions/{session_id}/live-view` | Get a live view URL. Query param: `expires` (1-3600, default 300). |
+| `GET` | `/sessions/{session_id}/live-view` | Get a live view URL. Query param: `expires` (1-300, default 300 — the AgentCore presigned-URL maximum). |
 
 ### Start session
 

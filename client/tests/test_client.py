@@ -902,6 +902,19 @@ class TestAWSCredentials:
 
         assert headers == {}
 
+    def test_aws_from_environment_ignores_incomplete_credential_pair(self) -> None:
+        from unittest.mock import MagicMock, patch
+
+        client = AgenticPlatformClient.__new__(AgenticPlatformClient)
+        client._aws_profile = None
+        client._aws_env_region = None
+        session = MagicMock()
+        session.get_credentials.return_value.get_frozen_credentials.return_value.access_key = "AKIA"
+        session.get_credentials.return_value.get_frozen_credentials.return_value.secret_key = None
+
+        with patch("boto3.Session", return_value=session):
+            assert client._resolve_aws_headers() == {}
+
     @pytest.mark.asyncio
     async def test_aws_headers_sent_on_requests(self) -> None:
         """Verify AWS headers are actually included in HTTP requests."""

@@ -36,7 +36,12 @@ async def _start_session_with_mocks(
     mock_browser_client: MagicMock,
     session_id: str = "br-sess-1",
 ) -> MagicMock:
-    """Start a browser session with request-scoped CDP signing and isolated ownership."""
+    """Start a browser session with all mocks wired up, return the mock page.
+
+    The CDP websocket headers are signed by the gateway itself with the
+    request's AWS credentials (not the SDK's ambient session), so only the
+    SDK's session start and Playwright are mocked.
+    """
     from agentic_primitives_gateway.routes._helpers import browser_session_owners
 
     # Tests reuse a display ID, but the production ownership store retires it.
