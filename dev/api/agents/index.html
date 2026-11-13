@@ -3883,14 +3883,14 @@
 <h3 id="sse-reconnect-stream">SSE Reconnect Stream<a class="headerlink" href="#sse-reconnect-stream" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>curl<span class="w"> </span>-N<span class="w"> </span>http://localhost:8000/api/v1/agents/my-agent/sessions/my-session/stream
 </code></pre></div>
-<p>Reconnects to a running or recently-completed session. Replays all stored events from the event store with token throttling for smooth playback, then polls for new events if the run is still active. Stays open for up to 3 minutes waiting for a resumed run. Returns <code>text/event-stream</code>.</p>
+<p>Reconnects to a running or recently-completed session owned by the caller for this resolved agent identity. Replays only the latest streaming turn's events (older conversation turns remain in session history), then polls for new events if the run is still active. Unknown or foreign runs cannot be replayed; inactive sessions still report <code>"idle"</code> at the status endpoint. Different users can use the same raw session ID independently; the same user cannot reuse it across agent identities. Returns <code>text/event-stream</code>.</p>
 <h3 id="cancel-active-run">Cancel Active Run<a class="headerlink" href="#cancel-active-run" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>DELETE<span class="w"> </span>http://localhost:8000/api/v1/agents/my-agent/sessions/my-session/run
 </code></pre></div>
-<p>Cancels the background task for this session. The checkpoint is deleted, the event store status is set to <code>"cancelled"</code>, and conversation history up to the cancellation point is preserved.</p>
+<p>Cancels only a known run owned by the caller for this agent identity. The checkpoint is deleted, the event store status is set to <code>"cancelled"</code>, and conversation history up to the cancellation point is preserved.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="p">{</span><span class="nt">"status"</span><span class="p">:</span><span class="w"> </span><span class="s2">"cancelled"</span><span class="p">,</span><span class="w"> </span><span class="nt">"session_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"my-session"</span><span class="p">}</span>
 </code></pre></div>
-<p>Returns 404 if no active run exists for the session.</p>
+<p>Returns 403 for unknown or foreign streaming runs.</p>
 <h3 id="list-sessions">List Sessions<a class="headerlink" href="#list-sessions" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>curl<span class="w"> </span>http://localhost:8000/api/v1/agents/my-agent/sessions
 </code></pre></div>

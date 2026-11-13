@@ -3800,7 +3800,7 @@
 <p>The run executes in a background task: if the client disconnects, the run completes independently. All events are recorded for replay on reconnect.</p>
 <p>See <a href="../../concepts/streaming/">Streaming</a> for team event types, and <a href="../../concepts/teams/">Teams</a> for the full execution model.</p>
 <h2 id="runs-history-status">Runs (History &amp; Status)<a class="headerlink" href="#runs-history-status" title="Permanent link">&para;</a></h2>
-<p>Multiple runs can exist per team. Each run has a <code>team_run_id</code> generated when the run starts.</p>
+<p>Multiple runs can exist per team. Each run has a generated <code>team_run_id</code>; its event replay, status, task board, and cancellation are restricted to the caller and the resolved team identity. Agent sessions, other teams, and task retries use separate event keys even when their raw IDs match. Unknown or foreign runs are denied.</p>
 <table>
 <thead>
 <tr>
@@ -3850,14 +3850,14 @@
 <h3 id="sse-reconnect-stream">SSE Reconnect Stream<a class="headerlink" href="#sse-reconnect-stream" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>curl<span class="w"> </span>-N<span class="w"> </span>http://localhost:8000/api/v1/teams/research-team/runs/abc123/stream
 </code></pre></div>
-<p>Reconnects to a running or recently-completed team run. Replays all stored events from the event store with token throttling for smooth playback, then polls for new events if the run is still active. Returns <code>text/event-stream</code>.</p>
+<p>Reconnects to a running or recently-completed team run owned by the caller. Replays only this team's stored events from the event store with token throttling, then polls for new events if the run is still active. Returns <code>text/event-stream</code>.</p>
 <h3 id="cancel-active-run">Cancel Active Run<a class="headerlink" href="#cancel-active-run" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>curl<span class="w"> </span>-X<span class="w"> </span>DELETE<span class="w"> </span>http://localhost:8000/api/v1/teams/research-team/runs/abc123/cancel
 </code></pre></div>
-<p>Cancels the active team run using cooperative cancellation. The runner checks an <code>asyncio.Event</code> at every worker checkpoint; when triggered, all in-progress tasks are marked as failed and the run terminates. Works for both local runs and runs recovered from a checkpoint on another replica.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="p">{</span><span class="nt">"status"</span><span class="p">:</span><span class="w"> </span><span class="s2">"cancelled"</span><span class="p">,</span><span class="w"> </span><span class="nt">"team_run_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"abc123"</span><span class="p">}</span>
+<p>Cancellation checks a caller- and team-scoped signal before further planner, replanner and worker tool calls. Pending and in-progress tasks are marked failed. A recovery attempt rechecks cancellation before reviving a checkpoint, and its renewable lock prevents two replicas from executing the same run. The response is unavailable for unknown or foreign runs.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="p">{</span><span class="nt">"status"</span><span class="p">:</span><span class="w"> </span><span class="s2">"cancelled"</span><span class="p">}</span>
 </code></pre></div>
-<p>Returns 404 if no active run exists for the given ID.</p>
+<p>Returns 403 for unknown or foreign team runs.</p>
 <h3 id="list-runs">List Runs<a class="headerlink" href="#list-runs" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>curl<span class="w"> </span>http://localhost:8000/api/v1/teams/research-team/runs
 </code></pre></div>
