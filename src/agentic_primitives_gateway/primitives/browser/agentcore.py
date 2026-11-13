@@ -87,9 +87,10 @@ def _generate_live_view_url(
         region_name=client.region,
         expires=expires,
     ).add_auth(request)
-    if not request.url:
+    signed_url = request.url
+    if not isinstance(signed_url, str) or not signed_url:
         raise RuntimeError("Failed to generate live view url")
-    return request.url
+    return signed_url
 
 
 def _bind_browser_session(client: BrowserClient, session: Any, region: str | None = None) -> None:
