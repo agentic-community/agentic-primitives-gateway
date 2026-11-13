@@ -4149,6 +4149,7 @@
 <a id="__codelineno-8-24" name="__codelineno-8-24" href="#__codelineno-8-24"></a><span class="w">      </span><span class="nt">groups</span><span class="p">:</span><span class="w"> </span><span class="s">"groups"</span>
 <a id="__codelineno-8-25" name="__codelineno-8-25" href="#__codelineno-8-25"></a><span class="w">      </span><span class="nt">scopes</span><span class="p">:</span><span class="w"> </span><span class="s">"scope"</span>
 </code></pre></div>
+<p>API key entries must contain non-empty, non-whitespace string keys. A missing or blank key (for example, an unset Kubernetes Secret interpolated as an empty value) fails backend initialization rather than accepting a blank <code>X-Api-Key</code> header. An empty <code>api_keys</code> list still rejects all callers.</p>
 <h3 id="resource-ownership">Resource Ownership<a class="headerlink" href="#resource-ownership" title="Permanent link">&para;</a></h3>
 <p>All agents, teams, and related resources track ownership for access control:</p>
 <ul>

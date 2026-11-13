@@ -4136,11 +4136,11 @@
 </tr>
 <tr>
 <td><strong>get_api_key</strong></td>
-<td>Retrieve a client secret from Keycloak by client label lookup via the Admin API.</td>
+<td>Admin-only: retrieve a client secret from Keycloak by client label via the Admin API. The <code>workload_token</code> parameter does not authorize this lookup.</td>
 </tr>
 <tr>
 <td><strong>get_workload_token</strong></td>
-<td>Obtain a workload identity token using client_credentials grant. Requires "Service accounts roles" enabled.</td>
+<td>With a caller-supplied <code>user_token</code>, exchange that token for the requested workload audience (available to authenticated callers). Without <code>user_token</code>, mint the gateway client's token with <code>client_credentials</code> (admin-only; requires "Service accounts roles" enabled).</td>
 </tr>
 </tbody>
 </table>
@@ -4187,25 +4187,33 @@
 <a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="n">client</span> <span class="o">=</span> <span class="n">AgenticPlatformClient</span><span class="p">(</span><span class="s2">"http://localhost:8000"</span><span class="p">)</span>
 <a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="n">identity</span> <span class="o">=</span> <span class="n">Identity</span><span class="p">(</span><span class="n">client</span><span class="p">)</span>
 <a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a>
-<a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a><span class="c1"># Get a workload token (client_credentials grant)</span>
+<a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a><span class="c1"># Get a workload token as a gateway admin (client_credentials grant)</span>
 <a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a><span class="n">token</span> <span class="o">=</span> <span class="k">await</span> <span class="n">identity</span><span class="o">.</span><span class="n">get_workload_token</span><span class="p">(</span><span class="s2">"my-agent"</span><span class="p">)</span>
 <a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a>
-<a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a><span class="c1"># Get an API key (client secret lookup)</span>
-<a id="__codelineno-10-10" name="__codelineno-10-10" href="#__codelineno-10-10"></a><span class="n">key</span> <span class="o">=</span> <span class="k">await</span> <span class="n">identity</span><span class="o">.</span><span class="n">get_api_key</span><span class="p">(</span><span class="s2">"my-service"</span><span class="p">,</span> <span class="n">workload_token</span><span class="o">=</span><span class="s2">"..."</span><span class="p">)</span>
+<a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a><span class="c1"># Exchange a caller's token without granting gateway admin privileges</span>
+<a id="__codelineno-10-10" name="__codelineno-10-10" href="#__codelineno-10-10"></a><span class="n">user_token</span> <span class="o">=</span> <span class="k">await</span> <span class="n">identity</span><span class="o">.</span><span class="n">get_workload_token</span><span class="p">(</span><span class="s2">"my-agent"</span><span class="p">,</span> <span class="n">user_token</span><span class="o">=</span><span class="s2">"user-jwt"</span><span class="p">)</span>
+<a id="__codelineno-10-11" name="__codelineno-10-11" href="#__codelineno-10-11"></a>
+<a id="__codelineno-10-12" name="__codelineno-10-12" href="#__codelineno-10-12"></a><span class="c1"># Get an API key (client secret lookup)</span>
+<a id="__codelineno-10-13" name="__codelineno-10-13" href="#__codelineno-10-13"></a><span class="n">key</span> <span class="o">=</span> <span class="k">await</span> <span class="n">identity</span><span class="o">.</span><span class="n">get_api_key</span><span class="p">(</span><span class="s2">"my-service"</span><span class="p">,</span> <span class="n">workload_token</span><span class="o">=</span><span class="s2">"..."</span><span class="p">)</span>
 </code></pre></div>
 <h3 id="curl">curl<a class="headerlink" href="#curl" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="c1"># Get a workload token</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="c1"># Get a workload token (admin only without user_token)</span>
 <a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>http://localhost:8000/api/v1/identity/workload-token<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"Content-Type: application/json"</span><span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"workload_name": "my-agent"}'</span>
 <a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a>
-<a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a><span class="c1"># List workload identities</span>
-<a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a>curl<span class="w"> </span>http://localhost:8000/api/v1/identity/workload-identities
-<a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a>
-<a id="__codelineno-11-9" name="__codelineno-11-9" href="#__codelineno-11-9"></a><span class="c1"># Create a workload identity</span>
-<a id="__codelineno-11-10" name="__codelineno-11-10" href="#__codelineno-11-10"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>http://localhost:8000/api/v1/identity/workload-identities<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-11-11" name="__codelineno-11-11" href="#__codelineno-11-11"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"Content-Type: application/json"</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-11-12" name="__codelineno-11-12" href="#__codelineno-11-12"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"name": "new-agent", "allowed_return_urls": ["https://example.com/callback"]}'</span>
+<a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a><span class="c1"># Caller-bound token exchange (authenticated non-admins allowed)</span>
+<a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>http://localhost:8000/api/v1/identity/workload-token<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"Content-Type: application/json"</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-11-9" name="__codelineno-11-9" href="#__codelineno-11-9"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"workload_name": "my-agent", "user_token": "user-jwt"}'</span>
+<a id="__codelineno-11-10" name="__codelineno-11-10" href="#__codelineno-11-10"></a>
+<a id="__codelineno-11-11" name="__codelineno-11-11" href="#__codelineno-11-11"></a><span class="c1"># List workload identities</span>
+<a id="__codelineno-11-12" name="__codelineno-11-12" href="#__codelineno-11-12"></a>curl<span class="w"> </span>http://localhost:8000/api/v1/identity/workload-identities
+<a id="__codelineno-11-13" name="__codelineno-11-13" href="#__codelineno-11-13"></a>
+<a id="__codelineno-11-14" name="__codelineno-11-14" href="#__codelineno-11-14"></a><span class="c1"># Create a workload identity</span>
+<a id="__codelineno-11-15" name="__codelineno-11-15" href="#__codelineno-11-15"></a>curl<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>http://localhost:8000/api/v1/identity/workload-identities<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-11-16" name="__codelineno-11-16" href="#__codelineno-11-16"></a><span class="w">  </span>-H<span class="w"> </span><span class="s2">"Content-Type: application/json"</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-11-17" name="__codelineno-11-17" href="#__codelineno-11-17"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"name": "new-agent", "allowed_return_urls": ["https://example.com/callback"]}'</span>
 </code></pre></div>
 <h2 id="security-best-practices">Security Best Practices<a class="headerlink" href="#security-best-practices" title="Permanent link">&para;</a></h2>
 <ol>

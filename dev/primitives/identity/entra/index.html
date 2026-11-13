@@ -3439,6 +3439,8 @@
 </tr>
 </tbody>
 </table>
+<p>Reading application secrets through <code>get_api_key</code> requires a gateway admin principal; <code>workload_token</code> does not authorize a Microsoft Graph admin lookup.</p>
+<p>For <code>get_workload_token</code>, passing a caller <code>user_token</code> uses on-behalf-of exchange and remains available to authenticated callers. Without <code>user_token</code>, the operation mints the configured gateway client's token and requires admin.</p>
 <h3 id="per-request-credentials">Per-Request Credentials<a class="headerlink" href="#per-request-credentials" title="Permanent link">&para;</a></h3>
 <p>A caller-supplied set is used whole — send <code>tenant_id</code>, <code>client_id</code>, and <code>client_secret</code> together; the operator's values never fill gaps.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>curl<span class="w"> </span>-H<span class="w"> </span><span class="s2">"X-Cred-Entra-Tenant-Id: my-tenant"</span><span class="w"> </span><span class="se">\</span>

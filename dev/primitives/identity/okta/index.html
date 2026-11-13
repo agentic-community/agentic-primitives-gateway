@@ -3451,6 +3451,8 @@
 </tr>
 </tbody>
 </table>
+<p>Reading application client secrets through <code>get_api_key</code> requires a gateway admin principal; <code>workload_token</code> does not authorize an Okta admin lookup.</p>
+<p><code>get_workload_token</code> always mints the configured client's token with a client-credentials grant; it does not exchange <code>user_token</code> or scope by <code>user_id</code>, so it requires admin even when <code>user_token</code> is supplied. Likewise, <code>get_token</code> with <code>auth_flow=M2M</code> ignores <code>workload_token</code> and mints the configured client's token, so it requires admin. Authorization-code and user-federation flows remain available to authenticated non-admins.</p>
 <h3 id="per-request-credentials">Per-Request Credentials<a class="headerlink" href="#per-request-credentials" title="Permanent link">&para;</a></h3>
 <p>The Okta domain is operator configuration only — caller-supplied <code>domain</code> values are ignored. A caller-supplied set is used whole; the operator's <code>client_secret</code> / <code>api_token</code> never fill gaps.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>curl<span class="w"> </span>-H<span class="w"> </span><span class="s2">"X-Cred-Okta-Client-Id: my-client"</span><span class="w"> </span><span class="se">\</span>

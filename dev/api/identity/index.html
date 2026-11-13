@@ -3368,7 +3368,7 @@
 
 <h1 id="identity-api">Identity API<a class="headerlink" href="#identity-api" title="Permanent link">&para;</a></h1>
 <p><code>/api/v1/identity</code></p>
-<p>Workload identity tokens, OAuth2 token exchange, API key retrieval, and credential/workload management. All endpoints require authentication. Control plane endpoints (create, update, delete) require admin.</p>
+<p>Workload identity tokens, OAuth2 token exchange, API key retrieval, and credential/workload management. All endpoints require authentication. Control plane endpoints (create, update, delete) require admin; backend-specific data-plane grants that mint operator client tokens also require admin.</p>
 <p><strong>Backends:</strong> <code>NoopIdentityProvider</code>, <a href="../../primitives/identity/agentcore/"><code>AgentCoreIdentityProvider</code></a>, <a href="../../primitives/identity/keycloak/"><code>KeycloakIdentityProvider</code></a>, <a href="../../primitives/identity/entra/"><code>EntraIdentityProvider</code></a>, <a href="../../primitives/identity/okta/"><code>OktaIdentityProvider</code></a></p>
 <h2 id="token-operations-data-plane">Token Operations (Data Plane)<a class="headerlink" href="#token-operations-data-plane" title="Permanent link">&para;</a></h2>
 <table>
@@ -3383,17 +3383,17 @@
 <tr>
 <td><code>POST</code></td>
 <td><code>/token</code></td>
-<td>Exchange a workload token for an external service OAuth2 token.</td>
+<td>Exchange a workload token for an external service OAuth2 token; Okta's M2M flow instead mints its client token and requires admin.</td>
 </tr>
 <tr>
 <td><code>POST</code></td>
 <td><code>/api-key</code></td>
-<td>Retrieve a stored API key for a credential provider.</td>
+<td>Retrieve a stored API key for a credential provider. Operator-backed Keycloak/Entra/Okta secret lookup requires admin.</td>
 </tr>
 <tr>
 <td><code>POST</code></td>
 <td><code>/workload-token</code></td>
-<td>Obtain a workload identity token, optionally scoped to a user.</td>
+<td>Obtain a workload identity token. Keycloak/Entra caller-token exchanges (<code>user_token</code>) remain available to authenticated users; without one, client credentials requires admin. Okta always uses client credentials and requires admin, even when <code>user_token</code> is supplied.</td>
 </tr>
 <tr>
 <td><code>POST</code></td>
@@ -3433,7 +3433,7 @@
 <td><code>workload_token</code></td>
 <td>string</td>
 <td>yes</td>
-<td>The agent's workload identity token.</td>
+<td>Caller workload identity token for token-exchange backends; Okta's M2M flow does not use it and therefore requires admin.</td>
 </tr>
 <tr>
 <td><code>auth_flow</code></td>
