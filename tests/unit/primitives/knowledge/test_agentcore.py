@@ -4,12 +4,21 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from agentic_primitives_gateway.context import AWSCredentials, set_aws_credentials
 from agentic_primitives_gateway.models.knowledge import IngestDocument
 from agentic_primitives_gateway.primitives.knowledge.agentcore import AgentCoreKnowledgeProvider
 
 
+@pytest.fixture(autouse=True)
+def _caller_aws_credentials():
+    """Caller-supplied KB / data-source IDs are honored only under the caller's own AWS creds."""
+    set_aws_credentials(AWSCredentials(access_key_id="AKIACALLER", secret_access_key="s"))
+    yield
+    set_aws_credentials(None)
+
+
 @patch("agentic_primitives_gateway.primitives.knowledge.agentcore.get_boto3_session")
-@patch("agentic_primitives_gateway.primitives.knowledge.agentcore.get_service_credentials")
+@patch("agentic_primitives_gateway.context.get_service_credentials")
 class TestAgentCoreKnowledgeProvider:
     def _provider(self, **kwargs):
         return AgentCoreKnowledgeProvider(**kwargs)

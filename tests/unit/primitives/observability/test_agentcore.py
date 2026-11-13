@@ -4,9 +4,35 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from agentic_primitives_gateway.config import settings
+from agentic_primitives_gateway.models.enums import ServerCredentialMode
 from agentic_primitives_gateway.primitives.observability.agentcore import (
     AgentCoreObservabilityProvider,
 )
+
+
+@pytest.fixture(autouse=True)
+def _operator_writes_allowed():
+    """Writes are operator-owned (process-wide exporter) and refused under ``never``."""
+    prev = settings.allow_server_credentials
+    settings.allow_server_credentials = ServerCredentialMode.FALLBACK
+    yield
+    settings.allow_server_credentials = prev
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["ingest_trace", "ingest_log", "log_generation", "flush"])
+async def test_writes_refused_under_never(method):
+    settings.allow_server_credentials = ServerCredentialMode.NEVER
+    provider = _create_provider()
+    provider._tracer_provider = MagicMock()
+    args = {"ingest_trace": ({"name": "t"},), "ingest_log": ({"message": "m"},), "flush": ()}.get(
+        method, ("t", "n", "m")
+    )
+    with pytest.raises(ValueError, match="gateway's own credentials"):
+        await getattr(provider, method)(*args)
+    provider._tracer.start_as_current_span.assert_not_called()
+    provider._tracer_provider.force_flush.assert_not_called()
 
 
 def _create_provider(**kwargs):

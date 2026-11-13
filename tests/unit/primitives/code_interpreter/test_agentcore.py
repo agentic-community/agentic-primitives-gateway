@@ -28,6 +28,8 @@ class TestAgentCoreCodeInterpreterProvider:
         assert result["session_id"] == "sess-abc"
         assert result["status"] == "active"
         assert result["language"] == "python"
+        # The SDK must use the request's session, not its own ambient boto3.Session().
+        mock_ci_cls.assert_called_once_with(region="us-east-1", session=mock_get_session.return_value)
 
     @pytest.mark.asyncio
     async def test_start_session_dict_result(self, mock_ci_cls, mock_get_session):
@@ -200,6 +202,7 @@ class TestAgentCoreCodeInterpreterProvider:
         mock_client = MagicMock()
         mock_client.start.return_value = "session-1"
         mock_client.execute_code.return_value = {"stdout": "2", "stderr": "", "exitCode": 0}
+        mock_client.get_session.return_value = {"sessionId": "session-1", "status": "READY"}
         mock_ci_cls.return_value = mock_client
         mock_get_session.return_value = MagicMock(region_name="us-east-1")
 
@@ -219,8 +222,9 @@ class TestAgentCoreCodeInterpreterProvider:
         mock_client.start.return_value = "session-1"
         mock_ci_cls.return_value = mock_client
         mock_get_session.return_value = MagicMock(region_name="us-east-1")
-
         await provider.start_session(session_id="session-1")
+
+        mock_client.get_session.return_value = {"sessionId": "session-1", "status": "READY"}
         history = await provider.get_execution_history("session-1")
         assert history == []
 
@@ -232,13 +236,72 @@ class TestAgentCoreCodeInterpreterProvider:
         mock_client.execute_code.return_value = {"stdout": "", "stderr": "", "exitCode": 0}
         mock_ci_cls.return_value = mock_client
         mock_get_session.return_value = MagicMock(region_name="us-east-1")
-
+        mock_client.get_session.return_value = {"sessionId": "session-1", "status": "READY"}
         await provider.start_session(session_id="session-1")
         for i in range(5):
             await provider.execute("session-1", f"print({i})")
 
         history = await provider.get_execution_history("session-1", limit=2)
         assert len(history) == 2
+
+    @pytest.mark.asyncio
+    async def test_history_rejects_revoked_remote_access(self, mock_ci_cls, mock_get_session):
+        provider = AgentCoreCodeInterpreterProvider()
+        client = MagicMock()
+        client.start.return_value = "session-1"
+        client.execute_code.return_value = {"stdout": "secret", "stderr": "", "exitCode": 0}
+        client.get_session.side_effect = PermissionError("AWS access revoked")
+        mock_ci_cls.return_value = client
+        mock_get_session.return_value = MagicMock(region_name="us-east-1")
+        await provider.start_session()
+        await provider.execute("session-1", "print('secret')")
+
+        with pytest.raises(PermissionError, match="access revoked"):
+            await provider.get_execution_history("session-1")
+        client.get_session.assert_called_once_with(session_id="session-1")
+
+    @pytest.mark.asyncio
+    async def test_history_rejects_unverified_remote_session(self, mock_ci_cls, mock_get_session):
+        provider = AgentCoreCodeInterpreterProvider()
+        client = MagicMock()
+        client.start.return_value = "session-1"
+        client.get_session.return_value = {"sessionId": "other-session"}
+        mock_ci_cls.return_value = client
+        mock_get_session.return_value = MagicMock(region_name="us-east-1")
+        await provider.start_session()
+        with pytest.raises(RuntimeError, match="Unable to verify"):
+            await provider.get_execution_history("session-1")
+
+    @pytest.mark.asyncio
+    async def test_history_rejects_terminated_remote_session(self, mock_ci_cls, mock_get_session):
+        provider = AgentCoreCodeInterpreterProvider()
+        client = MagicMock()
+        client.start.return_value = "session-1"
+        client.get_session.return_value = {"sessionId": "session-1", "status": "TERMINATED"}
+        mock_ci_cls.return_value = client
+        mock_get_session.return_value = MagicMock(region_name="us-east-1")
+        await provider.start_session()
+        with pytest.raises(RuntimeError, match="Unable to verify"):
+            await provider.get_execution_history("session-1")
+
+    @pytest.mark.asyncio
+    async def test_history_rebinds_before_remote_authorization(self, mock_ci_cls, mock_get_session):
+        provider = AgentCoreCodeInterpreterProvider()
+        client = MagicMock()
+        client.start.return_value = "session-1"
+        client.get_session.return_value = {"sessionId": "session-1", "status": "READY"}
+        mock_ci_cls.return_value = client
+        original_session = MagicMock(region_name="us-east-1")
+        current_session = MagicMock(region_name="us-east-1")
+        mock_get_session.side_effect = [original_session, current_session]
+        await provider.start_session()
+        with patch(
+            "agentic_primitives_gateway.primitives.code_interpreter.agentcore.rebind_agentcore_clients"
+        ) as rebind:
+            assert await provider.get_execution_history("session-1") == []
+            rebind.assert_called_once()
+            assert rebind.call_args.args == (client, current_session)
+            client.get_session.assert_called_once_with(session_id="session-1")
 
     @pytest.mark.asyncio
     async def test_stop_session_clears_history(self, mock_ci_cls, mock_get_session):

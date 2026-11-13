@@ -18,6 +18,8 @@ providers:
 |-----------|---------|-------------|
 | `region` | `us-east-1` | AWS region for AgentCore |
 
+**Credentials:** sessions start under the request's AWS credentials, and every later AWS call (stop, live-view URL signing) is re-signed with the credentials of the request making it — sessions outlive short-lived STS credentials. Before **every** Playwright interaction (navigate, content, screenshot, click, type, evaluate), AgentCore must authorize the current request's AWS credentials to read the session and report status `READY`; authorization is never cached, even for the same access-key ID, because a key may be revoked or presented with a different secret. Under `allow_server_credentials: never`, interactions without caller AWS credentials are refused. The session's original region is retained for subsequent SDK calls. A failed remote stop keeps the session and Playwright connection usable so it can be retried; local resources close only after AgentCore confirms the stop.
+
 ## Using the Browser API
 
 All standard browser endpoints work with this provider. See the [Browser API reference](../../api/browser.md) for the full endpoint list.

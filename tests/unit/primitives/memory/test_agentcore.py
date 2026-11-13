@@ -4,11 +4,20 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from agentic_primitives_gateway.context import AWSCredentials, get_boto3_session, set_aws_credentials
 from agentic_primitives_gateway.primitives.memory.agentcore import AgentCoreMemoryProvider
 
 
+@pytest.fixture(autouse=True)
+def _caller_aws_credentials():
+    """Caller-supplied memory_id is honored only under the caller's own AWS creds."""
+    set_aws_credentials(AWSCredentials(access_key_id="AKIACALLER", secret_access_key="s"))
+    yield
+    set_aws_credentials(None)
+
+
 @patch("agentic_primitives_gateway.primitives.memory.agentcore.get_boto3_session")
-@patch("agentic_primitives_gateway.primitives.memory.agentcore.get_service_credentials")
+@patch("agentic_primitives_gateway.context.get_service_credentials")
 class TestAgentCoreMemoryProvider:
     """Tests for the AgentCore memory provider."""
 
@@ -46,8 +55,10 @@ class TestAgentCoreMemoryProvider:
         """Store populates the KV cache so retrieve returns the record without SDK search."""
         mock_get_svc_creds.return_value = {"memory_id": "mem-123"}
         mock_session = MagicMock(region_name="us-east-1")
+        mock_session.get_credentials.return_value.get_frozen_credentials.return_value = MagicMock(
+            access_key="AKIACALLER", secret_key="s", token=None
+        )
         mock_get_session.return_value = mock_session
-
         with patch("agentic_primitives_gateway.primitives.memory.agentcore.MemorySessionManager") as mock_mgr_cls:
             mock_mgr = MagicMock()
             mock_mgr.create_memory_session.return_value = MagicMock()
@@ -64,12 +75,97 @@ class TestAgentCoreMemoryProvider:
         assert result.metadata["env"] == "test"
 
     @pytest.mark.asyncio
+    async def test_cache_is_scoped_to_memory_and_aws_signer(self, mock_get_svc_creds, mock_get_session):
+        mock_session = MagicMock(region_name="us-east-1")
+        frozen = mock_session.get_credentials.return_value.get_frozen_credentials.return_value
+        frozen.access_key, frozen.secret_key, frozen.token = "alice", "alice-secret", None
+        mock_get_session.return_value = mock_session
+        mock_get_svc_creds.return_value = {"memory_id": "alice-memory"}
+        with patch("agentic_primitives_gateway.primitives.memory.agentcore.MemorySessionManager") as manager:
+            manager.return_value.search_long_term_memories.return_value = []
+            manager.return_value.create_memory_session.return_value.get_last_k_turns.return_value = []
+            provider = self._make_provider(memory_id="default")
+            await provider.store("ns", "key", "private hidden word")
+            assert (await provider.retrieve("ns", "key")).content == "private hidden word"
+
+            mock_get_svc_creds.return_value = {"memory_id": "other-memory"}
+            assert await provider.retrieve("ns", "key") is None
+            assert await provider.search("ns", "private") == []
+            assert await provider.list_memories("ns") == []
+
+            mock_get_svc_creds.return_value = {"memory_id": "alice-memory"}
+            frozen.access_key, frozen.secret_key = "bob", "bob-secret"
+            assert await provider.retrieve("ns", "key") is None
+            assert await provider.search("ns", "private") == []
+            assert await provider.list_memories("ns") == []
+
+    @pytest.mark.asyncio
+    async def test_cache_skips_unknown_signer(self, mock_get_svc_creds, mock_get_session):
+        mock_get_svc_creds.return_value = {"memory_id": "mem-1"}
+        mock_session = MagicMock(region_name="us-east-1")
+        mock_session.get_credentials.return_value = None
+        mock_get_session.return_value = mock_session
+        with patch("agentic_primitives_gateway.primitives.memory.agentcore.MemorySessionManager") as manager:
+            manager.return_value.search_long_term_memories.return_value = []
+            manager.return_value.create_memory_session.return_value.get_last_k_turns.return_value = []
+            provider = self._make_provider()
+            await provider.store("ns", "key", "private")
+            assert await provider.retrieve("ns", "key") is None
+            assert await provider.search("ns", "private") == []
+            assert await provider.list_memories("ns") == []
+
+    @pytest.mark.asyncio
+    async def test_cached_reads_require_live_aws_authorization(self, mock_get_svc_creds, mock_get_session):
+        mock_session = MagicMock(region_name="us-east-1")
+        frozen = mock_session.get_credentials.return_value.get_frozen_credentials.return_value
+        frozen.access_key, frozen.secret_key, frozen.token = "alice", "secret", None
+        mock_get_session.return_value = mock_session
+        with patch("agentic_primitives_gateway.primitives.memory.agentcore.MemorySessionManager") as manager:
+            remote = manager.return_value.create_memory_session.return_value
+            manager.return_value.search_long_term_memories.return_value = []
+            remote.get_last_k_turns.return_value = []
+            remote.list_long_term_memory_records.return_value = []
+            provider = self._make_provider(memory_id="configured")
+            await provider.store("ns", "key", "private hidden word")
+            remote.get_last_k_turns.side_effect = PermissionError("access revoked")
+            with pytest.raises(PermissionError, match="access revoked"):
+                await provider.retrieve("ns", "key")
+            assert await provider.search("ns", "private") == []
+            assert await provider.list_memories("ns") == []
+
+    @pytest.mark.asyncio
+    async def test_never_without_aws_credentials_cannot_read_cache(self, mock_get_svc_creds, mock_get_session):
+        from agentic_primitives_gateway.config import settings
+        from agentic_primitives_gateway.models.enums import ServerCredentialMode
+
+        mock_session = MagicMock(region_name="us-east-1")
+        frozen = mock_session.get_credentials.return_value.get_frozen_credentials.return_value
+        frozen.access_key, frozen.secret_key, frozen.token = "alice", "secret", None
+        mock_get_session.return_value = mock_session
+        with patch("agentic_primitives_gateway.primitives.memory.agentcore.MemorySessionManager"):
+            provider = self._make_provider(memory_id="configured")
+            await provider.store("ns", "key", "private")
+            set_aws_credentials(None)
+            with (
+                patch.object(settings, "allow_server_credentials", ServerCredentialMode.NEVER),
+                patch("agentic_primitives_gateway.primitives.memory.agentcore.get_boto3_session", get_boto3_session),
+            ):
+                with pytest.raises(ValueError, match="No AWS credentials"):
+                    await provider.retrieve("ns", "key")
+                with pytest.raises(ValueError, match="No AWS credentials"):
+                    await provider.search("ns", "private")
+                with pytest.raises(ValueError, match="No AWS credentials"):
+                    await provider.list_memories("ns")
+
+    @pytest.mark.asyncio
     async def test_delete_removes_from_cache(self, mock_get_svc_creds, mock_get_session):
         """Delete removes from KV cache, so retrieve returns None."""
         mock_get_svc_creds.return_value = {"memory_id": "mem-123"}
         mock_session = MagicMock(region_name="us-east-1")
+        mock_session.get_credentials.return_value.get_frozen_credentials.return_value = MagicMock(
+            access_key="AKIACALLER", secret_key="s", token=None
+        )
         mock_get_session.return_value = mock_session
-
         with patch("agentic_primitives_gateway.primitives.memory.agentcore.MemorySessionManager") as mock_mgr_cls:
             mock_mgr = MagicMock()
             mock_mgr.create_memory_session.return_value = MagicMock()

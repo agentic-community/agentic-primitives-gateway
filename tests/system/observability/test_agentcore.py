@@ -10,10 +10,21 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from agentic_primitives_gateway.config import settings
+from agentic_primitives_gateway.models.enums import ServerCredentialMode
 from agentic_primitives_gateway.registry import registry
 from agentic_primitives_gateway_client import AgenticPlatformClient, AgenticPlatformError
 
 # ── Helpers ───────────────────────────────────────────────────────────
+
+
+@pytest.fixture(autouse=True)
+def _operator_writes_allowed():
+    """AgentCore observability writes are operator-owned and refused under ``never``."""
+    prev = settings.allow_server_credentials
+    settings.allow_server_credentials = ServerCredentialMode.FALLBACK
+    yield
+    settings.allow_server_credentials = prev
 
 
 @pytest.fixture(autouse=True)

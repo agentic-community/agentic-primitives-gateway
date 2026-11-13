@@ -17,7 +17,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from agentic_primitives_gateway.context import get_boto3_session, get_service_credentials
+from agentic_primitives_gateway.context import get_boto3_session, get_caller_resource_id
 from agentic_primitives_gateway.models.knowledge import (
     Citation,
     DocumentInfo,
@@ -124,17 +124,19 @@ class AgentCoreKnowledgeProvider(SyncRunnerMixin, KnowledgeProvider):
             knowledge_base_id or "(from client)",
         )
 
+    # Caller-supplied IDs are honored only under the caller's own AWS
+    # credentials (see ``get_caller_resource_id``); under the operator's
+    # identity the configured defaults apply.
+
     def _resolve_knowledge_base_id(self) -> str:
-        creds = get_service_credentials("agentcore")
-        if creds and creds.get("knowledgebase_id"):
-            kb_id: str = creds["knowledgebase_id"]
+        kb_id = get_caller_resource_id("agentcore", "knowledgebase_id") or self._default_kb_id
+        if kb_id:
             return kb_id
-        if self._default_kb_id:
-            return self._default_kb_id
         raise ValueError(
             "AgentCore knowledge_base_id is required.  Provide it via one of: "
             "(1) per-user OIDC attribute apg.agentcore.knowledgebase_id (resolved "
-            "into the X-Cred-Agentcore-Knowledgebase-Id header for each request); "
+            "into the X-Cred-Agentcore-Knowledgebase-Id header for each request), "
+            "honored together with the caller's own AWS credentials; "
             "(2) knowledge_base_id in the provider config (AGENTCORE_KB_ID env var "
             "in shipped configs); "
             "(3) define multiple named AgentCore backends in providers.knowledge.backends "
@@ -143,11 +145,7 @@ class AgentCoreKnowledgeProvider(SyncRunnerMixin, KnowledgeProvider):
         )
 
     def _resolve_data_source_id(self) -> str | None:
-        creds = get_service_credentials("agentcore")
-        if creds and creds.get("data_source_id"):
-            ds_id: str = creds["data_source_id"]
-            return ds_id
-        return self._default_data_source_id
+        return get_caller_resource_id("agentcore", "data_source_id") or self._default_data_source_id
 
     def _runtime_client(self) -> Any:
         session = get_boto3_session(default_region=self._region)

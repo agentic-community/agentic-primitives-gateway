@@ -36,12 +36,16 @@ async def _start_session_with_mocks(
     mock_browser_client: MagicMock,
     session_id: str = "br-sess-1",
 ) -> MagicMock:
-    """Start a browser session with all mocks wired up, return the mock page."""
+    """Start a browser session with all mocks wired up, return the mock page.
+
+    The CDP websocket headers are signed by the gateway itself with the
+    request's AWS credentials (not the SDK's ambient session), so only the
+    SDK's session start and Playwright are mocked.
+    """
     mock_browser_client.start.return_value = session_id
-    mock_browser_client.generate_ws_headers.return_value = (
-        "ws://fake-cdp:9222",
-        {"Authorization": "Bearer tok"},
-    )
+    mock_browser_client.identifier = "aws.browser.v1"
+    mock_browser_client.session_id = session_id
+    mock_browser_client.get_session.return_value = {"status": "READY"}
 
     page = _mock_page()
 
@@ -119,11 +123,14 @@ class TestListSessions:
 class TestLiveViewUrl:
     async def test_get_live_view_url(self, client: AgenticPlatformClient, mock_browser_client: MagicMock) -> None:
         await _start_session_with_mocks(client, mock_browser_client)
-        mock_browser_client.generate_live_view_url.return_value = "https://live.example.com/view/br-sess-1"
 
         result = await client.get_live_view_url("br-sess-1")
 
-        assert result["url"] == "https://live.example.com/view/br-sess-1"
+        # Presigned by the gateway with the caller's AWS key — never the
+        # process's ambient credential chain.
+        url = result["url"]
+        assert "/browser-streams/aws.browser.v1/sessions/br-sess-1/live-view" in url
+        assert "X-Amz-Credential=AKIAIOSFODNN7EXAMPLE%2F" in url  # conftest FAKE_AWS_ACCESS_KEY
 
 
 # ── Browser interaction ───────────────────────────────────────────────

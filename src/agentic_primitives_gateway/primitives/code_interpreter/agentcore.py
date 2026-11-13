@@ -1,17 +1,24 @@
 from __future__ import annotations
 
+import asyncio
 import logging
+from collections.abc import Callable
+from contextlib import suppress
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, TypeVar
+from weakref import WeakValueDictionary
 
 from bedrock_agentcore.tools import CodeInterpreter as AgentCoreCodeInterpreter
 
 from agentic_primitives_gateway.context import get_aws_credentials, get_boto3_session
 from agentic_primitives_gateway.models.enums import CodeLanguage, SessionStatus
+from agentic_primitives_gateway.primitives._agentcore import rebind_agentcore_clients
 from agentic_primitives_gateway.primitives._sync import SyncRunnerMixin
 from agentic_primitives_gateway.primitives.code_interpreter.base import CodeInterpreterProvider
 
 logger = logging.getLogger(__name__)
+
+_T = TypeVar("_T")
 
 
 class AgentCoreCodeInterpreterProvider(SyncRunnerMixin, CodeInterpreterProvider):
@@ -32,6 +39,9 @@ class AgentCoreCodeInterpreterProvider(SyncRunnerMixin, CodeInterpreterProvider)
         # session_id -> {client, created_at, language}
         self._sessions: dict[str, dict[str, Any]] = {}
         self._history: dict[str, list[dict[str, Any]]] = {}
+        # Rebinding and SDK invocation must share one lock. Waiters keep it
+        # alive across stop; otherwise idle session locks are reclaimed.
+        self._locks: WeakValueDictionary[str, asyncio.Lock] = WeakValueDictionary()
         logger.info("AgentCore code interpreter provider initialized (region=%s)", region)
 
     def _get_region(self) -> str:
@@ -46,7 +56,7 @@ class AgentCoreCodeInterpreterProvider(SyncRunnerMixin, CodeInterpreterProvider)
         config: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         boto_session = get_boto3_session(default_region=self._region)
-        client = AgentCoreCodeInterpreter(region=boto_session.region_name)
+        client = AgentCoreCodeInterpreter(region=boto_session.region_name, session=boto_session)
         result = await self._run_sync(
             client.start,
             name=session_id,
@@ -69,11 +79,72 @@ class AgentCoreCodeInterpreterProvider(SyncRunnerMixin, CodeInterpreterProvider)
             "created_at": self._sessions[sid]["created_at"],
         }
 
+    def _client(self, session_id: str) -> Any:
+        """Return the session's SDK client rebound to the *current* request's AWS session.
+
+        Sessions outlive the request that started them (and its possibly
+        short-lived STS credentials), so every later call re-signs with the
+        credentials in force now.  Only call while holding the session's lock
+        (see ``_call``).
+        """
+        session = self._sessions.get(session_id)
+        if not session:
+            raise ValueError(f"Session {session_id} not found")
+        client = session["client"]
+        rebind_agentcore_clients(
+            client,
+            get_boto3_session(default_region=self._region),
+            control_plane="control_plane_client",
+            data_plane="data_plane_client",
+            region=client.region,
+        )
+        return client
+
+    async def _call(self, session_id: str, fn: Callable[[Any], _T], *, after: Callable[[], None] | None = None) -> _T:
+        """Serialize SDK calls and rebinding through worker completion, even on cancellation.
+
+        Binding in the worker keeps blocking credential resolution off the event
+        loop while preserving the caller's contextvars.
+        """
+        lock = self._locks.setdefault(session_id, asyncio.Lock())
+        await lock.acquire()
+        completion: asyncio.Task[_T] | None = None
+        try:
+
+            async def finish() -> _T:
+                try:
+                    result: _T = await self._run_sync(lambda: fn(self._client(session_id)))
+                    if after is not None:
+                        after()  # also runs when the request was cancelled
+                    return result
+                finally:
+                    lock.release()
+
+            completion = asyncio.create_task(finish())
+
+            def consume(done: asyncio.Task[_T]) -> None:
+                with suppress(asyncio.CancelledError):
+                    done.exception()
+
+            completion.add_done_callback(consume)
+            return await asyncio.shield(completion)
+        except BaseException:
+            if completion is None:
+                lock.release()  # task creation failed; no SDK worker exists
+            raise
+
     async def stop_session(self, session_id: str) -> None:
-        session = self._sessions.pop(session_id, None)
-        self._history.pop(session_id, None)
-        if session:
-            await self._run_sync(session["client"].stop)
+        if session_id not in self._sessions:
+            self._history.pop(session_id, None)
+            return
+
+        # Failed or cancelled stop retains the session until the SDK finishes.
+        # A successful stop removes it before the lock admits the next waiter.
+        def forget() -> None:
+            self._sessions.pop(session_id, None)
+            self._history.pop(session_id, None)
+
+        await self._call(session_id, lambda c: c.stop(), after=forget)
 
     @staticmethod
     def _consume_stream(raw: dict[str, Any]) -> dict[str, Any]:
@@ -99,15 +170,9 @@ class AgentCoreCodeInterpreterProvider(SyncRunnerMixin, CodeInterpreterProvider)
         code: str,
         language: str = CodeLanguage.PYTHON,
     ) -> dict[str, Any]:
-        session = self._sessions.get(session_id)
-        if not session:
-            raise ValueError(f"Session {session_id} not found")
-
-        def _execute() -> dict[str, Any]:
-            raw = session["client"].execute_code(code=code, language=language)
-            return self._consume_stream(raw)
-
-        result = await self._run_sync(_execute)
+        result = await self._call(
+            session_id, lambda c: self._consume_stream(c.execute_code(code=code, language=language))
+        )
         exec_result = {
             "session_id": session_id,
             "stdout": result.get("stdout", ""),
@@ -134,19 +199,11 @@ class AgentCoreCodeInterpreterProvider(SyncRunnerMixin, CodeInterpreterProvider)
         filename: str,
         content: bytes,
     ) -> dict[str, Any]:
-        session = self._sessions.get(session_id)
-        if not session:
-            raise ValueError(f"Session {session_id} not found")
-
-        await self._run_sync(session["client"].upload_file, path=filename, content=content)
+        await self._call(session_id, lambda c: c.upload_file(path=filename, content=content))
         return {"filename": filename, "size": len(content), "session_id": session_id}
 
     async def download_file(self, session_id: str, filename: str) -> bytes:
-        session = self._sessions.get(session_id)
-        if not session:
-            raise ValueError(f"Session {session_id} not found")
-
-        result = await self._run_sync(session["client"].download_file, path=filename)
+        result = await self._call(session_id, lambda c: c.download_file(path=filename))
         if isinstance(result, bytes):
             return result
         if isinstance(result, str):
@@ -183,8 +240,23 @@ class AgentCoreCodeInterpreterProvider(SyncRunnerMixin, CodeInterpreterProvider)
     ) -> list[dict[str, Any]]:
         if session_id not in self._sessions:
             raise KeyError(f"Session {session_id} not found")
-        entries = self._history.get(session_id, [])
-        return entries[-limit:]
+
+        def _read_history(client: Any) -> list[dict[str, Any]]:
+            # _call rebinds the SDK to this request's AWS signer and holds the
+            # session lock until the remote authorization check completes.
+            remote = client.get_session(session_id=session_id)
+            if (
+                not isinstance(remote, dict)
+                or remote.get("sessionId") != session_id
+                or remote.get("status") != "READY"
+                or (
+                    remote.get("codeInterpreterIdentifier") and remote["codeInterpreterIdentifier"] != client.identifier
+                )
+            ):
+                raise RuntimeError("Unable to verify AgentCore code interpreter session")
+            return self._history.get(session_id, [])[-limit:]
+
+        return await self._call(session_id, _read_history)
 
     async def healthcheck(self) -> bool:
         return True

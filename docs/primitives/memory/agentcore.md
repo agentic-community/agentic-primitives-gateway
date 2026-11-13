@@ -17,7 +17,7 @@ providers:
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `region` | `us-east-1` | AWS region for AgentCore |
-| `memory_id` | (auto) | Optional memory store ID |
+| `memory_id` | (auto) | Optional memory store ID. A per-request `X-Cred-Agentcore-Memory-Id` overrides it only when the request also carries the caller's own AWS credentials. |
 
 ### Environment Variables
 
@@ -51,6 +51,8 @@ curl "http://localhost:8000/api/v1/memory/agent:my-agent/search?query=preference
 ```bash
 curl http://localhost:8000/api/v1/memory/agent:my-agent/user-preference
 ```
+
+AgentCore has no native key-value store: recent keyed writes are cached locally per memory resource, region, and AWS signer. Cache hits require a successful live AgentCore read with the current request's credentials; revoked access or missing credentials cannot read previous cached content. This cache is process-local and is not a substitute for managed persistence.
 
 ## Using with Declarative Agents
 

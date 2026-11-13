@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 from datetime import UTC, datetime
 from typing import Any
@@ -8,7 +9,7 @@ from typing import Any
 from bedrock_agentcore.memory import MemorySessionManager
 from bedrock_agentcore.memory.constants import ConversationalMessage, MessageRole
 
-from agentic_primitives_gateway.context import get_boto3_session, get_service_credentials
+from agentic_primitives_gateway.context import get_boto3_session, get_caller_resource_id
 from agentic_primitives_gateway.models.memory import MemoryRecord, SearchResult
 from agentic_primitives_gateway.primitives._sync import SyncRunnerMixin
 from agentic_primitives_gateway.primitives.memory.base import MemoryProvider
@@ -20,7 +21,8 @@ class AgentCoreMemoryProvider(SyncRunnerMixin, MemoryProvider):
     """Memory provider backed by AWS Bedrock AgentCore Memory service.
 
     The memory_id is resolved per-request in this order:
-    1. Client header: X-Cred-Agentcore-Memory-Id
+    1. Client header X-Cred-Agentcore-Memory-Id — only when the request also
+       carries the caller's own AWS credentials
     2. Config-level default (if provided)
     3. Error — AgentCore memory IDs must be created externally
 
@@ -45,12 +47,10 @@ class AgentCoreMemoryProvider(SyncRunnerMixin, MemoryProvider):
     ) -> None:
         self._default_memory_id = memory_id
         self._region = region
-        # Write-through cache: (namespace, key) -> MemoryRecord.
-        # AgentCore memory is conversational — there's no native key-value
-        # store.  This cache bridges the KV abstraction so that store/retrieve
-        # /delete work within the lifetime of the provider instance, while
-        # also persisting content as conversation turns in AgentCore.
-        self._kv_cache: dict[tuple[str, str], MemoryRecord] = {}
+        # AgentCore has no native KV store. Keep write-through records only
+        # for a known AWS identity and resource; verify remote access before
+        # serving them, since IAM permissions and STS tokens can be revoked.
+        self._kv_cache: dict[tuple[str, str, str, str, str], MemoryRecord] = {}
         logger.info(
             "AgentCore memory provider initialized (region=%s, default_memory_id=%s)",
             region,
@@ -58,17 +58,18 @@ class AgentCoreMemoryProvider(SyncRunnerMixin, MemoryProvider):
         )
 
     def _resolve_memory_id(self) -> str:
-        """Resolve the memory_id from request context. Call from async context only."""
-        creds = get_service_credentials("agentcore")
-        if creds and creds.get("memory_id"):
-            return creds["memory_id"]
+        """Resolve the memory_id from request context. Call from async context only.
 
-        if self._default_memory_id:
-            return self._default_memory_id
+        A caller-supplied ``memory_id`` is honored only under the caller's own
+        AWS credentials (see ``get_caller_resource_id``).
+        """
+        memory_id = get_caller_resource_id("agentcore", "memory_id") or self._default_memory_id
+        if memory_id:
+            return memory_id
 
         raise ValueError(
             "AgentCore memory_id is required. Provide it via: "
-            "(1) client header X-Cred-Agentcore-Memory-Id, "
+            "(1) client header X-Cred-Agentcore-Memory-Id together with caller AWS credentials, "
             "(2) AGENTCORE_MEMORY_ID env var in the agent, or "
             "(3) memory_id in the server provider config. "
             "Create a memory resource in the AgentCore console first."
@@ -77,6 +78,54 @@ class AgentCoreMemoryProvider(SyncRunnerMixin, MemoryProvider):
     def _resolve_boto3_session(self) -> Any:
         """Resolve boto3 session from request context. Call from async context only."""
         return get_boto3_session(default_region=self._region)
+
+    @staticmethod
+    def _cache_identity(memory_id: str, boto_session: Any) -> tuple[str, str, str] | None:
+        """Identify the effective AWS signer without retaining its secrets.
+
+        Ambient and caller credentials both come from the resolved session, so
+        ALWAYS mode cannot accidentally reuse a caller's cache. If credential
+        resolution is ambiguous, skip the cache altogether.
+        """
+        try:
+            credentials = boto_session.get_credentials()
+            if credentials is None:
+                return None
+            frozen = credentials.get_frozen_credentials()
+            if not all(isinstance(value, str) and value for value in (frozen.access_key, frozen.secret_key)):
+                return None
+            if frozen.token is not None and not isinstance(frozen.token, str):
+                return None
+            region = boto_session.region_name
+            if not isinstance(region, str) or not region:
+                return None
+        except Exception:
+            logger.debug("Unable to resolve AWS cache identity", exc_info=True)
+            return None
+        identity = hashlib.sha256(
+            json.dumps([frozen.access_key, frozen.secret_key, frozen.token]).encode("utf-8")
+        ).hexdigest()
+        return memory_id, region, identity
+
+    @staticmethod
+    def _cache_key(
+        identity: tuple[str, str, str] | None, namespace: str, key: str
+    ) -> tuple[str, str, str, str, str] | None:
+        return (*identity, namespace, key) if identity is not None else None
+
+    async def _authorized_cache_identity(
+        self, memory_id: str, boto_session: Any, namespace: str
+    ) -> tuple[str, str, str] | None:
+        """Require a live AgentCore read before any cached record is exposed."""
+
+        def _check() -> tuple[str, str, str] | None:
+            identity = self._cache_identity(memory_id, boto_session)
+            if identity is not None:
+                self._make_session(memory_id, boto_session, namespace).get_last_k_turns(k=1)
+            return identity
+
+        verified: tuple[str, str, str] | None = await self._run_sync(_check)
+        return verified
 
     @staticmethod
     def _stable_session_id(namespace: str) -> str:
@@ -130,14 +179,22 @@ class AgentCoreMemoryProvider(SyncRunnerMixin, MemoryProvider):
             created_at=now,
             updated_at=now,
         )
-        self._kv_cache[(namespace, key)] = record
+        identity = await self._run_sync(self._cache_identity, memory_id, boto_session)
+        cache_key = self._cache_key(identity, namespace, key)
+        if cache_key is not None:
+            self._kv_cache[cache_key] = record
         return record
 
     async def retrieve(self, namespace: str, key: str) -> MemoryRecord | None:
-        # Check local KV cache first
-        cached = self._kv_cache.get((namespace, key))
+        memory_id = self._resolve_memory_id()
+        boto_session = self._resolve_boto3_session()
+        identity = await self._run_sync(self._cache_identity, memory_id, boto_session)
+        cache_key = self._cache_key(identity, namespace, key)
+        cached = self._kv_cache.get(cache_key) if cache_key is not None else None
         if cached is not None:
-            return cached
+            verified_identity = await self._authorized_cache_identity(memory_id, boto_session, namespace)
+            if verified_identity == identity:
+                return cached
         # Fall back to searching AgentCore long-term + short-term memories
         results = await self.search(namespace, query=key, top_k=10)
         for r in results:
@@ -166,6 +223,7 @@ class AgentCoreMemoryProvider(SyncRunnerMixin, MemoryProvider):
         memory_id = self._resolve_memory_id()
         boto_session = self._resolve_boto3_session()
         search_results: list[SearchResult] = []
+        cache_authorized = False
 
         # 1. Search long-term memories
         def _search_lt():
@@ -200,9 +258,11 @@ class AgentCoreMemoryProvider(SyncRunnerMixin, MemoryProvider):
             session = self._make_session(memory_id, boto_session, namespace)
             return session.get_last_k_turns(k=top_k)
 
+        query_lower = query.lower()
+
         try:
             recent_turns = await self._run_sync(_search_st)
-            query_lower = query.lower()
+            cache_authorized = True
             for turn_group in recent_turns:
                 for msg in turn_group:
                     raw = str(msg)
@@ -229,13 +289,15 @@ class AgentCoreMemoryProvider(SyncRunnerMixin, MemoryProvider):
         #    Use word-level matching as a basic approximation of semantic
         #    search: any significant query word sharing a 4-char prefix with
         #    a content word is considered a match (simple stemming heuristic).
-        query_words = {w for w in query.lower().split() if len(w) > 2}
-        for (ns, _key), rec in self._kv_cache.items():
-            if ns != namespace:
-                continue
-            content_words = set(rec.content.lower().split())
-            if any(qw[:4] == cw[:4] for qw in query_words for cw in content_words if len(cw) > 2):
-                search_results.append(SearchResult(record=rec, score=0.8))
+        if cache_authorized:
+            identity = await self._run_sync(self._cache_identity, memory_id, boto_session)
+            query_words = {w for w in query.lower().split() if len(w) > 2}
+            for (mem, region, signer, ns, _key), rec in self._kv_cache.items():
+                if identity != (mem, region, signer) or ns != namespace:
+                    continue
+                content_words = set(rec.content.lower().split())
+                if any(qw[:4] == cw[:4] for qw in query_words for cw in content_words if len(cw) > 2):
+                    search_results.append(SearchResult(record=rec, score=0.8))
 
         # Dedupe by content, sort by score
         seen: set[str] = set()
@@ -247,12 +309,10 @@ class AgentCoreMemoryProvider(SyncRunnerMixin, MemoryProvider):
         return deduped[:top_k]
 
     async def delete(self, namespace: str, key: str) -> bool:
-        # Remove from local KV cache
-        cache_hit = self._kv_cache.pop((namespace, key), None)
-
-        # Also attempt to remove from AgentCore long-term memories
         memory_id = self._resolve_memory_id()
         boto_session = self._resolve_boto3_session()
+        identity = await self._run_sync(self._cache_identity, memory_id, boto_session)
+        cache_key = self._cache_key(identity, namespace, key)
 
         def _delete():
             manager = self._make_manager(memory_id, boto_session)
@@ -274,11 +334,11 @@ class AgentCoreMemoryProvider(SyncRunnerMixin, MemoryProvider):
 
         try:
             sdk_deleted: bool = await self._run_sync(_delete)
-            return sdk_deleted or cache_hit is not None
         except Exception:
             logger.debug("Delete failed", exc_info=True)
-            # Even if SDK delete fails, cache removal counts
-            return cache_hit is not None
+            return False
+        cache_hit = self._kv_cache.pop(cache_key, None) if cache_key is not None else None
+        return sdk_deleted or cache_hit is not None
 
     async def list_memories(
         self,
@@ -290,6 +350,7 @@ class AgentCoreMemoryProvider(SyncRunnerMixin, MemoryProvider):
         memory_id = self._resolve_memory_id()
         boto_session = self._resolve_boto3_session()
         records: list[MemoryRecord] = []
+        remote_authorized = False
 
         def _list():
             session = self._make_session(memory_id, boto_session, namespace)
@@ -302,6 +363,7 @@ class AgentCoreMemoryProvider(SyncRunnerMixin, MemoryProvider):
 
         try:
             lt_records, st_turns = await self._run_sync(_list)
+            remote_authorized = True
 
             for entry in lt_records:
                 entry_dict = entry if isinstance(entry, dict) else {}
@@ -336,16 +398,20 @@ class AgentCoreMemoryProvider(SyncRunnerMixin, MemoryProvider):
         except Exception:
             logger.debug("List failed", exc_info=True)
 
-        # Include cached KV entries for this namespace
-        seen_content: set[str] = {r.content for r in records}
-        for (ns, _key), rec in self._kv_cache.items():
-            if ns != namespace:
-                continue
-            if filters and not all(rec.metadata.get(k) == v for k, v in filters.items()):
-                continue
-            if rec.content not in seen_content:
-                records.append(rec)
-                seen_content.add(rec.content)
+        # Include cached KV entries only after a successful remote read.
+        # The remote list succeeded under this request's signer; only then
+        # include local KV records belonging to the same resource and signer.
+        if remote_authorized:
+            identity = await self._run_sync(self._cache_identity, memory_id, boto_session)
+            seen_content: set[str] = {r.content for r in records}
+            for (mem, region, signer, ns, _key), rec in self._kv_cache.items():
+                if identity != (mem, region, signer) or ns != namespace:
+                    continue
+                if filters and not all(rec.metadata.get(k) == v for k, v in filters.items()):
+                    continue
+                if rec.content not in seen_content:
+                    records.append(rec)
+                    seen_content.add(rec.content)
 
         return records[offset : offset + limit]
 

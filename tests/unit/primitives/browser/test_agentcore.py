@@ -6,7 +6,19 @@ import pytest
 
 from agentic_primitives_gateway.primitives.browser.agentcore import AgentCoreBrowserProvider
 
+_WS = "agentic_primitives_gateway.primitives.browser.agentcore._generate_ws_headers"
 
+
+def _ready(provider: AgentCoreBrowserProvider, sid: str = "s1") -> MagicMock:
+    """Register an SDK session that AgentCore reports READY (interactions re-check it)."""
+    client = MagicMock(region="us-east-1")
+    client.get_session.return_value = {"status": "READY"}
+    provider._sessions[sid] = client
+    return client
+
+
+# Session binding/signing is covered by test_session_binding_* below.
+@patch("agentic_primitives_gateway.primitives.browser.agentcore.rebind_agentcore_clients", new=lambda *a, **k: None)
 @patch("agentic_primitives_gateway.primitives.browser.agentcore.get_boto3_session")
 @patch("agentic_primitives_gateway.primitives.browser.agentcore.BrowserClient")
 class TestAgentCoreBrowserProvider:
@@ -17,7 +29,6 @@ class TestAgentCoreBrowserProvider:
         mock_get_session.return_value = MagicMock(region_name="us-east-1")
         mock_client = MagicMock()
         mock_client.start.return_value = "session-123"
-        mock_client.generate_ws_headers.return_value = ("ws://cdp-url", {"Auth": "token"})
         mock_browser_client_cls.return_value = mock_client
 
         provider = AgentCoreBrowserProvider(region="us-east-1")
@@ -30,7 +41,10 @@ class TestAgentCoreBrowserProvider:
         mock_context.new_page = AsyncMock(return_value=mock_page)
         mock_pw.chromium.connect_over_cdp = AsyncMock(return_value=mock_browser)
 
-        with patch.object(provider, "_ensure_playwright", new_callable=AsyncMock, return_value=mock_pw):
+        with (
+            patch.object(provider, "_ensure_playwright", new_callable=AsyncMock, return_value=mock_pw),
+            patch(_WS, return_value=("ws://cdp-url", {"Auth": "token"})),
+        ):
             result = await provider.start_session(session_id="my-sess")
 
         assert result["session_id"] == "session-123"
@@ -42,12 +56,14 @@ class TestAgentCoreBrowserProvider:
         mock_get_session.return_value = MagicMock(region_name="us-east-1")
         mock_client = MagicMock()
         mock_client.start.return_value = "sess-fail"
-        mock_client.generate_ws_headers.side_effect = Exception("CDP failed")
         mock_browser_client_cls.return_value = mock_client
 
         provider = AgentCoreBrowserProvider()
 
-        with patch.object(provider, "_ensure_playwright", new_callable=AsyncMock):
+        with (
+            patch.object(provider, "_ensure_playwright", new_callable=AsyncMock),
+            patch(_WS, side_effect=Exception("CDP failed")),
+        ):
             result = await provider.start_session()
 
         # Should still succeed, just without Playwright
@@ -60,11 +76,13 @@ class TestAgentCoreBrowserProvider:
         mock_get_session.return_value = MagicMock(region_name="us-east-1")
         mock_client = MagicMock()
         mock_client.start.return_value = {"sessionId": "dict-sess"}
-        mock_client.generate_ws_headers.side_effect = Exception("skip CDP")
         mock_browser_client_cls.return_value = mock_client
 
         provider = AgentCoreBrowserProvider()
-        with patch.object(provider, "_ensure_playwright", new_callable=AsyncMock):
+        with (
+            patch.object(provider, "_ensure_playwright", new_callable=AsyncMock),
+            patch(_WS, side_effect=Exception("skip CDP")),
+        ):
             result = await provider.start_session()
 
         assert result["session_id"] == "dict-sess"
@@ -103,9 +121,38 @@ class TestAgentCoreBrowserProvider:
         assert "s1" not in provider._sessions
 
     @pytest.mark.asyncio
+    async def test_failed_stop_preserves_playwright_until_remote_success(
+        self, mock_browser_client_cls, mock_get_session
+    ):
+        provider = AgentCoreBrowserProvider()
+        client = MagicMock(region="us-east-1")
+        client.stop.side_effect = RuntimeError("ExpiredToken")
+        page, browser = AsyncMock(), AsyncMock()
+        provider._sessions["s1"] = client
+        provider._pages["s1"] = page
+        provider._browsers["s1"] = browser
+
+        with pytest.raises(RuntimeError, match="ExpiredToken"):
+            await provider.stop_session("s1")
+
+        assert provider._pages["s1"] is page
+        assert provider._browsers["s1"] is browser
+        assert provider._sessions["s1"] is client
+        page.close.assert_not_awaited()
+        browser.close.assert_not_awaited()
+
+        client.stop.side_effect = None
+        await provider.stop_session("s1")
+        page.close.assert_awaited_once()
+        browser.close.assert_awaited_once()
+        assert "s1" not in provider._pages
+        assert "s1" not in provider._browsers
+        assert "s1" not in provider._sessions
+
+    @pytest.mark.asyncio
     async def test_get_session_found(self, mock_browser_client_cls, mock_get_session):
         provider = AgentCoreBrowserProvider()
-        provider._sessions["s1"] = MagicMock()
+        client = _ready(provider)
         mock_page = MagicMock()
         mock_page.url = "https://example.com"
         provider._pages["s1"] = mock_page
@@ -113,6 +160,53 @@ class TestAgentCoreBrowserProvider:
         result = await provider.get_session("s1")
         assert result["session_id"] == "s1"
         assert result["url"] == "https://example.com"
+        client.get_session.assert_called_once_with()
+
+    @pytest.mark.asyncio
+    async def test_get_session_rechecks_current_aws_access(self, mock_browser_client_cls, mock_get_session):
+        provider = AgentCoreBrowserProvider()
+        client = _ready(provider)
+        page = MagicMock(url="https://private.example.com/secret")
+        provider._pages["s1"] = page
+        client.get_session.side_effect = [
+            {"status": "READY"},
+            RuntimeError("ExpiredToken"),
+            {"status": "STOPPED"},
+        ]
+        sessions = [MagicMock(region_name="us-east-1") for _ in range(3)]
+        mock_get_session.side_effect = sessions
+
+        with patch("agentic_primitives_gateway.primitives.browser.agentcore.rebind_agentcore_clients") as rebind:
+            assert (await provider.get_session("s1"))["url"] == page.url
+            with pytest.raises(RuntimeError, match="ExpiredToken"):
+                await provider.get_session("s1")
+            with pytest.raises(ValueError, match="not active"):
+                await provider.get_session("s1")
+
+        assert client.get_session.call_count == 3
+        assert [call.args[1] for call in rebind.call_args_list] == sessions
+
+    @pytest.mark.asyncio
+    async def test_get_session_without_caller_aws_credentials_refuses(self, mock_browser_client_cls, mock_get_session):
+        from agentic_primitives_gateway.config import settings
+        from agentic_primitives_gateway.context import get_aws_credentials, get_boto3_session, set_aws_credentials
+        from agentic_primitives_gateway.models.enums import ServerCredentialMode
+
+        provider = AgentCoreBrowserProvider()
+        client = _ready(provider)
+        provider._pages["s1"] = MagicMock(url="https://private.example.com/secret")
+        previous = get_aws_credentials()
+        try:
+            set_aws_credentials(None)
+            with (
+                patch.object(settings, "allow_server_credentials", ServerCredentialMode.NEVER),
+                patch("agentic_primitives_gateway.primitives.browser.agentcore.get_boto3_session", get_boto3_session),
+                pytest.raises(ValueError, match="No AWS credentials"),
+            ):
+                await provider.get_session("s1")
+        finally:
+            set_aws_credentials(previous)
+        client.get_session.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_get_session_not_found(self, mock_browser_client_cls, mock_get_session):
@@ -132,12 +226,17 @@ class TestAgentCoreBrowserProvider:
     @pytest.mark.asyncio
     async def test_get_live_view_url(self, mock_browser_client_cls, mock_get_session):
         provider = AgentCoreBrowserProvider()
-        mock_client = MagicMock()
-        mock_client.generate_live_view_url.return_value = "https://live.example.com"
-        provider._sessions["s1"] = mock_client
+        provider._sessions["s1"] = MagicMock()
 
-        result = await provider.get_live_view_url("s1", expires=600)
+        with patch(
+            "agentic_primitives_gateway.primitives.browser.agentcore._generate_live_view_url",
+            return_value="https://live.example.com",
+        ) as gen:
+            result = await provider.get_live_view_url("s1", expires=120)
         assert result == "https://live.example.com"
+        # Signed with the *current* request's session, not the one that started the session.
+        assert gen.call_args.args[1] is mock_get_session.return_value
+        assert gen.call_args.kwargs == {"expires": 120}
 
     @pytest.mark.asyncio
     async def test_get_live_view_url_not_found(self, mock_browser_client_cls, mock_get_session):
@@ -155,6 +254,7 @@ class TestAgentCoreBrowserProvider:
         mock_page.goto.return_value = mock_response
         mock_page.title.return_value = "Example"
         provider._pages["s1"] = mock_page
+        _ready(provider)
 
         result = await provider.navigate("s1", "https://example.com")
         assert result["url"] == "https://example.com"
@@ -173,6 +273,7 @@ class TestAgentCoreBrowserProvider:
         mock_page = AsyncMock()
         mock_page.screenshot.return_value = b"\x89PNG"
         provider._pages["s1"] = mock_page
+        _ready(provider)
 
         result = await provider.screenshot("s1")
         assert isinstance(result, str)  # base64 encoded
@@ -183,6 +284,7 @@ class TestAgentCoreBrowserProvider:
         mock_page = AsyncMock()
         mock_page.evaluate.return_value = "Page text content"
         provider._pages["s1"] = mock_page
+        _ready(provider)
 
         result = await provider.get_page_content("s1")
         assert result == "Page text content"
@@ -192,6 +294,7 @@ class TestAgentCoreBrowserProvider:
         provider = AgentCoreBrowserProvider()
         mock_page = AsyncMock()
         provider._pages["s1"] = mock_page
+        _ready(provider)
 
         result = await provider.click("s1", "#button")
         assert result["status"] == "clicked"
@@ -202,6 +305,7 @@ class TestAgentCoreBrowserProvider:
         provider = AgentCoreBrowserProvider()
         mock_page = AsyncMock()
         provider._pages["s1"] = mock_page
+        _ready(provider)
 
         result = await provider.type_text("s1", "#input", "hello")
         assert result["status"] == "typed"
@@ -213,6 +317,7 @@ class TestAgentCoreBrowserProvider:
         mock_page = AsyncMock()
         mock_page.evaluate.return_value = {"key": "value"}
         provider._pages["s1"] = mock_page
+        _ready(provider)
 
         result = await provider.evaluate("s1", "JSON.parse('{}')")
         assert result == {"key": "value"}
@@ -228,7 +333,6 @@ class TestAgentCoreBrowserProvider:
         mock_get_session.return_value = MagicMock(region_name="us-east-1")
         mock_client = MagicMock()
         mock_client.start.return_value = "s-new"
-        mock_client.generate_ws_headers.return_value = ("ws://url", {})
         mock_browser_client_cls.return_value = mock_client
 
         provider = AgentCoreBrowserProvider()
@@ -242,8 +346,30 @@ class TestAgentCoreBrowserProvider:
         mock_browser.new_context = AsyncMock(return_value=mock_new_context)
         mock_pw.chromium.connect_over_cdp = AsyncMock(return_value=mock_browser)
 
-        with patch.object(provider, "_ensure_playwright", new_callable=AsyncMock, return_value=mock_pw):
+        with (
+            patch.object(provider, "_ensure_playwright", new_callable=AsyncMock, return_value=mock_pw),
+            patch(_WS, return_value=("ws://url", {})),
+        ):
             result = await provider.start_session()
 
         assert result["session_id"] == "s-new"
         mock_browser.new_context.assert_awaited_once()
+
+
+def test_session_binding_uses_request_credentials_not_ambient():
+    """SDK clients and SigV4 signing must use the request session, not ``boto3.Session()``."""
+    import boto3
+
+    from agentic_primitives_gateway.primitives.browser.agentcore import _session_browser_client
+
+    session = boto3.Session(
+        aws_access_key_id="AKIACALLER", aws_secret_access_key="caller-secret", region_name="us-west-2"
+    )
+    client = _session_browser_client(session)
+    for c in (client.control_plane_client, client.data_plane_client):
+        assert c._request_signer._credentials.access_key == "AKIACALLER"
+    client._identifier, client._session_id = "aws.browser.v1", "s1"
+
+    _, headers = client.generate_ws_headers()
+    assert "Credential=AKIACALLER/" in headers["Authorization"]
+    assert "X-Amz-Credential=AKIACALLER%2F" in client.generate_live_view_url(expires=60)

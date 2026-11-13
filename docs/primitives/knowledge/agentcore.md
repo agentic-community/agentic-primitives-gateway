@@ -20,7 +20,7 @@ providers:
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `region` | `us-east-1` | AWS region |
-| `knowledge_base_id` | – | KB to retrieve against. Resolved per-request from the `X-Cred-Agentcore-Knowledgebase-Id` header when present. |
+| `knowledge_base_id` | – | KB to retrieve against. A per-request `X-Cred-Agentcore-Knowledgebase-Id` header overrides it only when the request also carries the caller's own AWS credentials; under the gateway's ambient AWS identity the configured ID always applies. |
 | `data_source_id` | – | KB data source ID; required to trigger `ingest()` (which starts an ingestion job, not a doc upload). |
 | `default_model_arn` | – | Foundation model ARN used by `query()` (native retrieve-and-generate). |
 

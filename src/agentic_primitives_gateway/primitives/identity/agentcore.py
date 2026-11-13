@@ -15,6 +15,7 @@ from agentic_primitives_gateway.models.enums import (
     CredentialProviderType,
     TokenType,
 )
+from agentic_primitives_gateway.primitives._agentcore import rebind_agentcore_clients
 from agentic_primitives_gateway.primitives._sync import SyncRunnerMixin
 from agentic_primitives_gateway.primitives.identity.base import IdentityProvider
 
@@ -39,9 +40,15 @@ class AgentCoreIdentityProvider(SyncRunnerMixin, IdentityProvider):
         logger.info("AgentCore identity provider initialized (region=%s)", region)
 
     def _get_client(self) -> IdentityClient:
-        """Create an IdentityClient using the current request's boto3 session."""
+        """Create an IdentityClient bound to the current request's boto3 session.
+
+        The SDK builds its clients with the global ``boto3.client`` (ambient
+        credentials) and only accepts a region, so rebind them to the session.
+        """
         session = get_boto3_session(default_region=self._region)
-        return IdentityClient(region=session.region_name)
+        client = IdentityClient(region=session.region_name)
+        rebind_agentcore_clients(client, session, control_plane="cp_client", data_plane="dp_client")
+        return client
 
     # ── Data plane — runtime token operations ─────────────────────
 

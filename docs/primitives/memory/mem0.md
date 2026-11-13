@@ -105,8 +105,10 @@ results = await memory.search("market projections")
 2. **Search**: the query is embedded using the same model, then Milvus performs approximate nearest neighbor (ANN) search
 3. **Memory extraction**: Mem0 can automatically extract and organize key facts from longer content using the configured LLM
 
+Store and delete operations serialize the key lookup and mutation inside one gateway process, so concurrent stores of the same `(namespace, key)` do not insert duplicate records there. This lock does **not** coordinate multiple gateway replicas: use a backend-enforced unique key or a distributed lock if your deployment requires cross-replica uniqueness. Delete scans all existing rows for the key (including past Mem0's default 20-result limit) and removes each match, cleaning up duplicates from earlier cross-replica writes. It is not an atomic distributed delete: another replica can write the same key during or after the scan. Non-Bedrock reads are not serialized behind these writes.
+
 ## Prerequisites
 
 - `pip install agentic-primitives-gateway[mem0]`
 - Running Milvus instance
-- AWS credentials for Bedrock (if using Bedrock for LLM/embeddings)
+- AWS credentials for Bedrock (if using Bedrock for LLM/embeddings). Each operation rebinds mem0's Bedrock LLM/embedder clients to the request's AWS session — the caller's `X-AWS-*` / OIDC credentials, or the server chain as `allow_server_credentials` permits (`always` ignores caller keys; `never` requires them). The shared mem0 instance is first built with the requesting caller's credentials (not the process environment); the temporary configuration and both the stored mem0 configuration and component configurations are scrubbed afterwards. The process environment is never modified. Only top-level `llm` / `embedder` with `aws_bedrock` are supported as AWS-backed components; `neptune`, `s3_vectors`, unknown providers and configurable bridge providers are rejected before initialization so unbound components cannot run as the gateway's AWS identity. Anonymous readiness checks Milvus collection availability when Milvus is configured and returns `reachable` without constructing mem0 or using AWS; it is not a Bedrock connectivity check. Other Bedrock-backed vector stores also report `reachable` without a backend probe.

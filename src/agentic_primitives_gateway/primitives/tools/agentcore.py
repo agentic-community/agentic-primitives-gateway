@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from agentic_primitives_gateway.context import get_service_credentials
+from agentic_primitives_gateway.context import get_service_credentials_or_defaults
 from agentic_primitives_gateway.primitives._sync import SyncRunnerMixin
 from agentic_primitives_gateway.primitives.tools.base import ToolsProvider
 
@@ -19,9 +19,11 @@ class AgentCoreGatewayProvider(SyncRunnerMixin, ToolsProvider):
 
     The gateway endpoint is operator configuration only (provider config
     ``gateway_url`` or ``gateway_id``) — caller credentials can't redirect it.
-    The access token can come from the client header
-    ``X-Cred-Agentcore-Gateway-Token`` or the ``apg.agentcore.gateway_token``
-    OIDC attribute.
+    The access token follows ``allow_server_credentials`` like any other
+    credential: the caller's ``X-Cred-Agentcore-Gateway-Token`` header or
+    ``apg.agentcore.gateway_token`` OIDC attribute, with the optional
+    operator ``gateway_token`` used only under ``fallback`` (no caller
+    token) or ``always`` (caller token ignored).
 
     Provider config example::
 
@@ -30,6 +32,7 @@ class AgentCoreGatewayProvider(SyncRunnerMixin, ToolsProvider):
           region: "us-east-1"
           gateway_id: "your-gateway-id"
           gateway_url: "https://gateway-id.gateway.bedrock-agentcore.region.amazonaws.com/mcp"
+          gateway_token: "${AGENTCORE_GATEWAY_TOKEN:=}"  # optional operator token
     """
 
     def __init__(
@@ -37,11 +40,13 @@ class AgentCoreGatewayProvider(SyncRunnerMixin, ToolsProvider):
         region: str = "us-east-1",
         gateway_id: str | None = None,
         gateway_url: str | None = None,
+        gateway_token: str | None = None,
         **kwargs: Any,
     ) -> None:
         self._region = region
         self._default_gateway_id = gateway_id
         self._default_gateway_url = gateway_url
+        self._default_gateway_token = gateway_token or None
         logger.info(
             "AgentCore Gateway tools provider initialized (region=%s, gateway_id=%s)",
             region,
@@ -61,9 +66,14 @@ class AgentCoreGatewayProvider(SyncRunnerMixin, ToolsProvider):
         )
 
     def _resolve_access_token(self) -> str | None:
-        """Resolve access token from context."""
-        creds = get_service_credentials("agentcore")
-        return (creds or {}).get("gateway_token")
+        """Resolve the access token under ``allow_server_credentials``."""
+        try:
+            creds = get_service_credentials_or_defaults("agentcore", {"gateway_token": self._default_gateway_token})
+        except ValueError:
+            # ``never`` with no caller credentials: call unauthenticated
+            # rather than fall back to an operator token.
+            return None
+        return creds.get("gateway_token")
 
     async def list_tools(self, filters: dict[str, Any] | None = None) -> list[dict[str, Any]]:
         gateway_url = self._resolve_gateway_url()

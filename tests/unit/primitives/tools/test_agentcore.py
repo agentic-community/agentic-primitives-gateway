@@ -4,10 +4,35 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from agentic_primitives_gateway.config import settings
+from agentic_primitives_gateway.context import set_service_credentials
+from agentic_primitives_gateway.models.enums import ServerCredentialMode
 from agentic_primitives_gateway.primitives.tools.agentcore import AgentCoreGatewayProvider
 
 
-@patch("agentic_primitives_gateway.primitives.tools.agentcore.get_service_credentials")
+@pytest.mark.parametrize(
+    ("mode", "caller", "expected"),
+    [
+        (ServerCredentialMode.NEVER, None, None),  # never → no operator token
+        (ServerCredentialMode.NEVER, "caller-tok", "caller-tok"),
+        (ServerCredentialMode.FALLBACK, None, "op-tok"),
+        (ServerCredentialMode.FALLBACK, "caller-tok", "caller-tok"),
+        (ServerCredentialMode.ALWAYS, "caller-tok", "op-tok"),  # always ignores caller token
+    ],
+)
+def test_gateway_token_follows_credential_mode(mode, caller, expected):
+    prev = settings.allow_server_credentials
+    settings.allow_server_credentials = mode
+    set_service_credentials({"agentcore": {"gateway_token": caller}} if caller else {})
+    try:
+        provider = AgentCoreGatewayProvider(gateway_url="https://gw.internal/mcp", gateway_token="op-tok")
+        assert provider._resolve_access_token() == expected
+    finally:
+        settings.allow_server_credentials = prev
+        set_service_credentials({})
+
+
+@patch("agentic_primitives_gateway.context.get_service_credentials")
 class TestAgentCoreGatewayProvider:
     """Tests for the AgentCore Gateway tools provider."""
 

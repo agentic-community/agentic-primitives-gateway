@@ -7,6 +7,9 @@ import pytest
 from agentic_primitives_gateway.primitives.identity.agentcore import AgentCoreIdentityProvider
 
 
+# Session binding is covered by test_session_binding_* below; these tests
+# exercise API translation against the mocked SDK client's cp/dp clients.
+@patch("agentic_primitives_gateway.primitives.identity.agentcore.rebind_agentcore_clients", new=lambda *a, **k: None)
 @patch("agentic_primitives_gateway.primitives.identity.agentcore.get_boto3_session")
 @patch("agentic_primitives_gateway.primitives.identity.agentcore.IdentityClient")
 class TestAgentCoreIdentityProvider:
@@ -387,3 +390,17 @@ class TestAgentCoreIdentityProvider:
 
         # Should use session's region, not provider config region
         mock_identity_client_cls.assert_called_with(region="eu-west-1")
+
+
+def test_session_binding_uses_request_credentials_not_ambient():
+    """The SDK builds clients with global ``boto3.client``; they must be rebound."""
+    from agentic_primitives_gateway.context import AWSCredentials, set_aws_credentials
+
+    set_aws_credentials(AWSCredentials(access_key_id="AKIACALLER", secret_access_key="caller-secret"))
+    try:
+        client = AgentCoreIdentityProvider(region="us-west-2")._get_client()
+    finally:
+        set_aws_credentials(None)
+    for c in (client.cp_client, client.dp_client):
+        assert c._request_signer._credentials.access_key == "AKIACALLER"
+        assert c.meta.region_name == "us-west-2"
