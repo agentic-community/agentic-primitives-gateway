@@ -1,5 +1,6 @@
 import contextlib
 import logging
+import uuid
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
@@ -43,7 +44,12 @@ from agentic_primitives_gateway.models.agents import (
     UpdateAgentRequest,
 )
 from agentic_primitives_gateway.registry import registry
-from agentic_primitives_gateway.routes._background import BackgroundRunManager, reconnect_event_generator, sse_response
+from agentic_primitives_gateway.routes._background import (
+    BackgroundRunManager,
+    reconnect_event_generator,
+    run_event_key,
+    sse_response,
+)
 from agentic_primitives_gateway.routes._helpers import (
     require_admin,
     require_principal,
@@ -51,7 +57,9 @@ from agentic_primitives_gateway.routes._helpers import (
 )
 
 logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api/v1/agents", tags=["agents"])
+
 
 _store: AgentStore | None = None
 _runner = AgentRunner()
@@ -77,6 +85,19 @@ def _get_store() -> AgentStore:
     if _store is None:
         raise RuntimeError("Agent store not initialized")
     return _store
+
+
+def _session_run_key(spec: AgentSpec, session_id: str) -> str:
+    return run_event_key("agent", require_principal().id, spec.owner_id, spec.name, session_id)
+
+
+async def _require_session_run_owner(spec: AgentSpec, session_id: str) -> str:
+    key = _session_run_key(spec, session_id)
+    owner = await _bg.get_owner_async(key)
+    principal = require_principal()
+    if owner is None or (owner != principal.id and not principal.is_admin):
+        raise HTTPException(status_code=403, detail="Forbidden")
+    return key
 
 
 def _ns_kind(owner_id: str) -> str:
@@ -421,11 +442,38 @@ async def chat_with_agent(name: str, request: ChatRequest) -> ChatResponse:
         resource_id=spec.name,
     )
 
-    return await _runner.run(
-        spec=spec,
-        message=request.message,
-        session_id=request.session_id,
-    )
+    principal = require_principal()
+    session_id = request.session_id or uuid.uuid4().hex[:16]
+    key = _session_run_key(spec, session_id)
+    if not await _bg.reserve(
+        key, principal.id, claim_key=f"agent-id:{principal.id}:{session_id}", claim_identity=key, reuse=True
+    ):
+        raise HTTPException(status_code=409, detail="Session run ID already in use")
+    try:
+        previous = await _bg.get_events_async(key)
+        if previous and previous[0].get("type") == "a2a_started":
+            raise HTTPException(status_code=409, detail="A2A task ID cannot be reused as a chat session")
+        if _runner._checkpoint_store:
+            await _runner._checkpoint_store.clear_cancelled(key)
+
+        async def execute():
+            response = await _runner.run(spec=spec, message=request.message, session_id=session_id)
+            yield {"type": "done", "response": response.model_dump()}
+
+        queue, _ = _bg.start(key, execute(), owner_id=principal.id)
+        result: dict | None = None
+        while (event := await queue.get()) is not None:
+            result = event
+        if result is None:
+            raise RuntimeError("Chat run ended without a result")
+        if result.get("type") == "error":
+            raise RuntimeError(str(result.get("detail", "Chat run failed")))
+        if result.get("type") == "cancelled":
+            raise HTTPException(status_code=409, detail="Chat run cancelled")
+        return ChatResponse(**result["response"])
+    finally:
+        if not _bg.is_running(key):
+            await _bg.abandon(key)
 
 
 @router.post("/{name}/chat/stream")
@@ -445,12 +493,29 @@ async def chat_with_agent_stream(name: str, request: ChatRequest) -> StreamingRe
         resource_id=spec.name,
     )
 
-    session_id = request.session_id or ""
-    queue, _ = _bg.start(
-        session_id,
-        _runner.run_stream(spec=spec, message=request.message, session_id=request.session_id),
-        owner_id=require_principal().id,
-    )
+    principal = require_principal()
+    session_id = request.session_id or uuid.uuid4().hex[:16]
+    key = _session_run_key(spec, session_id)
+    if not await _bg.reserve(
+        key, principal.id, claim_key=f"agent-id:{principal.id}:{session_id}", claim_identity=key, reuse=True
+    ):
+        raise HTTPException(status_code=409, detail="Session run ID already in use")
+    try:
+        previous = await _bg.get_events_async(key)
+        if previous and previous[0].get("type") == "a2a_started":
+            raise HTTPException(status_code=409, detail="A2A task ID cannot be reused as a chat session")
+        if _runner._checkpoint_store:
+            await _runner._checkpoint_store.clear_cancelled(key)
+        await _bg.reset_events(key)
+        queue, _ = _bg.start(
+            key,
+            _runner.run_stream(spec=spec, message=request.message, session_id=session_id),
+            owner_id=principal.id,
+            record_events=True,
+        )
+    except BaseException:
+        await _bg.abandon(key)
+        raise
     return sse_response(queue, strip_fields=frozenset({"full_result", "tool_input"}))
 
 
@@ -539,15 +604,11 @@ async def stream_session_events(name: str, session_id: str) -> StreamingResponse
     Used by the UI to reconnect after a stream drop.
     """
     store = _get_store()
-    await resolve_agent_spec(store, name, require_principal())
-
-    # Verify run ownership
-    owner = await _bg.get_owner_async(session_id)
-    if owner and owner != require_principal().id and not require_principal().is_admin:
-        raise HTTPException(status_code=403, detail="Forbidden")
+    spec = await resolve_agent_spec(store, name, require_principal())
+    key = await _require_session_run_owner(spec, session_id)
 
     return StreamingResponse(
-        reconnect_event_generator(_bg, session_id, done_event_types=frozenset({"done"})),
+        reconnect_event_generator(_bg, key, done_event_types=frozenset({"done"})),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
@@ -557,50 +618,48 @@ async def stream_session_events(name: str, session_id: str) -> StreamingResponse
 async def get_session_status(name: str, session_id: str) -> dict:
     """Check if a run is currently active for this session."""
     store = _get_store()
-    await resolve_agent_spec(store, name, require_principal())
-
-    # Verify run ownership
-    owner = await _bg.get_owner_async(session_id)
-    if owner and owner != require_principal().id and not require_principal().is_admin:
+    spec = await resolve_agent_spec(store, name, require_principal())
+    key = _session_run_key(spec, session_id)
+    owner = await _bg.get_owner_async(key)
+    principal = require_principal()
+    if owner is not None and owner != principal.id and not principal.is_admin:
         raise HTTPException(status_code=403, detail="Forbidden")
-
+    if owner is None:
+        raw_owner = await _bg.get_owner_async(f"agent-id:{principal.id}:{session_id}")
+        if raw_owner is not None and raw_owner != key:
+            raise HTTPException(status_code=403, detail="Forbidden")
+        return {"status": "idle"}
     _bg.cleanup()
-    return {"status": await _bg.get_status_async(session_id)}
+    return {"status": await _bg.get_status_async(key)}
 
 
 @router.delete("/{name}/sessions/{session_id}/run")
 async def cancel_session_run(name: str, session_id: str) -> dict:
     """Cancel an active agent run for this session."""
     store = _get_store()
-    await resolve_agent_spec(store, name, require_principal())
-
-    # Verify run ownership via event store
-    owner = await _bg.get_owner_async(session_id)
-    if owner and owner != require_principal().id and not require_principal().is_admin:
-        raise HTTPException(status_code=403, detail="Forbidden")
+    spec = await resolve_agent_spec(store, name, require_principal())
+    key = await _require_session_run_owner(spec, session_id)
+    if _runner._checkpoint_store:
+        await _runner._checkpoint_store.mark_cancelled(key)
 
     # Try to cancel the local background task (works for non-recovered runs)
-    await _bg.cancel(session_id)
+    await _bg.cancel(key)
 
     # Also try to cancel a recovery task (works for resumed runs on this replica)
     from agentic_primitives_gateway.agents.checkpoint import cancel_recovery_task
 
-    cancel_recovery_task(session_id)
+    cancel_recovery_task(key)
 
     # Set event store status to cancelled (works for both local and recovered runs)
     if _bg._event_store:
         with contextlib.suppress(Exception):
-            await _bg._event_store.set_status(session_id, "cancelled")
-            await _bg._event_store.append_event(session_id, {"type": "cancelled"})
+            await _bg._event_store.set_status(key, "cancelled")
+            await _bg._event_store.append_event(key, {"type": "cancelled"})
 
     # Delete checkpoint so orphan recovery doesn't resume this run
     if _runner._checkpoint_store:
-        principal = require_principal()
         with contextlib.suppress(Exception):
-            await _runner._checkpoint_store.delete(f"{principal.id}:{session_id}")
-        # Signal cross-replica cancellation for recovered runs on other replicas
-        with contextlib.suppress(Exception):
-            await _runner._checkpoint_store.mark_cancelled(session_id)
+            await _runner._checkpoint_store.delete(key)
 
     return {"status": "cancelled"}
 

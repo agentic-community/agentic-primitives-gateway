@@ -90,7 +90,7 @@ See [Streaming](../concepts/streaming.md) for team event types, and [Teams](../c
 
 ## Runs (History & Status)
 
-Multiple runs can exist per team. Each run has a `team_run_id` generated when the run starts.
+Multiple runs can exist per team. Each run has a generated `team_run_id`; its event replay, status, task board, and cancellation are restricted to the caller and the resolved team identity. Agent sessions, other teams, and task retries use separate event keys even when their raw IDs match. Unknown or foreign runs are denied.
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -108,7 +108,7 @@ Multiple runs can exist per team. Each run has a `team_run_id` generated when th
 curl -N http://localhost:8000/api/v1/teams/research-team/runs/abc123/stream
 ```
 
-Reconnects to a running or recently-completed team run. Replays all stored events from the event store with token throttling for smooth playback, then polls for new events if the run is still active. Returns `text/event-stream`.
+Reconnects to a running or recently-completed team run owned by the caller. Replays only this team's stored events from the event store with token throttling, then polls for new events if the run is still active. Returns `text/event-stream`.
 
 ### Cancel Active Run
 
@@ -116,13 +116,13 @@ Reconnects to a running or recently-completed team run. Replays all stored event
 curl -X DELETE http://localhost:8000/api/v1/teams/research-team/runs/abc123/cancel
 ```
 
-Cancels the active team run using cooperative cancellation. The runner checks an `asyncio.Event` at every worker checkpoint; when triggered, all in-progress tasks are marked as failed and the run terminates. Works for both local runs and runs recovered from a checkpoint on another replica.
+Cancellation checks a caller- and team-scoped signal before further planner, replanner and worker tool calls. Pending and in-progress tasks are marked failed. A recovery attempt rechecks cancellation before reviving a checkpoint, and its renewable lock prevents two replicas from executing the same run. The response is unavailable for unknown or foreign runs.
 
 ```json
-{"status": "cancelled", "team_run_id": "abc123"}
+{"status": "cancelled"}
 ```
 
-Returns 404 if no active run exists for the given ID.
+Returns 403 for unknown or foreign team runs.
 
 ### List Runs
 

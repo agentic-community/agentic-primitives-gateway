@@ -10,6 +10,7 @@ import pytest
 from agentic_primitives_gateway.routes._background import (
     BackgroundRunManager,
     RedisEventStore,
+    run_event_key,
 )
 
 
@@ -19,8 +20,11 @@ def _mock_redis() -> AsyncMock:
     lists: dict[str, list[str]] = {}
     r = AsyncMock()
 
-    async def set_cmd(key, value, ex=None):
+    async def set_cmd(key, value, ex=None, nx=False):
+        if nx and key in strings:
+            return None
         strings[key] = value
+        return True
 
     async def get_cmd(key):
         return strings.get(key)
@@ -42,11 +46,20 @@ def _mock_redis() -> AsyncMock:
             strings.pop(k, None)
             lists.pop(k, None)
 
-    async def rename(old, new):
-        if old in strings:
-            strings[new] = strings.pop(old)
-        if old in lists:
-            lists[new] = lists.pop(old)
+    async def eval_cmd(script, numkeys, *params):
+        keys, args = params[:numkeys], params[numkeys:]
+        if strings.get(keys[0]) != args[0]:
+            return 0
+        if numkeys == 2 and "rpush" in script:
+            lists.setdefault(keys[1], []).append(args[1])
+            return 1
+        if numkeys == 2 and "set" in script:
+            strings[keys[1]] = args[1]
+            return 1
+        if "expire" in script:
+            return 1
+        del strings[keys[0]]
+        return 1
 
     r.set = AsyncMock(side_effect=set_cmd)
     r.get = AsyncMock(side_effect=get_cmd)
@@ -54,7 +67,7 @@ def _mock_redis() -> AsyncMock:
     r.lrange = AsyncMock(side_effect=lrange)
     r.expire = AsyncMock(side_effect=expire)
     r.delete = AsyncMock(side_effect=delete)
-    r.rename = AsyncMock(side_effect=rename)
+    r.eval = AsyncMock(side_effect=eval_cmd)
     return r
 
 
@@ -95,19 +108,23 @@ class TestRedisEventStore:
         assert await store.get_status("run1") is None
         assert await store.get_events("run1") == []
 
-    async def test_rename_key(self, store: RedisEventStore) -> None:
-        await store.set_status("old", "running")
-        await store.append_event("old", {"type": "start"})
+    async def test_claim_is_atomic_and_delete_preserves_owner(self, store: RedisEventStore) -> None:
+        assert await store.claim_owner("agent-id:shared", "alice")
+        assert not await store.claim_owner("agent-id:shared", "bob")
+        assert await store.claim_owner("agent-id:shared", "alice", reuse=True)
+        assert not await store.claim_owner("agent-id:shared", "alice")
+        await store.append_event("agent-id:shared", {"type": "done"})
+        await store.delete("agent-id:shared")
+        assert await store.get_events("agent-id:shared") == []
+        assert await store.get_owner("agent-id:shared") == "alice"
+        assert not await store.claim_owner("agent-id:shared", "bob")
 
-        await store.rename_key("old", "new")
-
-        assert await store.get_status("new") == "running"
-        assert len(await store.get_events("new")) == 1
-        assert await store.get_status("old") is None
-
-    async def test_rename_missing_key(self, store: RedisEventStore) -> None:
-        # Should not raise even if keys don't exist
-        await store.rename_key("nonexistent", "also_nonexistent")
+    async def test_new_turn_clears_events_but_not_owner(self, store: RedisEventStore) -> None:
+        await store.claim_owner("event:owned", "alice")
+        await store.append_event("event:owned", {"type": "token", "content": "old"})
+        await store.clear_events("event:owned")
+        assert await store.get_events("event:owned") == []
+        assert await store.get_owner("event:owned") == "alice"
 
 
 class TestBackgroundRunManagerAsync:
@@ -128,13 +145,15 @@ class TestBackgroundRunManagerAsync:
         assert await mgr.get_status_async("s1") == "idle"
         store.get_status.assert_awaited_once_with("s1")
 
-    async def test_get_status_async_ignores_stale_running(self) -> None:
-        """Redis 'running' without a local task means the run was lost — return idle."""
+    async def test_get_status_async_trusts_only_active_remote_running(self) -> None:
         store = AsyncMock()
         store.get_status = AsyncMock(return_value="running")
+        store.is_active = AsyncMock(return_value=False)
         mgr = BackgroundRunManager(event_store=store)
 
         assert await mgr.get_status_async("s1") == "idle"
+        store.is_active.return_value = True
+        assert await mgr.get_status_async("s1") == "running"
 
     async def test_get_status_async_idle_no_store(self) -> None:
         mgr = BackgroundRunManager()
@@ -165,29 +184,115 @@ class TestBackgroundRunManagerAsync:
         events = await mgr.get_events_async("s1")
         assert events == [{"type": "local_event"}]
 
-    async def test_start_with_event_store(self) -> None:
-        store = AsyncMock()
-        store.set_status = AsyncMock()
-        store.append_event = AsyncMock()
-        store.rename_key = AsyncMock()
-        mgr = BackgroundRunManager(event_store=store)
+    async def test_shared_redis_prevents_owner_and_type_collision(self) -> None:
+        fake = _mock_redis()
+        with patch("redis.asyncio.from_url", return_value=fake):
+            first_store = RedisEventStore()
+            second_store = RedisEventStore()
+        first = BackgroundRunManager(event_store=first_store)
+        second = BackgroundRunManager(event_store=second_store)
+        agent = run_event_key("agent", "alice", "system", "shared", "same-id")
+        team = run_event_key("team", "alice", "system", "shared", "same-id")
+        assert agent != team
+        assert await first.reserve(agent, "alice", claim_key="agent-id:same-id", claim_identity=agent, reuse=True)
+        bob_agent = run_event_key("agent", "bob", "system", "shared", "same-id")
+        assert not await second.reserve(
+            bob_agent, "bob", claim_key="agent-id:same-id", claim_identity=bob_agent, reuse=True
+        )
+        assert await second.reserve(team, "alice", claim_key="team-id:same-id", claim_identity=team)
+        assert await first.get_owner_async(agent) == "alice"
+        assert await second.get_owner_async(team) == "alice"
+        await first_store.append_event(agent, {"type": "token", "content": "agent secret"})
+        await second_store.append_event(team, {"type": "token", "content": "team result"})
+        assert await first_store.get_events(agent) == [{"type": "token", "content": "agent secret"}]
+        assert await second_store.get_events(team) == [{"type": "token", "content": "team result"}]
+        await first.abandon(agent)
+        await second.abandon(team)
 
-        async def gen():
-            yield {"type": "start", "run_id": "r1"}
+    async def test_same_user_cannot_reuse_session_id_for_another_agent(self) -> None:
+        fake = _mock_redis()
+        with patch("redis.asyncio.from_url", return_value=fake):
+            store = RedisEventStore()
+        mgr = BackgroundRunManager(event_store=store)
+        first = run_event_key("agent", "alice", "system", "one", "same-id")
+        other = run_event_key("agent", "alice", "system", "two", "same-id")
+        assert await mgr.reserve(first, "alice", claim_key="agent-id:same-id", claim_identity=first, reuse=True)
+        await mgr.abandon(first)
+        assert not await mgr.reserve(other, "alice", claim_key="agent-id:same-id", claim_identity=other, reuse=True)
+        assert await store.get_owner(other) is None
+
+    async def test_stale_lease_cannot_release_replacement(self) -> None:
+        fake = _mock_redis()
+        with patch("redis.asyncio.from_url", return_value=fake):
+            store = RedisEventStore()
+        assert await store.claim_active("session", "old-token")
+        await fake.delete("run:session:active")  # Simulate an expired lease.
+        assert await store.claim_active("session", "new-token")
+        await store.release_active("session", "old-token")
+        assert not await store.claim_active("session", "third-token")
+        await store.release_active("session", "new-token")
+        assert await store.claim_active("session", "third-token")
+
+    async def test_heartbeat_only_renews_owned_lease(self) -> None:
+        fake = _mock_redis()
+        with patch("redis.asyncio.from_url", return_value=fake):
+            store = RedisEventStore()
+        assert await store.claim_active("session", "producer")
+        assert await store.refresh_active("session", "producer")
+        assert not await store.refresh_active("session", "intruder")
+        await fake.delete("run:session:active")
+        assert not await store.refresh_active("session", "producer")
+
+    async def test_running_producer_renews_lease_and_stops_if_lost(self) -> None:
+        fake = _mock_redis()
+        with patch("redis.asyncio.from_url", return_value=fake):
+            first_store = RedisEventStore()
+            second_store = RedisEventStore()
+        first = BackgroundRunManager(stale_seconds=3, event_store=first_store)
+        second = BackgroundRunManager(stale_seconds=3, event_store=second_store)
+        key = run_event_key("agent", "alice", "system", "shared", "active")
+        claim = {"claim_key": "agent-id:active", "claim_identity": key, "reuse": True}
+        assert await first.reserve(key, "alice", **claim)
+        entered = asyncio.Event()
+        release = asyncio.Event()
+
+        async def work():
+            entered.set()
+            await release.wait()
             yield {"type": "done"}
 
-        queue, _event_log = mgr.start("key1", gen(), record_events=True, rekey_field="run_id")
+        async def renewal_observed():
+            while fake.eval.await_count == 0:
+                await asyncio.sleep(0.01)
 
-        # Drain the queue to let the task complete
-        events = []
-        while True:
-            event = await queue.get()
-            if event is None:
-                break
-            events.append(event)
+        queue, _ = first.start(key, work(), owner_id="alice", record_events=True)
+        try:
+            await entered.wait()
+            await asyncio.wait_for(renewal_observed(), timeout=2)
+            assert not await second.reserve(key, "alice", **claim)
+            await fake.delete(f"run:{key}:active")
+            assert await asyncio.wait_for(queue.get(), timeout=3) is None
+            await asyncio.wait_for(first.runs[key][0], timeout=3)
+            assert await second.reserve(key, "alice", **claim)
+        finally:
+            release.set()
+            await first.abandon(key)
+            await second.abandon(key)
 
-        assert len(events) == 2
-        store.set_status.assert_any_await("key1", "running", ttl=600)
-        assert store.append_event.await_count == 2
-        # Should have rekeyed
-        store.rename_key.assert_awaited_once_with("key1", "r1")
+    async def test_repeat_turn_rejects_parallel_request_and_resets_replay(self) -> None:
+        fake = _mock_redis()
+        with patch("redis.asyncio.from_url", return_value=fake):
+            first_store = RedisEventStore()
+            second_store = RedisEventStore()
+        first = BackgroundRunManager(event_store=first_store)
+        second = BackgroundRunManager(event_store=second_store)
+        key = run_event_key("agent", "alice", "system", "shared", "repeat")
+        assert await first.reserve(key, "alice", claim_key="agent-id:repeat", claim_identity=key, reuse=True)
+        await first_store.append_event(key, {"type": "token", "content": "previous"})
+        assert not await second.reserve(key, "alice", claim_key="agent-id:repeat", claim_identity=key, reuse=True)
+        assert await second.get_events_async(key) == [{"type": "token", "content": "previous"}]
+        await first.abandon(key)
+        assert await second.reserve(key, "alice", claim_key="agent-id:repeat", claim_identity=key, reuse=True)
+        await second.reset_events(key)
+        assert await second.get_events_async(key) == []
+        await second.abandon(key)

@@ -19,9 +19,21 @@ import json
 import logging
 import uuid
 from abc import ABC, abstractmethod
+from contextvars import ContextVar, Token
 from typing import Any
 
 logger = logging.getLogger(__name__)
+_recovery_owner: ContextVar[str | None] = ContextVar("checkpoint_recovery_owner", default=None)
+_producer_token: ContextVar[str | None] = ContextVar("checkpoint_producer_token", default=None)
+
+
+def set_producer_token(token: str | None) -> Token[str | None]:
+    return _producer_token.set(token)
+
+
+def reset_producer_token(token: Token[str | None]) -> None:
+    _producer_token.reset(token)
+
 
 # ── Checkpoint store ─────────────────────────────────────────────────
 
@@ -32,19 +44,44 @@ class CheckpointStore(ABC):
     @abstractmethod
     async def save(self, key: str, data: dict[str, Any], ttl: int = 600) -> None: ...
 
+    async def save_if_active(self, key: str, data: dict[str, Any], ttl: int = 86400) -> bool:
+        """Persist only under the current run or recovery identity, never after cancel."""
+        if await self.is_cancelled(key):
+            return False
+        owner = _recovery_owner.get()
+        if owner is not None:
+            return await self.save_recovery(key, owner, data, ttl=ttl)
+        await self.save(key, data, ttl=ttl)
+        return True
+
     @abstractmethod
     async def load(self, key: str) -> dict[str, Any] | None: ...
 
     @abstractmethod
     async def delete(self, key: str) -> None: ...
 
+    async def delete_if_owned(self, key: str) -> None:
+        """Finish only the checkpoint belonging to this run generation."""
+        await self.delete(key)
+
     @abstractmethod
     async def acquire_lock(self, key: str, owner: str, ttl: int = 60) -> bool:
-        """Try to acquire a distributed lock. Returns True if acquired."""
+        """Try to acquire a distributed lock with a unique per-attempt owner."""
         ...
 
     @abstractmethod
-    async def release_lock(self, key: str) -> None: ...
+    async def release_lock(self, key: str, owner: str) -> None: ...
+
+    async def refresh_lock(self, key: str, owner: str, ttl: int = 60) -> bool:
+        """Extend only the currently held recovery lock."""
+        return True
+
+    async def save_recovery(self, key: str, owner: str, data: dict[str, Any], ttl: int = 86400) -> bool:
+        """Update an existing uncancelled checkpoint only while holding its lock."""
+        if await self.is_cancelled(key) or await self.load(key) is None:
+            return False
+        await self.save(key, data, ttl=ttl)
+        return True
 
     @abstractmethod
     async def list_checkpoints(self) -> list[str]:
@@ -59,6 +96,11 @@ class CheckpointStore(ABC):
     @abstractmethod
     async def is_cancelled(self, run_id: str) -> bool:
         """Check if a run has been signalled for cancellation."""
+        ...
+
+    @abstractmethod
+    async def clear_cancelled(self, run_id: str) -> None:
+        """Clear a prior turn's marker only after the new run is reserved."""
         ...
 
     @abstractmethod
@@ -78,7 +120,7 @@ class RedisCheckpointStore(CheckpointStore):
     def __init__(self, redis_url: str = "redis://localhost:6379/0") -> None:
         import redis.asyncio
 
-        self._redis = redis.asyncio.from_url(redis_url, decode_responses=True)
+        self._redis: Any = redis.asyncio.from_url(redis_url, decode_responses=True)
         logger.info("RedisCheckpointStore initialized (url=%s)", redis_url.split("@")[-1])
 
     @staticmethod
@@ -100,6 +142,28 @@ class RedisCheckpointStore(CheckpointStore):
             ex=ttl,
         )
 
+    async def save_if_active(self, key: str, data: dict[str, Any], ttl: int = 86400) -> bool:
+        owner = _recovery_owner.get()
+        if owner is not None:
+            return await self.save_recovery(key, owner, data, ttl=ttl)
+        token = _producer_token.get()
+        if token is None:
+            return False
+        return bool(
+            await self._redis.eval(
+                'if redis.call("get", KEYS[1]) ~= ARGV[1] '
+                'or redis.call("exists", KEYS[3]) == 1 then return 0 end '
+                'return redis.call("set", KEYS[2], ARGV[2], "EX", ARGV[3]) and 1 or 0',
+                3,
+                f"run:{key}:active",
+                self._key(key),
+                self._cancel_key(key),
+                token,
+                json.dumps(data, default=str),
+                ttl,
+            )
+        )
+
     async def load(self, key: str) -> dict[str, Any] | None:
         raw = await self._redis.get(self._key(key))
         if raw is None:
@@ -108,20 +172,68 @@ class RedisCheckpointStore(CheckpointStore):
         return result
 
     async def delete(self, key: str) -> None:
-        await self._redis.delete(self._key(key), self._lock_key(key))
+        await self._redis.delete(self._key(key))
+
+    async def delete_if_owned(self, key: str) -> None:
+        owner = _recovery_owner.get()
+        token = _producer_token.get()
+        if owner is None and token is None:
+            return
+        lock_or_active = self._lock_key(key) if owner is not None else f"run:{key}:active"
+        await self._redis.eval(
+            'if redis.call("get", KEYS[1]) == ARGV[1] then return redis.call("del", KEYS[2]) end return 0',
+            2,
+            lock_or_active,
+            self._key(key),
+            owner or token,
+        )
 
     async def acquire_lock(self, key: str, owner: str, ttl: int = 60) -> bool:
         result = await self._redis.set(self._lock_key(key), owner, nx=True, ex=ttl)
         return result is not None
 
-    async def release_lock(self, key: str) -> None:
-        await self._redis.delete(self._lock_key(key))
+    async def release_lock(self, key: str, owner: str) -> None:
+        await self._redis.eval(
+            'if redis.call("get", KEYS[1]) == ARGV[1] then return redis.call("del", KEYS[1]) end return 0',
+            1,
+            self._lock_key(key),
+            owner,
+        )
+
+    async def refresh_lock(self, key: str, owner: str, ttl: int = 60) -> bool:
+        return bool(
+            await self._redis.eval(
+                'if redis.call("get", KEYS[1]) == ARGV[1] then '
+                'return redis.call("expire", KEYS[1], ARGV[2]) end return 0',
+                1,
+                self._lock_key(key),
+                owner,
+                ttl,
+            )
+        )
+
+    async def save_recovery(self, key: str, owner: str, data: dict[str, Any], ttl: int = 86400) -> bool:
+        return bool(
+            await self._redis.eval(
+                'if redis.call("get", KEYS[1]) ~= ARGV[1] '
+                'or redis.call("exists", KEYS[2]) == 0 '
+                'or redis.call("exists", KEYS[3]) == 1 then return 0 end '
+                'return redis.call("set", KEYS[2], ARGV[2], "EX", ARGV[3]) and 1 or 0',
+                3,
+                self._lock_key(key),
+                self._key(key),
+                self._cancel_key(key),
+                owner,
+                json.dumps(data, default=str),
+                ttl,
+            )
+        )
 
     async def list_checkpoints(self) -> list[str]:
         keys: list[str] = []
         async for key in self._redis.scan_iter(match="checkpoint:*"):
             k = str(key)
-            if k.endswith(":lock") or ":cancel:" in k:
+            if k.endswith(":lock") or k.startswith("checkpoint:cancel:"):
                 continue
             keys.append(k.removeprefix("checkpoint:"))
         return keys
@@ -141,6 +253,9 @@ class RedisCheckpointStore(CheckpointStore):
 
     async def is_cancelled(self, run_id: str) -> bool:
         return bool(await self._redis.exists(self._cancel_key(run_id)))
+
+    async def clear_cancelled(self, run_id: str) -> None:
+        await self._redis.delete(self._cancel_key(run_id))
 
 
 # ── Replica heartbeat ────────────────────────────────────────────────
@@ -227,21 +342,55 @@ class ReplicaHeartbeat:
 # ── Recovery task tracking ────────────────────────────────────────────
 
 # Tracks active recovery tasks so they can be cancelled.
-# Keyed by run ID (session_id or team_run_id).
+# Keyed by the full run identity (kind, caller, resource, and run ID).
 _recovery_tasks: dict[str, asyncio.Task[bool]] = {}
 
 
-def cancel_recovery_task(run_id: str) -> bool:
-    """Cancel a recovery task by run ID. Returns True if found and cancelled."""
-    # Check all keys that end with the run_id (key format is "owner:run_id")
-    for key, task in list(_recovery_tasks.items()):
-        if key.endswith(f":{run_id}") or key == run_id:
-            if not task.done():
-                task.cancel()
-                logger.info("Cancelled recovery task for %s", run_id)
-                return True
-            _recovery_tasks.pop(key, None)
+def cancel_recovery_task(key: str) -> bool:
+    """Cancel only the recovery task for this exact, authorized run key."""
+    task = _recovery_tasks.get(key)
+    if task is None:
+        return False
+    if not task.done():
+        task.cancel()
+        logger.info("Cancelled recovery task for %s", key)
+        return True
+    _recovery_tasks.pop(key, None)
     return False
+
+
+@contextlib.asynccontextmanager
+async def recovery_lock(store: CheckpointStore, key: str, replica_id: str):
+    """Hold a unique, renewable recovery lock until the run stops."""
+    owner = f"{replica_id}:{uuid.uuid4().hex}"
+    if not await store.acquire_lock(key, owner):
+        yield None
+        return
+    producer = asyncio.current_task()
+    assert producer is not None
+
+    async def renew() -> None:
+        try:
+            while True:
+                await asyncio.sleep(20)
+                if not await store.refresh_lock(key, owner):
+                    producer.cancel()
+                    return
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Recovery lock renewal failed for %s", key)
+            producer.cancel()
+
+    heartbeat = asyncio.create_task(renew())
+    previous = _recovery_owner.set(owner)
+    try:
+        yield owner
+    finally:
+        _recovery_owner.reset(previous)
+        heartbeat.cancel()
+        await asyncio.gather(heartbeat, return_exceptions=True)
+        await store.release_lock(key, owner)
 
 
 # ── Orphan recovery ──────────────────────────────────────────────────

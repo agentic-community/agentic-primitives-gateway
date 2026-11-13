@@ -14,6 +14,7 @@ from agentic_primitives_gateway.agents.runner import AgentRunner, _RunContext
 from agentic_primitives_gateway.auth.models import AuthenticatedPrincipal
 from agentic_primitives_gateway.context import set_authenticated_principal
 from agentic_primitives_gateway.models.agents import AgentSpec
+from agentic_primitives_gateway.routes._background import run_event_key
 
 
 class InMemoryCheckpointStore(CheckpointStore):
@@ -28,12 +29,20 @@ class InMemoryCheckpointStore(CheckpointStore):
     async def save(self, key: str, data: dict[str, Any], ttl: int = 600) -> None:
         self._data[key] = data
 
+    async def save_if_active(self, key: str, data: dict[str, Any], ttl: int = 86400) -> bool:
+        if key in self._cancelled:
+            return False
+        await self.save(key, data, ttl=ttl)
+        return True
+
     async def load(self, key: str) -> dict[str, Any] | None:
         return self._data.get(key)
 
     async def delete(self, key: str) -> None:
         self._data.pop(key, None)
-        self._locks.pop(key, None)
+
+    async def delete_if_owned(self, key: str) -> None:
+        await self.delete(key)
 
     async def acquire_lock(self, key: str, owner: str, ttl: int = 60) -> bool:
         if key in self._locks:
@@ -41,8 +50,18 @@ class InMemoryCheckpointStore(CheckpointStore):
         self._locks[key] = owner
         return True
 
-    async def release_lock(self, key: str) -> None:
-        self._locks.pop(key, None)
+    async def release_lock(self, key: str, owner: str) -> None:
+        if self._locks.get(key) == owner:
+            self._locks.pop(key, None)
+
+    async def refresh_lock(self, key: str, owner: str, ttl: int = 60) -> bool:
+        return self._locks.get(key) == owner
+
+    async def save_recovery(self, key: str, owner: str, data: dict[str, Any], ttl: int = 86400) -> bool:
+        if self._locks.get(key) != owner or key not in self._data or key in self._cancelled:
+            return False
+        await self.save(key, data, ttl=ttl)
+        return True
 
     async def list_checkpoints(self) -> list[str]:
         return list(self._data.keys())
@@ -58,6 +77,9 @@ class InMemoryCheckpointStore(CheckpointStore):
 
     async def is_cancelled(self, run_id: str) -> bool:
         return run_id in self._cancelled
+
+    async def clear_cancelled(self, run_id: str) -> None:
+        self._cancelled.discard(run_id)
 
 
 _ALICE = AuthenticatedPrincipal(id="alice", type="user", groups=frozenset({"engineering"}), scopes=frozenset())
@@ -93,7 +115,7 @@ class TestCheckpointSaveLoad:
 
         await runner._checkpoint(ctx, "hello")
 
-        data = await store.load("alice:sess-1")
+        data = await store.load(runner._checkpoint_key(ctx))
         assert data is not None
         assert data["spec_name"] == "test-agent"
         assert data["session_id"] == "sess-1"
@@ -125,12 +147,12 @@ class TestCheckpointSaveLoad:
         )
 
         await runner._checkpoint(ctx, "hello")
-        assert await store.load("alice:sess-1") is not None
+        assert await store.load(runner._checkpoint_key(ctx)) is not None
 
         with patch.object(runner, "_cleanup_sessions", new_callable=AsyncMock):
             await runner._finalize(ctx, "hello")
 
-        assert await store.load("alice:sess-1") is None
+        assert await store.load(runner._checkpoint_key(ctx)) is None
 
     @pytest.mark.asyncio
     async def test_no_checkpoint_without_store(self):
@@ -173,7 +195,7 @@ class TestCheckpointSaveLoad:
         )
 
         await runner._checkpoint(ctx, "hello")
-        data = await store.load("alice:sess-k")
+        data = await store.load(runner._checkpoint_key(ctx))
         assert data is not None
         assert data["knowledge_ns"] == "support-kb-v2"
 
@@ -199,6 +221,22 @@ class TestCheckpointSaveLoad:
             await runner._checkpoint(ctx, "hello")
 
 
+@pytest.mark.asyncio
+async def test_scoped_checkpoints_do_not_collide_across_owner_resource_or_kind() -> None:
+    store = InMemoryCheckpointStore()
+    keys = [
+        run_event_key("agent", "alice", "system", "one", "same-id"),
+        run_event_key("agent", "alice", "system", "two", "same-id"),
+        run_event_key("agent", "bob", "system", "one", "same-id"),
+        run_event_key("team", "alice", "system", "one", "same-id"),
+    ]
+    for index, key in enumerate(keys):
+        await store.save(key, {"index": index})
+    assert [await store.load(key) for key in keys] == [{"index": i} for i in range(len(keys))]
+    await store.mark_cancelled(keys[0])
+    assert [await store.is_cancelled(key) for key in keys] == [True, False, False, False]
+
+
 class TestResume:
     @pytest.mark.asyncio
     async def test_resume_reconstructs_principal(self):
@@ -215,6 +253,7 @@ class TestResume:
         # Save a checkpoint
         checkpoint_data = {
             "spec_name": "test-agent",
+            "spec_owner": "alice",
             "session_id": "sess-1",
             "actor_id": "test-agent:u:alice",
             "memory_ns": "agent:test-agent:u:alice",
@@ -238,7 +277,8 @@ class TestResume:
                 "scopes": [],
             },
         }
-        await store.save("alice:sess-1", checkpoint_data)
+        key = run_event_key("agent", "alice", "alice", "test-agent", "sess-1")
+        await store.save(key, checkpoint_data)
 
         # Mock the LLM to return a final response
         mock_response = {"content": "resumed response", "stop_reason": "end_turn"}
@@ -247,10 +287,10 @@ class TestResume:
             mock_registry.memory.create_event = AsyncMock()
             mock_registry.observability.ingest_trace = AsyncMock()
 
-            await runner.resume("alice:sess-1")
+            await runner.resume(key)
 
         # Checkpoint should be deleted after successful resume
-        assert await store.load("alice:sess-1") is None
+        assert await store.load(key) is None
 
     @pytest.mark.asyncio
     async def test_resume_reinstalls_knowledge_contextvar(self):
@@ -265,10 +305,12 @@ class TestResume:
         agent_store.resolve_qualified = AsyncMock(return_value=_make_spec())
         runner.set_store(agent_store)
 
+        key = run_event_key("agent", "alice", "alice", "test-agent", "sess-kb")
         await store.save(
-            "alice:sess-kb",
+            key,
             {
                 "spec_name": "test-agent",
+                "spec_owner": "alice",
                 "session_id": "sess-kb",
                 "actor_id": "test-agent:u:alice",
                 "memory_ns": "agent:test-agent:u:alice",
@@ -296,7 +338,7 @@ class TestResume:
             mock_registry.llm.route_request = _capture
             mock_registry.memory.create_event = AsyncMock()
             mock_registry.observability.ingest_trace = AsyncMock()
-            await runner.resume("alice:sess-kb")
+            await runner.resume(key)
 
         assert observed_knowledge_ns == ["docs-corpus"]
 
@@ -375,8 +417,14 @@ class TestCheckpointStoreABC:
         assert await store.acquire_lock("k1", "owner-a")
         assert not await store.acquire_lock("k1", "owner-b")
 
-        await store.release_lock("k1")
+        await store.release_lock("k1", "owner-a")
         assert await store.acquire_lock("k1", "owner-b")
+        assert not await store.refresh_lock("k1", "owner-a")
+        await store.release_lock("k1", "owner-a")
+        assert not await store.acquire_lock("k1", "owner-c")
+        await store.save("k1", {"owner": "b"})
+        assert not await store.save_recovery("k1", "owner-a", {"owner": "a"})
+        assert await store.load("k1") == {"owner": "b"}
 
     @pytest.mark.asyncio
     async def test_in_memory_store_heartbeat(self):
@@ -573,7 +621,7 @@ class TestRedisCheckpointStore:
 
     async def test_delete(self, store, mock_redis) -> None:
         await store.delete("key1")
-        mock_redis.delete.assert_called_once_with("checkpoint:key1", "checkpoint:key1:lock")
+        mock_redis.delete.assert_called_once_with("checkpoint:key1")
 
     async def test_acquire_lock_success(self, store, mock_redis) -> None:
         mock_redis.set = AsyncMock(return_value=True)
@@ -587,8 +635,9 @@ class TestRedisCheckpointStore:
         assert result is False
 
     async def test_release_lock(self, store, mock_redis) -> None:
-        await store.release_lock("key1")
-        mock_redis.delete.assert_called_once_with("checkpoint:key1:lock")
+        await store.release_lock("key1", "owner-a")
+        mock_redis.eval.assert_awaited_once()
+        assert mock_redis.eval.call_args.args[2:] == ("checkpoint:key1:lock", "owner-a")
 
     async def test_list_checkpoints(self, store, mock_redis) -> None:
         async def scan_iter_impl(match=None):
@@ -715,21 +764,24 @@ class TestReplicaHeartbeat:
 class TestCancelRecoveryTask:
     """Tests for cancel_recovery_task."""
 
-    async def test_cancel_existing_task(self) -> None:
+    async def test_cancel_existing_task_requires_exact_owner_and_identity(self) -> None:
         from agentic_primitives_gateway.agents.checkpoint import _recovery_tasks, cancel_recovery_task
+        from agentic_primitives_gateway.routes._background import run_event_key
 
+        owner_key = run_event_key("agent", "alice", "system", "support", "sess-1")
+        other_key = run_event_key("team", "bob", "system", "support", "sess-1")
         task = asyncio.create_task(asyncio.sleep(100))
-        _recovery_tasks["alice:sess-1"] = task
-
-        result = cancel_recovery_task("sess-1")
-        assert result is True
-        # Task is in cancelling state — let the event loop process the cancellation
-        with contextlib.suppress(asyncio.CancelledError):
-            await task
-        assert task.cancelled()
-
-        # Clean up
-        _recovery_tasks.pop("alice:sess-1", None)
+        _recovery_tasks[owner_key] = task
+        try:
+            assert not cancel_recovery_task(other_key)
+            assert not task.done()
+            assert cancel_recovery_task(owner_key)
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+            assert task.cancelled()
+        finally:
+            task.cancel()
+            _recovery_tasks.pop(owner_key, None)
 
     async def test_cancel_exact_key(self) -> None:
         from agentic_primitives_gateway.agents.checkpoint import _recovery_tasks, cancel_recovery_task
@@ -758,7 +810,7 @@ class TestCancelRecoveryTask:
         await task  # Let it finish
         _recovery_tasks["alice:done-task"] = task
 
-        result = cancel_recovery_task("done-task")
+        result = cancel_recovery_task("alice:done-task")
         assert result is False
 
         # Clean up
@@ -841,6 +893,23 @@ class TestTeamResume:
         yield {"type": "agent_token", "content": "synthesized"}
 
     @pytest.mark.asyncio
+    async def test_cancelled_team_checkpoint_cannot_requeue_or_resume(self):
+        from agentic_primitives_gateway.agents.team_runner import TeamRunner
+
+        store = InMemoryCheckpointStore()
+        key = run_event_key("team", "alice", "alice", "test-team", "run-cancelled")
+        await store.save(key, {"type": "team", "team_run_id": "run-cancelled"})
+        await store.mark_cancelled(key)
+        runner = TeamRunner()
+        runner._checkpoint_store = store
+        runner._team_store = AsyncMock()
+        runner._resume_team_from_data = AsyncMock()
+        await runner.resume(key)
+        runner._resume_team_from_data.assert_not_awaited()
+        assert await store.load(key) == {"type": "team", "team_run_id": "run-cancelled"}
+        assert not await store.save_if_active(key, {"type": "team", "team_run_id": "run-cancelled"})
+
+    @pytest.mark.asyncio
     async def test_resume_from_execution_phase(self):
         """Team resume from execution phase re-runs execution + synthesis."""
         from agentic_primitives_gateway.agents.team_runner import TeamRunner
@@ -870,11 +939,13 @@ class TestTeamResume:
         team_runner._run_with_replanning_stream = self._empty_stream
         team_runner._run_synthesizer_stream = self._synth_stream
 
+        key = run_event_key("team", "alice", "alice", "test-team", "team-run-1")
         await store.save(
-            "alice:team-run-1",
+            key,
             {
                 "type": "team",
                 "spec_name": "test-team",
+                "spec_owner": "alice",
                 "team_run_id": "team-run-1",
                 "message": "do something",
                 "phase": "execution",
@@ -885,10 +956,10 @@ class TestTeamResume:
 
         with patch("agentic_primitives_gateway.agents.team_runner.registry") as mock_reg:
             mock_reg.tasks.list_tasks = AsyncMock(return_value=[])
-            await team_runner.resume("alice:team-run-1")
+            await team_runner.resume(key)
 
         # Checkpoint should be deleted after successful resume
-        assert await store.load("alice:team-run-1") is None
+        assert await store.load(key) is None
 
     @pytest.mark.asyncio
     async def test_resume_from_synthesis_phase(self):
@@ -912,11 +983,13 @@ class TestTeamResume:
         team_runner._run_with_replanning_stream = self._empty_stream
         team_runner._run_synthesizer_stream = self._synth_stream
 
+        key = run_event_key("team", "bob", "bob", "test-team", "run-2")
         await store.save(
-            "bob:run-2",
+            key,
             {
                 "type": "team",
                 "spec_name": "test-team",
+                "spec_owner": "bob",
                 "team_run_id": "run-2",
                 "message": "hello",
                 "phase": "synthesis",
@@ -927,9 +1000,9 @@ class TestTeamResume:
 
         with patch("agentic_primitives_gateway.agents.team_runner.registry") as mock_reg:
             mock_reg.tasks.list_tasks = AsyncMock(return_value=[])
-            await team_runner.resume("bob:run-2")
+            await team_runner.resume(key)
 
-        assert await store.load("bob:run-2") is None
+        assert await store.load(key) is None
 
     @pytest.mark.asyncio
     async def test_resume_skips_deleted_team(self):

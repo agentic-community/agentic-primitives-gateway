@@ -11,7 +11,7 @@ from agentic_primitives_gateway.agents.file_store import FileTeamStore
 from agentic_primitives_gateway.main import app
 from agentic_primitives_gateway.models.teams import TeamRunPhase, TeamRunResponse
 from agentic_primitives_gateway.routes import teams as teams_module
-from agentic_primitives_gateway.routes._background import BackgroundRunManager
+from agentic_primitives_gateway.routes._background import BackgroundRunManager, run_event_key
 from agentic_primitives_gateway.routes.teams import set_team_bg, set_team_store
 
 
@@ -143,7 +143,7 @@ class TestTeamRun:
         )
 
         async def mock_stream(team_spec, message):
-            yield {"type": "team_start", "team_name": "stream-team"}
+            yield {"type": "team_start", "team_run_id": "stream-team-id", "team_name": "stream-team"}
             yield {"type": "done", "response": "streamed"}
 
         with patch("agentic_primitives_gateway.routes.teams._runner") as mock_runner:
@@ -156,6 +156,41 @@ class TestTeamRun:
     def test_run_stream_team_not_found(self, teams_client: TestClient) -> None:
         resp = teams_client.post("/api/v1/teams/nonexistent/run/stream", json={"message": "hi"})
         assert resp.status_code == 404
+
+    def test_shared_team_run_replay_is_owner_scoped(self, teams_client: TestClient) -> None:
+        from agentic_primitives_gateway.auth.models import AuthenticatedPrincipal
+
+        assert teams_client.post("/api/v1/teams", json={**TEAM_PAYLOAD, "shared_with": ["*"]}).status_code == 201
+        alice = AuthenticatedPrincipal(id="alice", type="user", scopes=frozenset())
+        bob = AuthenticatedPrincipal(id="bob", type="user", scopes=frozenset())
+        url = "/api/v1/teams/noop:test-team"
+
+        async def stream(team_spec, message):
+            yield {"type": "team_start", "team_run_id": "known-id", "team_name": team_spec.name}
+            yield {"type": "token", "content": "private result"}
+            yield {"type": "done", "response": "private result"}
+
+        with patch.object(teams_module._runner, "run_stream", side_effect=stream):
+            with patch.object(teams_module, "require_principal", return_value=alice):
+                result = teams_client.post(f"{url}/run/stream", json={"message": "go"})
+                assert result.status_code == 200
+                assert "private result" in result.text
+                assert "private result" in teams_client.get(f"{url}/runs/known-id/events").text
+                replay = teams_client.get(f"{url}/runs/known-id/stream")
+                assert replay.status_code == 200
+                assert "private result" in replay.text
+                assert teams_client.get(f"{url}/runs").json()["runs"][0]["team_run_id"] == "known-id"
+
+            with patch.object(teams_module, "require_principal", return_value=bob):
+                assert teams_client.get(f"{url}/runs").json()["runs"] == []
+                for suffix in ("", "/events", "/stream", "/status"):
+                    assert teams_client.get(f"{url}/runs/known-id{suffix}").status_code == 403
+                assert teams_client.delete(f"{url}/runs/known-id/cancel").status_code == 403
+                assert teams_client.delete(f"{url}/runs/known-id").status_code == 403
+                assert teams_client.post(f"{url}/run/stream", json={"message": "collision"}).status_code == 409
+
+            with patch.object(teams_module, "require_principal", return_value=alice):
+                assert "private result" in teams_client.get(f"{url}/runs/known-id/events").text
 
 
 TEAM_PAYLOAD = {"name": "test-team", "planner": "p", "synthesizer": "s", "workers": ["w"]}
@@ -195,10 +230,12 @@ class TestListTeamRuns:
         loop = asyncio.new_event_loop()
         task = loop.create_task(asyncio.sleep(100))
         queue: asyncio.Queue[dict | None] = asyncio.Queue()
-        event_log = [{"type": "team_start", "team_name": "test-team"}]
+        event_log = [{"type": "team_start", "team_name": "test-team", "team_run_id": "run-123"}]
         import time
 
-        teams_module._bg._runs["run-123"] = (task, queue, event_log, time.monotonic())
+        key = run_event_key("team", "noop", "noop", "test-team", "run-123")
+        teams_module._bg._owners[key] = "noop"
+        teams_module._bg._runs[key] = (task, queue, event_log, time.monotonic())
 
         resp = teams_client.get("/api/v1/teams/test-team/runs")
         assert resp.status_code == 200
@@ -213,6 +250,7 @@ class TestListTeamRuns:
 
         mock_event_store = AsyncMock()
         mock_event_store.get_index = AsyncMock(return_value=["redis-run-1"])
+        mock_event_store.get_owner = AsyncMock(return_value="noop")
 
         teams_module._bg._event_store = mock_event_store
         teams_module._bg.get_status_async = AsyncMock(return_value="idle")
@@ -223,7 +261,9 @@ class TestListTeamRuns:
         assert any(r["team_run_id"] == "redis-run-1" for r in runs)
 
         # Verify it used the index with the correct key
-        mock_event_store.get_index.assert_called_once_with("team:test-team:runs")
+        mock_event_store.get_index.assert_called_once_with(
+            run_event_key("team-index", "noop", "noop", "test-team", "runs")
+        )
 
         # Clean up
         teams_module._bg._event_store = None
@@ -247,8 +287,7 @@ class TestDeleteTeamRun:
     def test_delete_run(self, teams_client: TestClient) -> None:
         teams_client.post("/api/v1/teams", json=TEAM_PAYLOAD)
         resp = teams_client.delete("/api/v1/teams/test-team/runs/run-xyz")
-        assert resp.status_code == 200
-        assert resp.json()["status"] == "deleted"
+        assert resp.status_code == 403
 
     def test_delete_run_404(self, teams_client: TestClient) -> None:
         resp = teams_client.delete("/api/v1/teams/nonexistent/runs/run-xyz")
@@ -256,6 +295,8 @@ class TestDeleteTeamRun:
 
     def test_delete_run_cleans_tasks(self, teams_client: TestClient) -> None:
         teams_client.post("/api/v1/teams", json=TEAM_PAYLOAD)
+        key = run_event_key("team", "noop", "noop", "test-team", "run-xyz")
+        teams_module._bg._owners[key] = "noop"
 
         mock_task = MagicMock()
         mock_task.id = "t1"
@@ -272,12 +313,12 @@ class TestDeleteTeamRun:
         teams_client.post("/api/v1/teams", json=TEAM_PAYLOAD)
 
         mock_event_store = AsyncMock()
-        mock_event_store.get_owner = AsyncMock(return_value=None)
+        mock_event_store.get_owner = AsyncMock(return_value="noop")
         teams_module._bg._event_store = mock_event_store
 
         resp = teams_client.delete("/api/v1/teams/test-team/runs/run-xyz")
         assert resp.status_code == 200
-        mock_event_store.delete.assert_called_once_with("run-xyz")
+        mock_event_store.delete.assert_called_once_with(run_event_key("team", "noop", "noop", "test-team", "run-xyz"))
 
         # Clean up
         teams_module._bg._event_store = None
@@ -288,6 +329,7 @@ class TestStreamTeamRunEvents:
         teams_client.post("/api/v1/teams", json=TEAM_PAYLOAD)
         # Mock bg manager to return a done event so the generator exits immediately
         with (
+            patch.object(teams_module._bg, "get_owner_async", new=AsyncMock(return_value="noop")),
             patch.object(
                 teams_module._bg, "get_events_async", new=AsyncMock(return_value=[{"type": "done", "response": "ok"}])
             ),
@@ -306,8 +348,7 @@ class TestGetTeamRunStatus:
     def test_status_idle(self, teams_client: TestClient) -> None:
         teams_client.post("/api/v1/teams", json=TEAM_PAYLOAD)
         resp = teams_client.get("/api/v1/teams/test-team/runs/run-xyz/status")
-        assert resp.status_code == 200
-        assert resp.json()["status"] == "idle"
+        assert resp.status_code == 403
 
     def test_status_404(self, teams_client: TestClient) -> None:
         resp = teams_client.get("/api/v1/teams/nonexistent/runs/run-xyz/status")
@@ -318,8 +359,7 @@ class TestCancelTeamRun:
     def test_cancel_no_active_run(self, teams_client: TestClient) -> None:
         teams_client.post("/api/v1/teams", json=TEAM_PAYLOAD)
         resp = teams_client.delete("/api/v1/teams/test-team/runs/run-xyz/cancel")
-        assert resp.status_code == 200
-        assert resp.json()["status"] == "cancelled"
+        assert resp.status_code == 403
 
     def test_cancel_404(self, teams_client: TestClient) -> None:
         resp = teams_client.delete("/api/v1/teams/nonexistent/runs/run-xyz/cancel")
@@ -329,7 +369,7 @@ class TestCancelTeamRun:
         teams_client.post("/api/v1/teams", json=TEAM_PAYLOAD)
 
         mock_event_store = AsyncMock()
-        mock_event_store.get_owner = AsyncMock(return_value=None)
+        mock_event_store.get_owner = AsyncMock(return_value="noop")
         teams_module._bg._event_store = mock_event_store
 
         resp = teams_client.delete("/api/v1/teams/test-team/runs/run-xyz/cancel")
@@ -347,6 +387,7 @@ class TestCancelTeamRun:
         mock_task.id = "t1"
         mock_task.status = "in_progress"
 
+        teams_module._bg._owners[run_event_key("team", "noop", "noop", "test-team", "run-xyz")] = "noop"
         with patch("agentic_primitives_gateway.routes.teams.registry") as mock_reg:
             mock_reg.tasks.list_tasks = AsyncMock(return_value=[mock_task])
             mock_reg.tasks.update_task = AsyncMock()
@@ -357,6 +398,7 @@ class TestCancelTeamRun:
     def test_cancel_marks_claimed_tasks_failed(self, teams_client: TestClient) -> None:
         teams_client.post("/api/v1/teams", json=TEAM_PAYLOAD)
         task = MagicMock(id="claimed-task", status="claimed")
+        teams_module._bg._owners[run_event_key("team", "noop", "noop", "test-team", "run-xyz")] = "noop"
         with patch("agentic_primitives_gateway.routes.teams.registry") as registry_mock:
             registry_mock.tasks.list_tasks = AsyncMock(return_value=[task])
             registry_mock.tasks.update_task = AsyncMock()
@@ -392,10 +434,7 @@ class TestGetTeamRunEvents:
     def test_get_events_empty(self, teams_client: TestClient) -> None:
         teams_client.post("/api/v1/teams", json=TEAM_PAYLOAD)
         resp = teams_client.get("/api/v1/teams/test-team/runs/run-xyz/events")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["status"] == "unknown"
-        assert data["events"] == []
+        assert resp.status_code == 403
 
     def test_get_events_404(self, teams_client: TestClient) -> None:
         resp = teams_client.get("/api/v1/teams/nonexistent/runs/run-xyz/events")
@@ -404,6 +443,7 @@ class TestGetTeamRunEvents:
     def test_get_events_with_data(self, teams_client: TestClient) -> None:
         teams_client.post("/api/v1/teams", json=TEAM_PAYLOAD)
 
+        teams_module._bg._owners[run_event_key("team", "noop", "noop", "test-team", "run-xyz")] = "noop"
         teams_module._bg.get_events_async = AsyncMock(return_value=[{"type": "team_start"}, {"type": "done"}])
         teams_module._bg.get_status_async = AsyncMock(return_value="idle")
 
@@ -418,12 +458,7 @@ class TestGetTeamRun:
     def test_get_run_empty_tasks(self, teams_client: TestClient) -> None:
         teams_client.post("/api/v1/teams", json=TEAM_PAYLOAD)
         resp = teams_client.get("/api/v1/teams/test-team/runs/run-xyz")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["team_run_id"] == "run-xyz"
-        assert data["team_name"] == "test-team"
-        assert data["status"] == "idle"
-        assert data["tasks"] == []
+        assert resp.status_code == 403
 
     def test_get_run_404(self, teams_client: TestClient) -> None:
         resp = teams_client.get("/api/v1/teams/nonexistent/runs/run-xyz")
@@ -431,6 +466,7 @@ class TestGetTeamRun:
 
     def test_get_run_with_tasks(self, teams_client: TestClient) -> None:
         teams_client.post("/api/v1/teams", json=TEAM_PAYLOAD)
+        teams_module._bg._owners[run_event_key("team", "noop", "noop", "test-team", "run-xyz")] = "noop"
 
         mock_task = MagicMock()
         mock_task.id = "t1"
@@ -460,7 +496,9 @@ class TestGetTeamRun:
         queue: asyncio.Queue[dict | None] = asyncio.Queue()
         import time
 
-        teams_module._bg._runs["run-active"] = (task, queue, [], time.monotonic())
+        key = run_event_key("team", "noop", "noop", "test-team", "run-active")
+        teams_module._bg._owners[key] = "noop"
+        teams_module._bg._runs[key] = (task, queue, [], time.monotonic())
 
         resp = teams_client.get("/api/v1/teams/test-team/runs/run-active")
         assert resp.status_code == 200
@@ -470,15 +508,7 @@ class TestGetTeamRun:
         loop.close()
 
     def test_non_admin_denied_when_run_ownership_unknown(self, teams_client: TestClient) -> None:
-        """``_require_run_owner`` default-denies on unknown ownership.
-
-        A bob who has team access (team shared_with includes him or
-        "*") and knows alice's team_run_id could otherwise read her
-        task board in a window where the ownership record was evicted
-        (e.g. replica restart without Redis event store).  The default
-        flipped from allow to deny — admins still bypass, non-admins
-        without a recorded match get 403.
-        """
+        """A shared team does not grant access to unclaimed run IDs."""
         from agentic_primitives_gateway.auth.base import AuthBackend
         from agentic_primitives_gateway.auth.models import AuthenticatedPrincipal
 

@@ -86,9 +86,13 @@ class TestRedisCheckpointStore:
     async def test_distributed_lock(self, store: RedisCheckpointStore):
         assert await store.acquire_lock("lock-test", "owner-a", ttl=10)
         assert not await store.acquire_lock("lock-test", "owner-b", ttl=10)
-        await store.release_lock("lock-test")
+        assert await store.refresh_lock("lock-test", "owner-a", ttl=10)
+        assert not await store.refresh_lock("lock-test", "owner-b", ttl=10)
+        await store.release_lock("lock-test", "owner-a")
         assert await store.acquire_lock("lock-test", "owner-b", ttl=10)
-        await store.release_lock("lock-test")
+        await store.release_lock("lock-test", "owner-a")
+        assert not await store.acquire_lock("lock-test", "owner-c", ttl=10)
+        await store.release_lock("lock-test", "owner-b")
 
     @pytest.mark.asyncio
     async def test_list_checkpoints(self, store: RedisCheckpointStore):
@@ -102,7 +106,7 @@ class TestRedisCheckpointStore:
         await store.acquire_lock("list-a", "x")
         keys2 = await store.list_checkpoints()
         assert all(not k.endswith(":lock") for k in keys2)
-        await store.release_lock("list-a")
+        await store.release_lock("list-a", "x")
 
     @pytest.mark.asyncio
     async def test_heartbeat(self, store: RedisCheckpointStore):

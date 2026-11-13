@@ -315,25 +315,25 @@ The `namespace` field controls where memories are stored. See [Memory Namespaces
 
 ## Sessions & Background Runs
 
-Each chat uses a `session_id` to track conversation history. When `auto_memory` is enabled, completed turns are stored in the memory provider and can be retrieved later.
+Each chat uses a `session_id` to track conversation history. A given user can reuse that ID for successive turns of the same agent, but a different user can independently choose the same ID without affecting its owner-scoped conversation, checkpoint, or event log. One user cannot reuse an ID across different agent identities. When `auto_memory` is enabled, completed turns are stored in the memory provider and can be retrieved later.
 
-**Background execution:** Streaming chat runs in a background `asyncio.Task`. If the client disconnects (page refresh, navigation), the run continues to completion and stores the result. On reconnect, the UI polls `/{name}/sessions/{id}/status` and loads the conversation from `/{name}/sessions/{id}`.
+**Background execution:** Streaming chat runs in a background `asyncio.Task`. If the client disconnects (page refresh, navigation), the run continues to completion and stores the result. On reconnect, the UI polls `/{name}/sessions/{id}/status` and loads the conversation from `/{name}/sessions/{id}`. Event replay is restricted to the run's caller and resolved agent identity; inactive unknown sessions still report `"idle"`.
 
 **Multiple sessions:** Each agent can have many sessions. The UI stores session IDs in localStorage and provides a session picker to switch between them.
 
 ## Checkpointing
 
-Agent runs can be made durable by setting `checkpointing_enabled: true` on the agent spec. When enabled, the runner saves state to Redis before each LLM call. If the server crashes, another replica can resume the run from the last checkpoint. Partial tokens already delivered are recovered from the event store and fed back as a system prompt hint so the LLM continues where it left off.
+Agent runs can be made durable by setting `checkpointing_enabled: true` on the agent spec. Checkpoints are keyed by caller and resolved agent identity; cancellation markers use that same key. When the server crashes, another replica resumes from the last checkpoint under a renewable recovery lock. Partial tokens already delivered are recovered from the event store as a continuation hint. Legacy checkpoints keyed only by `owner:session_id` are retired rather than replayed across identities after this cutover.
 
 See [Configuration](../getting-started/configuration.md) for the `checkpointing` config block.
 
 ## Run Cancellation
 
-An active run can be cancelled via `DELETE /api/v1/agents/{name}/sessions/{session_id}/run`. This cancels the background `asyncio.Task`, deletes the checkpoint from Redis, and sets the event store status to `"cancelled"`. The session history up to the cancellation point is preserved.
+An active run can be cancelled via `DELETE /api/v1/agents/{name}/sessions/{session_id}/run`. The scoped cancellation signal is checked at turn and tool boundaries on the active replica, including cross-replica cancellation; it cannot cancel another user's same-ID run. The checkpoint is deleted and session history up to the cancellation point is preserved.
 
 ## SSE Reconnection
 
-If a stream drops (server restart, network error), clients can reconnect to `GET /api/v1/agents/{name}/sessions/{session_id}/stream`. This endpoint replays all stored events from the event store, then polls for new events if the run is still active. Token events are throttled during replay for smooth delivery. The endpoint stays open for up to 3 minutes waiting for a resumed run to start producing events.
+If a stream drops (server restart, network error), its owner can reconnect to `GET /api/v1/agents/{name}/sessions/{session_id}/stream`. This endpoint replays only the latest streaming turn for that agent identity, then polls for new events while the run is active. Older turns remain in conversation history, not the event replay. Token events are throttled during replay.
 
 ## API
 

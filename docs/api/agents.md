@@ -89,7 +89,7 @@ Each chat uses a `session_id` to track conversation history. Multiple sessions c
 curl -N http://localhost:8000/api/v1/agents/my-agent/sessions/my-session/stream
 ```
 
-Reconnects to a running or recently-completed session. Replays all stored events from the event store with token throttling for smooth playback, then polls for new events if the run is still active. Stays open for up to 3 minutes waiting for a resumed run. Returns `text/event-stream`.
+Reconnects to a running or recently-completed session owned by the caller for this resolved agent identity. Replays only the latest streaming turn's events (older conversation turns remain in session history), then polls for new events if the run is still active. Unknown or foreign runs cannot be replayed; inactive sessions still report `"idle"` at the status endpoint. Different users can use the same raw session ID independently; the same user cannot reuse it across agent identities. Returns `text/event-stream`.
 
 ### Cancel Active Run
 
@@ -97,13 +97,13 @@ Reconnects to a running or recently-completed session. Replays all stored events
 curl -X DELETE http://localhost:8000/api/v1/agents/my-agent/sessions/my-session/run
 ```
 
-Cancels the background task for this session. The checkpoint is deleted, the event store status is set to `"cancelled"`, and conversation history up to the cancellation point is preserved.
+Cancels only a known run owned by the caller for this agent identity. The checkpoint is deleted, the event store status is set to `"cancelled"`, and conversation history up to the cancellation point is preserved.
 
 ```json
 {"status": "cancelled", "session_id": "my-session"}
 ```
 
-Returns 404 if no active run exists for the session.
+Returns 403 for unknown or foreign streaming runs.
 
 ### List Sessions
 

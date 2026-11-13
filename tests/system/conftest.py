@@ -169,8 +169,11 @@ def mock_identity_client():
 
 
 @pytest.fixture
-def mock_code_interpreter():
-    """Patch ``AgentCoreCodeInterpreter`` used by the code interpreter provider."""
+async def mock_code_interpreter():
+    """Patch interpreter SDK with a fresh per-test ownership store."""
+    from agentic_primitives_gateway.routes._helpers import code_interpreter_session_owners
+
+    code_interpreter_session_owners._local.clear()
     with patch("agentic_primitives_gateway.primitives.code_interpreter.agentcore.AgentCoreCodeInterpreter") as mock_cls:
         mock_ci = MagicMock(region=FAKE_AWS_REGION)
         mock_cls.return_value = mock_ci

@@ -715,9 +715,11 @@ async def test_agent_run_outcomes_emit():
 
 @pytest.mark.asyncio
 async def test_a2a_cancel_emits_agent_run_cancelled():
+    from agentic_primitives_gateway.models.agents import AgentSpec
     from agentic_primitives_gateway.routes import a2a as a2aroute
 
     principal = MagicMock(id="alice", is_admin=True)
+    spec = AgentSpec(name="my-agent", model="test-model", owner_id="alice")
 
     class _Bg:
         @staticmethod
@@ -725,12 +727,22 @@ async def test_a2a_cancel_emits_agent_run_cancelled():
             return "alice"
 
         @staticmethod
+        async def get_events_async(_task_id: str) -> list[dict]:
+            return [{"type": "a2a_started", "context_id": "task-42"}]
+
+        @staticmethod
+        async def get_status_async(_task_id: str) -> str:
+            return "running"
+
+        _event_store = None
+
+        @staticmethod
         async def cancel(_task_id: str) -> bool:
             return True
 
     async with _wire_router() as sink:
         with (
-            patch.object(a2aroute, "_require_agent", AsyncMock()),
+            patch.object(a2aroute, "_require_agent", AsyncMock(return_value=spec)),
             patch.object(a2aroute, "require_principal", lambda: principal),
             patch("agentic_primitives_gateway.routes.agents._bg", _Bg),
         ):

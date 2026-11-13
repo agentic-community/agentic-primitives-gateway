@@ -1,6 +1,7 @@
 import contextlib
 import logging
-from typing import Any
+from collections.abc import AsyncGenerator
+from typing import Any, cast
 
 from fastapi import APIRouter, HTTPException
 from starlette.responses import Response, StreamingResponse
@@ -25,7 +26,12 @@ from agentic_primitives_gateway.models.teams import (
     UpdateTeamRequest,
 )
 from agentic_primitives_gateway.registry import registry
-from agentic_primitives_gateway.routes._background import BackgroundRunManager, reconnect_event_generator, sse_response
+from agentic_primitives_gateway.routes._background import (
+    BackgroundRunManager,
+    reconnect_event_generator,
+    run_event_key,
+    sse_response,
+)
 from agentic_primitives_gateway.routes._helpers import (
     require_admin,
     require_principal,
@@ -34,6 +40,7 @@ from agentic_primitives_gateway.routes._helpers import (
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/teams", tags=["teams"])
+
 
 _store: TeamStore | None = None
 _runner = TeamRunner()
@@ -62,6 +69,14 @@ def _get_store() -> TeamStore:
     if _store is None:
         raise RuntimeError("Team store not initialized")
     return _store
+
+
+def _team_run_key(spec: TeamSpec, run_id: str) -> str:
+    return run_event_key("team", require_principal().id, spec.owner_id, spec.name, run_id)
+
+
+def _team_run_index(spec: TeamSpec) -> str:
+    return run_event_key("team-index", require_principal().id, spec.owner_id, spec.name, "runs")
 
 
 def _ns_kind(owner_id: str) -> str:
@@ -241,18 +256,43 @@ async def run_team_stream(name: str, request: TeamRunRequest) -> StreamingRespon
     """
     store = _get_store()
     spec = await resolve_team_spec(store, name, require_principal())
+    principal = require_principal()
 
-    # Use a placeholder key since team_run_id is generated inside the runner.
-    # The background task re-keys automatically when it sees team_run_id.
-    placeholder = f"__pending_{id(spec)}"
-    queue, _ = _bg.start(
-        placeholder,
-        _runner.run_stream(team_spec=spec, message=request.message),
-        owner_id=require_principal().id,
-        record_events=True,
-        rekey_field="team_run_id",
-        index_key=f"team:{name}:runs",
-    )
+    # Obtain the generated ID before spawning the producer: no event or status
+    # can be persisted until its owner and scoped key have been claimed.
+    stream = cast(AsyncGenerator[dict[str, Any]], _runner.run_stream(team_spec=spec, message=request.message))
+    try:
+        first_event = await anext(stream)
+    except BaseException:
+        await stream.aclose()
+        raise
+    run_id = first_event["team_run_id"]
+    key = _team_run_key(spec, run_id)
+    if not await _bg.reserve(key, principal.id, claim_key=f"team-id:{run_id}", claim_identity=key):
+        await stream.aclose()
+        raise HTTPException(status_code=409, detail="Team run ID already in use")
+
+    async def events():
+        try:
+            yield first_event
+            async for event in stream:
+                yield event
+        finally:
+            await stream.aclose()
+
+    try:
+        queue, _ = _bg.start(
+            key,
+            events(),
+            owner_id=principal.id,
+            record_events=True,
+            index_key=_team_run_index(spec),
+            index_run_id=run_id,
+        )
+    except BaseException:
+        await _bg.abandon(key)
+        await stream.aclose()
+        raise
     return sse_response(queue)
 
 
@@ -264,30 +304,33 @@ async def list_team_runs(name: str) -> dict:
     runs associated with this team.
     """
     store = _get_store()
-    await resolve_team_spec(store, name, require_principal())
+    spec = await resolve_team_spec(store, name, require_principal())
 
     runs: list[dict[str, Any]] = []
     seen_ids: set[str] = set()
 
-    # Check local active runs
+    # Both local entries and the Redis index belong to this caller and team.
     for key, (task, _, event_log, _started) in _bg.runs.items():
-        if key.startswith("__pending_"):
+        if not event_log or event_log[0].get("type") != "team_start":
             continue
-        for ev in event_log:
-            if ev.get("type") == "team_start" and ev.get("team_name") == name:
-                status = "running" if not task.done() else "idle"
-                runs.append({"team_run_id": key, "status": status})
-                seen_ids.add(key)
-                break
+        run_id = event_log[0].get("team_run_id")
+        if not run_id or key != _team_run_key(spec, run_id):
+            continue
+        if await _bg.get_owner_async(key) != require_principal().id:
+            continue
+        runs.append({"team_run_id": run_id, "status": "running" if not task.done() else "idle"})
+        seen_ids.add(run_id)
 
-    # Check per-team index in Redis (O(1) instead of SCAN)
     if _bg._event_store:
         try:
-            indexed_ids = await _bg._event_store.get_index(f"team:{name}:runs")
+            indexed_ids = await _bg._event_store.get_index(_team_run_index(spec))
             for run_id in indexed_ids:
                 if run_id in seen_ids:
                     continue
-                status = await _bg.get_status_async(run_id)
+                key = _team_run_key(spec, run_id)
+                if await _bg.get_owner_async(key) != require_principal().id:
+                    continue
+                status = await _bg.get_status_async(key)
                 runs.append({"team_run_id": run_id, "status": status})
         except Exception:
             logger.debug("Failed to read team run index from Redis", exc_info=True)
@@ -295,22 +338,22 @@ async def list_team_runs(name: str) -> dict:
     return {"team_name": name, "runs": runs}
 
 
-async def _require_run_owner(team_run_id: str) -> None:
-    """Raise 403 unless the current principal owns the run."""
+async def _require_run_owner(spec: TeamSpec, team_run_id: str) -> str:
+    """Return the scoped key only for a known run belonging to this team."""
+    key = _team_run_key(spec, team_run_id)
     principal = require_principal()
-    if principal.is_admin:
-        return
-    owner = await _bg.get_owner_async(team_run_id)
-    if owner is None or owner != principal.id:
+    owner = await _bg.get_owner_async(key)
+    if owner is None or (owner != principal.id and not principal.is_admin):
         raise HTTPException(status_code=403, detail="Forbidden")
+    return key
 
 
 @router.delete("/{name}/runs/{team_run_id}")
 async def delete_team_run(name: str, team_run_id: str) -> dict:
     """Delete a team run's data (tasks, events)."""
     store = _get_store()
-    await resolve_team_spec(store, name, require_principal())
-    await _require_run_owner(team_run_id)
+    spec = await resolve_team_spec(store, name, require_principal())
+    key = await _require_run_owner(spec, team_run_id)
 
     # Clean up task board
     try:
@@ -323,10 +366,10 @@ async def delete_team_run(name: str, team_run_id: str) -> dict:
     # Clean up events in Redis
     if _bg._event_store:
         with contextlib.suppress(Exception):
-            await _bg._event_store.delete(team_run_id)
+            await _bg._event_store.delete(key)
 
     # Remove from local tracking
-    _bg.runs.pop(team_run_id, None)
+    _bg.runs.pop(key, None)
 
     return {"status": "deleted"}
 
@@ -340,11 +383,11 @@ async def stream_team_run_events(name: str, team_run_id: str) -> StreamingRespon
     drop (e.g. server restart with checkpoint recovery).
     """
     store = _get_store()
-    await resolve_team_spec(store, name, require_principal())
-    await _require_run_owner(team_run_id)
+    spec = await resolve_team_spec(store, name, require_principal())
+    key = await _require_run_owner(spec, team_run_id)
 
     return StreamingResponse(
-        reconnect_event_generator(_bg, team_run_id, done_event_types=frozenset({"done", "cancelled"})),
+        reconnect_event_generator(_bg, key, done_event_types=frozenset({"done", "cancelled"})),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
@@ -354,11 +397,11 @@ async def stream_team_run_events(name: str, team_run_id: str) -> StreamingRespon
 async def get_team_run_status(name: str, team_run_id: str) -> dict:
     """Check if a team run is currently active."""
     store = _get_store()
-    await resolve_team_spec(store, name, require_principal())
-    await _require_run_owner(team_run_id)
+    spec = await resolve_team_spec(store, name, require_principal())
+    key = await _require_run_owner(spec, team_run_id)
 
     _bg.cleanup()
-    return {"status": await _bg.get_status_async(team_run_id)}
+    return {"status": await _bg.get_status_async(key)}
 
 
 @router.delete("/{name}/runs/{team_run_id}/cancel")
@@ -371,19 +414,23 @@ async def cancel_team_run(name: str, team_run_id: str) -> dict:
     so the run stops naturally.
     """
     store = _get_store()
-    await resolve_team_spec(store, name, require_principal())
-    await _require_run_owner(team_run_id)
+    spec = await resolve_team_spec(store, name, require_principal())
+    key = await _require_run_owner(spec, team_run_id)
+    from agentic_primitives_gateway.routes.agents import _runner as agent_runner
+
+    if agent_runner._checkpoint_store:
+        await agent_runner._checkpoint_store.mark_cancelled(key)
 
     # Signal the team runner to stop workers at the next checkpoint
-    _runner.cancel_run(team_run_id)
+    _runner.cancel_run(team_run_id, event_key=key)
 
     # Try to cancel the local background task (works for non-recovered runs)
-    await _bg.cancel(team_run_id)
+    await _bg.cancel(key)
 
     # Also try to cancel a recovery task (works for resumed runs on this replica)
     from agentic_primitives_gateway.agents.checkpoint import cancel_recovery_task
 
-    cancel_recovery_task(team_run_id)
+    cancel_recovery_task(key)
 
     # Always mark tasks as failed — works for both local and recovered runs
     try:
@@ -397,19 +444,13 @@ async def cancel_team_run(name: str, team_run_id: str) -> dict:
     # Set event store status to cancelled
     if _bg._event_store:
         with contextlib.suppress(Exception):
-            await _bg._event_store.set_status(team_run_id, "cancelled")
-            await _bg._event_store.append_event(team_run_id, {"type": "cancelled"})
+            await _bg._event_store.set_status(key, "cancelled")
+            await _bg._event_store.append_event(key, {"type": "cancelled"})
 
     # Delete checkpoint so orphan recovery doesn't resume this run
-    from agentic_primitives_gateway.routes.agents import _runner as agent_runner
-
     if agent_runner._checkpoint_store:
-        principal = require_principal()
         with contextlib.suppress(Exception):
-            await agent_runner._checkpoint_store.delete(f"{principal.id}:{team_run_id}")
-        # Signal cross-replica cancellation for recovered runs on other replicas
-        with contextlib.suppress(Exception):
-            await agent_runner._checkpoint_store.mark_cancelled(team_run_id)
+            await agent_runner._checkpoint_store.delete(key)
 
     return {"status": "cancelled"}
 
@@ -418,12 +459,12 @@ async def cancel_team_run(name: str, team_run_id: str) -> dict:
 async def get_team_run_events(name: str, team_run_id: str) -> dict:
     """Return all recorded SSE events for a team run (for UI replay)."""
     store = _get_store()
-    await resolve_team_spec(store, name, require_principal())
-    await _require_run_owner(team_run_id)
+    spec = await resolve_team_spec(store, name, require_principal())
+    key = await _require_run_owner(spec, team_run_id)
 
     _bg.cleanup()
-    status = await _bg.get_status_async(team_run_id)
-    events = await _bg.get_events_async(team_run_id)
+    status = await _bg.get_status_async(key)
+    events = await _bg.get_events_async(key)
     if not events and status == "idle":
         return {"team_run_id": team_run_id, "status": "unknown", "events": []}
     return {
@@ -437,8 +478,8 @@ async def get_team_run_events(name: str, team_run_id: str) -> dict:
 async def get_team_run(name: str, team_run_id: str) -> dict:
     """Retrieve task board state for a completed or in-progress team run."""
     store = _get_store()
-    await resolve_team_spec(store, name, require_principal())
-    await _require_run_owner(team_run_id)
+    spec = await resolve_team_spec(store, name, require_principal())
+    key = await _require_run_owner(spec, team_run_id)
 
     try:
         all_tasks = await registry.tasks.list_tasks(team_run_id)
@@ -460,7 +501,7 @@ async def get_team_run(name: str, team_run_id: str) -> dict:
         )
 
     done_count = sum(1 for t in all_tasks if t.status == "done")
-    status = await _bg.get_status_async(team_run_id)
+    status = await _bg.get_status_async(key)
 
     return {
         "team_run_id": team_run_id,
@@ -482,14 +523,28 @@ async def retry_task(name: str, team_run_id: str, task_id: str) -> StreamingResp
     """
     store = _get_store()
     spec = await resolve_team_spec(store, name, require_principal())
-    await _require_run_owner(team_run_id)
-
-    queue, _ = _bg.start(
-        f"{team_run_id}:retry:{task_id}",
-        _runner.retry_task_stream(team_spec=spec, team_run_id=team_run_id, task_id=task_id),
-        owner_id=require_principal().id,
-        record_events=True,
-    )
+    await _require_run_owner(spec, team_run_id)
+    principal = require_principal()
+    retry_key = run_event_key("team-retry", principal.id, spec.owner_id, spec.name, f"{team_run_id}:retry:{task_id}")
+    if not await _bg.reserve(
+        retry_key,
+        principal.id,
+        claim_key=f"team-retry-id:{team_run_id}:retry:{task_id}",
+        claim_identity=retry_key,
+        reuse=True,
+    ):
+        raise HTTPException(status_code=409, detail="Task retry already running")
+    try:
+        await _bg.reset_events(retry_key)
+        queue, _ = _bg.start(
+            retry_key,
+            _runner.retry_task_stream(team_spec=spec, team_run_id=team_run_id, task_id=task_id),
+            owner_id=principal.id,
+            record_events=True,
+        )
+    except BaseException:
+        await _bg.abandon(retry_key)
+        raise
     return sse_response(queue)
 
 

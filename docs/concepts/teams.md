@@ -369,11 +369,11 @@ See [Configuration](../getting-started/configuration.md) for the `checkpointing`
 
 ## Run Cancellation
 
-An active team run can be cancelled via `DELETE /api/v1/teams/{name}/runs/{run_id}/cancel`. Cancellation is cooperative: the runner checks both its local signal and the persisted cross-replica signal. Streaming workers stop their in-flight tasks and wait for them to exit before the run ends; a late worker result cannot revive a task already failed by cancellation. Claimed and in-progress work is marked failed. This also applies to runs recovered from a checkpoint on another replica.
+An active team run can be cancelled via `DELETE /api/v1/teams/{name}/runs/{run_id}/cancel`. Cancellation is cooperative: the runner checks both its local signal and the persisted cross-replica signal. Streaming workers stop their in-flight tasks and wait for them to exit before the run ends; a late worker result cannot revive a task already failed by cancellation. Claimed and in-progress work is marked failed. A cancelled stream emits `cancelled` instead of `done` and skips later phases. This also applies to runs recovered from a checkpoint on another replica.
 
 ## SSE Reconnection
 
-If a stream drops, clients can reconnect to `GET /api/v1/teams/{name}/runs/{run_id}/stream`. This replays all stored events from the event store and then polls for new events if the run is still active. Token events are throttled during replay for smooth delivery.
+If a stream drops, its owner can reconnect to `GET /api/v1/teams/{name}/runs/{run_id}/stream`. Each event log is scoped to the caller and the resolved team identity; an agent session or retry with the same raw ID cannot be replayed through a team endpoint. Unknown or foreign run IDs are denied. Token events are throttled during replay.
 
 ## API
 

@@ -173,6 +173,9 @@ class AgentRunner:
         self._checkpoint_store = store
         self._replica_id = replica_id
 
+    async def _is_cancelled(self, ctx: _RunContext) -> bool:
+        return bool(self._checkpoint_store and await self._checkpoint_store.is_cancelled(self._checkpoint_key(ctx)))
+
     # ── Public entry points ──────────────────────────────────────────
 
     async def run(
@@ -205,6 +208,8 @@ class AgentRunner:
         run_outcome = AuditOutcome.ERROR
         try:
             while ctx.turns_used < spec.max_turns:
+                if await self._is_cancelled(ctx):
+                    break
                 ctx.turns_used += 1
                 await self._checkpoint(ctx, message)
                 request_dict = self._build_request(ctx)
@@ -217,6 +222,8 @@ class AgentRunner:
                     len(ctx.llm_tools) if ctx.llm_tools else 0,
                 )
                 response = await registry.llm.route_request(request_dict)
+                if await self._is_cancelled(ctx):
+                    break
 
                 stop_reason = response.get("stop_reason", "end_turn")
                 tool_calls = response.get("tool_calls")
@@ -236,9 +243,14 @@ class AgentRunner:
             else:
                 ctx.content = f"I've reached the maximum number of turns ({spec.max_turns}). Here's what I have so far: {ctx.content}"
                 ctx.messages.append({"role": "assistant", "content": ctx.content})
-            run_status = "complete"
-            run_action = AuditAction.AGENT_RUN_COMPLETE
-            run_outcome = AuditOutcome.SUCCESS
+            if await self._is_cancelled(ctx):
+                run_status = "cancelled"
+                run_action = AuditAction.AGENT_RUN_CANCELLED
+                run_outcome = AuditOutcome.DENY
+            else:
+                run_status = "complete"
+                run_action = AuditAction.AGENT_RUN_COMPLETE
+                run_outcome = AuditOutcome.SUCCESS
         finally:
             await self._finalize(ctx, message)
             _emit_run_event(
@@ -299,6 +311,8 @@ class AgentRunner:
         run_outcome = AuditOutcome.ERROR
         try:
             while ctx.turns_used < spec.max_turns:
+                if await self._is_cancelled(ctx):
+                    break
                 ctx.turns_used += 1
                 await self._checkpoint(ctx, message)
                 request_dict = self._build_request(ctx)
@@ -313,6 +327,8 @@ class AgentRunner:
                 pending_tool: tuple[str, str] = ("", "")
 
                 async for event in registry.llm.route_request_stream(request_dict):
+                    if await self._is_cancelled(ctx):
+                        break
                     etype = event.get("type")
                     if etype == "content_delta":
                         turn_content += event["delta"]
@@ -330,6 +346,8 @@ class AgentRunner:
                     elif etype == "message_stop":
                         stop_reason = event.get("stop_reason", "end_turn")
 
+                if await self._is_cancelled(ctx):
+                    break
                 if turn_content:
                     ctx.content = turn_content
 
@@ -345,9 +363,14 @@ class AgentRunner:
             else:
                 ctx.content = f"I've reached the maximum number of turns ({spec.max_turns}). Here's what I have so far: {ctx.content}"
                 ctx.messages.append({"role": "assistant", "content": ctx.content})
-            run_status = "complete"
-            run_action = AuditAction.AGENT_RUN_COMPLETE
-            run_outcome = AuditOutcome.SUCCESS
+            if await self._is_cancelled(ctx):
+                run_status = "cancelled"
+                run_action = AuditAction.AGENT_RUN_CANCELLED
+                run_outcome = AuditOutcome.DENY
+            else:
+                run_status = "complete"
+                run_action = AuditAction.AGENT_RUN_COMPLETE
+                run_outcome = AuditOutcome.SUCCESS
         finally:
             await self._finalize(ctx, message)
             _emit_run_event(
@@ -360,6 +383,10 @@ class AgentRunner:
                 tools_called=len(ctx.tools_called),
             )
             metrics.AGENT_RUNS.labels(agent_name=spec.name, status=run_status).inc()
+
+        if run_status == "cancelled":
+            yield {"type": "cancelled", "session_id": ctx.session_id}
+            return
 
         yield {
             "type": "done",
@@ -382,10 +409,10 @@ class AgentRunner:
         The tool catalog no longer receives namespaces as params —
         handlers read directly from contextvars inside each primitive.
         """
-        prev_overrides = self._apply_overrides(spec)
         principal = get_authenticated_principal()
         if principal is None:
             raise RuntimeError("Cannot run agent without an authenticated principal")
+        prev_overrides = self._apply_overrides(spec)
         memory_ns = resolve_memory_namespace(spec, principal)
         knowledge_ns = resolve_knowledge_namespace(spec, principal)  # always a string, like memory_ns
         actor_id = resolve_actor_id(spec, principal)
@@ -485,7 +512,11 @@ class AgentRunner:
 
     async def _exec_tools_parallel(self, ctx: _RunContext, tool_calls: list[dict[str, Any]]) -> None:
         """Execute tool calls in parallel via asyncio.gather, append results to messages."""
+        if await self._is_cancelled(ctx):
+            return
         await self._ensure_sessions_for_tools(ctx, tool_calls)
+        if await self._is_cancelled(ctx):
+            return
 
         async def _exec_one(
             tc: dict[str, Any], *, _tools: list[ToolDefinition] = ctx.tools
@@ -494,6 +525,8 @@ class AgentRunner:
             t_id = tc.get("id", uuid.uuid4().hex[:8])
             logger.info("Agent[%s] executing tool: %s", ctx.spec.name, t_name)
             structured: dict[str, Any] | None = None
+            if await self._is_cancelled(ctx):
+                return t_id, t_name, t_input, "Run cancelled", None
             try:
                 res = await execute_tool(t_name, t_input, _tools)
                 # Each tool call runs in its own asyncio.Task so contextvars
@@ -535,7 +568,11 @@ class AgentRunner:
         Default keyword args (_tools, _queue, _rmap) capture the current values
         at task creation time to satisfy ruff's B023 (closure variable) check.
         """
+        if await self._is_cancelled(ctx):
+            return
         await self._ensure_sessions_for_tools(ctx, tool_calls)
+        if await self._is_cancelled(ctx):
+            return
 
         event_queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
         result_map: dict[str, tuple[str, dict[str, Any], str, dict[str, Any] | None]] = {}
@@ -550,6 +587,9 @@ class AgentRunner:
             t_name, t_input = tc["name"], tc.get("input", {})
             t_id = tc.get("id", uuid.uuid4().hex[:8])
 
+            if await self._is_cancelled(ctx):
+                await _queue.put(None)
+                return
             result = await self._execute_single_tool_streaming(t_name, t_input, _tools, _queue, ctx.depth)
             # Same reason as ``_exec_tools_parallel``: the contextvar is
             # per-Task, so we must pop it here while still inside the
@@ -783,7 +823,9 @@ class AgentRunner:
         principal = get_authenticated_principal()
         if principal is None:
             raise RuntimeError("Cannot checkpoint without an authenticated principal")
-        return f"{principal.id}:{ctx.session_id}"
+        from agentic_primitives_gateway.routes._background import run_event_key
+
+        return run_event_key("agent", principal.id, ctx.spec.owner_id, ctx.spec.name, ctx.session_id)
 
     async def _checkpoint(self, ctx: _RunContext, original_message: str) -> None:
         """Persist run state to Redis for crash recovery."""
@@ -815,7 +857,7 @@ class AgentRunner:
         }
         data.update(serialize_auth_context())
         try:
-            await self._checkpoint_store.save(self._checkpoint_key(ctx), data, ttl=86400)
+            await self._checkpoint_store.save_if_active(self._checkpoint_key(ctx), data, ttl=86400)
         except Exception:
             logger.debug("Failed to save checkpoint for %s", ctx.session_id, exc_info=True)
 
@@ -826,7 +868,7 @@ class AgentRunner:
         if not self._checkpoint_store:
             return
         try:
-            await self._checkpoint_store.delete(self._checkpoint_key(ctx))
+            await self._checkpoint_store.delete_if_owned(self._checkpoint_key(ctx))
         except Exception:
             logger.debug("Failed to delete checkpoint for %s", ctx.session_id, exc_info=True)
 
@@ -839,26 +881,42 @@ class AgentRunner:
         if not self._checkpoint_store or not self._store:
             return
 
-        data = await self._checkpoint_store.load(checkpoint_key)
-        if data is None:
+        # Legacy owner:session checkpoints lack a resource identity. Replaying
+        # them can target a different agent; retire them instead of guessing.
+        if not checkpoint_key.startswith("event:"):
+            await self._checkpoint_store.delete(checkpoint_key)
             return
 
-        # Acquire distributed lock
+        from agentic_primitives_gateway.agents.checkpoint import recovery_lock
+
         replica_id = self._replica_id or uuid.uuid4().hex[:12]
-        if not await self._checkpoint_store.acquire_lock(checkpoint_key, replica_id):
-            logger.info("Checkpoint %s is being recovered by another replica", checkpoint_key)
-            return
+        async with recovery_lock(self._checkpoint_store, checkpoint_key, replica_id) as owner:
+            if owner is None:
+                return
+            data = await self._checkpoint_store.load(checkpoint_key)
+            if data is None or await self._checkpoint_store.is_cancelled(checkpoint_key):
+                return
+            from agentic_primitives_gateway.routes._background import run_event_key
 
-        # Update the checkpoint's replica_id so the orphan scanner skips it
-        data["replica_id"] = replica_id
-        await self._checkpoint_store.save(checkpoint_key, data, ttl=86400)
-
-        try:
-            await self._resume_from_data(data)
-        except Exception:
-            logger.exception("Failed to resume run from checkpoint %s", checkpoint_key)
-        finally:
-            await self._checkpoint_store.release_lock(checkpoint_key)
+            principal_id = (data.get("principal") or {}).get("id")
+            if not isinstance(principal_id, str):
+                return
+            if checkpoint_key != run_event_key(
+                "agent",
+                principal_id,
+                data.get("spec_owner", "system"),
+                data.get("spec_name", ""),
+                data.get("session_id", ""),
+            ):
+                logger.warning("Ignoring checkpoint with mismatched agent identity %s", checkpoint_key)
+                return
+            data["replica_id"] = replica_id
+            if not await self._checkpoint_store.save_recovery(checkpoint_key, owner, data):
+                return
+            try:
+                await self._resume_from_data(data)
+            except Exception:
+                logger.exception("Failed to resume run from checkpoint %s", checkpoint_key)
 
     async def _resume_from_data(self, data: dict[str, Any]) -> None:
         """Internal resume logic — separated for testability."""
@@ -894,7 +952,7 @@ class AgentRunner:
         prev_overrides = self._apply_overrides(spec)
         resumed_memory_ns = data["memory_ns"]
         resumed_knowledge_ns = data["knowledge_ns"]
-        resumed_pool_map = data.get("memory_pool_map")
+        resumed_pool_map = resolve_shared_pools(spec)
         resumed_session_ids = data.get("session_ids") or {}
 
         cv_tokens: dict[str, Any] = {
@@ -956,11 +1014,13 @@ class AgentRunner:
 
         # Best-effort: find the background manager's event store to record the resume event
         try:
+            from agentic_primitives_gateway.routes._background import run_event_key
             from agentic_primitives_gateway.routes.agents import _bg as agent_bg
 
+            event_key = run_event_key("agent", principal.id, spec.owner_id, spec.name, ctx.session_id)
             if agent_bg and agent_bg._event_store:
                 await agent_bg._event_store.append_event(
-                    ctx.session_id,
+                    event_key,
                     {
                         "type": "run_resumed",
                         "session_id": ctx.session_id,
@@ -968,20 +1028,20 @@ class AgentRunner:
                         "turns_used": ctx.turns_used,
                     },
                 )
-                await agent_bg._event_store.set_status(ctx.session_id, "running")
+                await agent_bg._event_store.set_status(event_key, "running")
         except Exception:
             logger.debug("Could not record run_resumed event", exc_info=True)
 
         # Recover partial tokens from the event store so the model can
         # continue from where it left off instead of restarting the turn.
-        partial_content = await self._recover_partial_tokens(ctx.session_id)
+        partial_content = await self._recover_partial_tokens(ctx.session_id, spec=spec)
 
         # Continue the LLM loop
         resumed_first_turn = True
         try:
             while ctx.turns_used < spec.max_turns:
                 # Check for cross-replica cancellation signal
-                if self._checkpoint_store and await self._checkpoint_store.is_cancelled(ctx.session_id):
+                if self._checkpoint_store and await self._checkpoint_store.is_cancelled(self._checkpoint_key(ctx)):
                     logger.info("Agent[%s] session=%s cancelled via Redis signal", spec.name, ctx.session_id)
                     break
 
@@ -1024,7 +1084,7 @@ class AgentRunner:
     # ── Partial token recovery ────────────────────────────────────────
 
     @staticmethod
-    async def _recover_partial_tokens(session_id: str) -> str:
+    async def _recover_partial_tokens(session_id: str, *, spec: AgentSpec | None = None) -> str:
         """Read token events from the event store and reconstruct partial content.
 
         When resuming from a checkpoint, the LLM turn that was interrupted
@@ -1033,11 +1093,16 @@ class AgentRunner:
         left off (via a system-prompt hint) instead of regenerating.
         """
         try:
+            from agentic_primitives_gateway.routes._background import run_event_key
             from agentic_primitives_gateway.routes.agents import _bg as agent_bg
 
-            if not agent_bg or not agent_bg._event_store:
+            if not agent_bg or not agent_bg._event_store or spec is None:
                 return ""
-            events = await agent_bg._event_store.get_events(session_id)
+            principal = get_authenticated_principal()
+            if principal is None:
+                return ""
+            key = run_event_key("agent", principal.id, spec.owner_id, spec.name, session_id)
+            events = await agent_bg._event_store.get_events(key)
             if not events:
                 return ""
             # Walk events in reverse to find the last incomplete turn's tokens.
@@ -1082,52 +1147,17 @@ class AgentRunner:
     # ── Memory helpers ───────────────────────────────────────────────
 
     async def _load_memory_context(self, namespace: str) -> str:
-        """Load stored memories and format as an LLM context preamble.
-
-        Searches two places for memories:
-        1. The primary memory namespace (e.g. "agent:research-assistant")
-        2. If empty, falls back to child namespaces (e.g. "agent:research-assistant:session123")
-           which may contain memories stored before the memory/session split.
-
-        The child namespace search uses "namespace:" as a prefix (with trailing colon)
-        to prevent "agent:bot" from matching "agent:bot-2" (multi-tenancy safety).
-
-        Dedupes by key, keeping the most recently updated version when the same
-        key exists across multiple child namespaces.
-        """
-        all_records = []
+        """Load only the current caller's exact private memory namespace."""
         try:
             records = await registry.memory.list_memories(namespace=namespace, limit=20)
-            all_records.extend(records)
-
-            # Fallback: search session-scoped child namespaces for memories
-            # stored before the memory/session namespace split was introduced
-            if not all_records:
-                try:
-                    child_prefix = namespace + ":"
-                    all_namespaces = await registry.memory.list_namespaces()
-                    for ns in all_namespaces:
-                        if ns.startswith(child_prefix):
-                            all_records.extend(await registry.memory.list_memories(namespace=ns, limit=20))
-                except NotImplementedError:
-                    pass  # list_namespaces is optional for providers
-                except Exception:
-                    logger.debug("Error searching child namespaces for %s", namespace, exc_info=True)
-
-            if not all_records:
+            if not records:
                 return ""
-
-            # Dedupe: same key may exist in multiple child namespaces — keep newest
-            seen: dict[str, Any] = {}
-            for r in all_records:
-                if r.key not in seen or r.updated_at > seen[r.key].updated_at:
-                    seen[r.key] = r
             lines = [
                 "[System: The following memories were previously stored in your memory. "
-                "Use them to maintain continuity across conversations.]",
+                "Use them to maintain continuity across conversations.]"
             ]
-            for r in seen.values():
-                lines.append(f"- {r.key}: {r.content}")
+            for record in records:
+                lines.append(f"- {record.key}: {record.content}")
             return "\n".join(lines)
         except Exception:
             logger.debug("Failed to load memory context for namespace %s", namespace)
@@ -1235,6 +1265,8 @@ class AgentRunner:
         if owner_store is None or not await owner_store.set_owner(sid, principal.id):
             raise RuntimeError(f"{primitive} session ID already in use: {sid}")
         claimed_id = sid
+        returned_id: str | None = None
+        registered = False
         try:
             logger.info("Starting %s session...", primitive)
             if primitive == "code_interpreter":
@@ -1252,14 +1284,31 @@ class AgentRunner:
                 claimed_id = returned_id
             if self._session_registry:
                 await self._session_registry.register(primitive, returned_id, metadata={"user_id": principal.id})
+                registered = True
             if returned_id != sid:
                 await owner_store.release_owner(sid, principal.id)
             sid = returned_id
             logger.info("Started %s session: %s", primitive, sid)
         except BaseException:
-            await owner_store.release_owner(claimed_id, principal.id)
-            if claimed_id != sid:
-                await owner_store.release_owner(sid, principal.id)
+            stopped = False
+            if returned_id is None or claimed_id == returned_id:
+                try:
+                    if primitive == "code_interpreter":
+                        await registry.code_interpreter.stop_session(session_id=returned_id or sid)
+                    else:
+                        await registry.browser.stop_session(session_id=returned_id or sid)
+                    stopped = True
+                except BaseException:
+                    logger.debug("Failed to stop partially started %s session", primitive, exc_info=True)
+            if stopped:
+                if registered and self._session_registry:
+                    with contextlib.suppress(BaseException):
+                        await self._session_registry.unregister(primitive, returned_id)
+                with contextlib.suppress(BaseException):
+                    await owner_store.release_owner(claimed_id, principal.id)
+            if returned_id is not None and claimed_id != sid:
+                with contextlib.suppress(BaseException):
+                    await owner_store.release_owner(sid, principal.id)
             raise
 
         ctx.session_ids[primitive] = sid
