@@ -106,7 +106,8 @@ async def list_sessions(
 @router.get("/sessions/{session_id}/live-view", response_model=LiveViewResponse)
 async def get_live_view_url(
     session_id: str,
-    expires: int = Query(default=300, ge=1, le=3600),
+    # AgentCore presigned live-view URLs are capped at 300 seconds.
+    expires: int = Query(default=300, ge=1, le=300),
 ) -> LiveViewResponse:
     await browser_session_owners.require_owner(session_id, require_principal())
     try:

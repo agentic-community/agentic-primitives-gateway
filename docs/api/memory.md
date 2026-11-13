@@ -75,6 +75,8 @@ The denylist is applied uniformly in `primitives/memory/_audit.py` wrappers inst
 
 ## Memory Resources (Control Plane)
 
+Admin-only (403 otherwise): memory resources are account-level backend objects (e.g. AgentCore Memory) with no gateway owner, and these calls run under the provider's AWS identity — often the operator role. The same applies to the strategy endpoints below.
+
 | Method | Path | Description |
 |--------|------|-------------|
 | `POST` | `/resources` | Create memory resource |

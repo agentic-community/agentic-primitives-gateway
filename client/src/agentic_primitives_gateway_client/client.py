@@ -425,6 +425,8 @@ class AgenticPlatformClient:
             return {}
 
         resolved = creds.get_frozen_credentials()
+        if not resolved.access_key or not resolved.secret_key:
+            return {}
         headers: dict[str, str] = {
             "x-aws-access-key-id": resolved.access_key,
             "x-aws-secret-access-key": resolved.secret_key,
