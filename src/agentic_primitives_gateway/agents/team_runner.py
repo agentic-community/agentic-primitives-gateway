@@ -145,39 +145,35 @@ class TeamRunner:
         self._checkpoint_store: Any | None = None
         self._replica_id: str | None = None
         self._cancel_events: dict[str, asyncio.Event] = {}
+        self._event_keys: dict[str, str] = {}
 
-    def cancel_run(self, team_run_id: str) -> None:
-        """Signal a running team to stop at the next checkpoint.
-
-        Sets the local asyncio.Event for this replica. Cross-replica
-        cancellation is handled by the cancel endpoint setting the Redis
-        event store status to "cancelled", which ``_sync_remote_cancel``
-        picks up in the worker loop.
-        """
+    def cancel_run(self, team_run_id: str, *, event_key: str | None = None) -> None:
+        """Signal only the local run with the authenticated scoped identity."""
+        if event_key is None or self._event_keys.get(team_run_id) != event_key:
+            return
         event = self._cancel_events.get(team_run_id)
         if event:
             event.set()
             logger.info("Cancel event set for team run %s", team_run_id)
 
     async def _sync_remote_cancel(self, team_run_id: str) -> None:
-        """Check the Redis event store for a remote cancel signal.
-
-        If another replica set the status to ``"cancelled"``, propagate it to
-        the local ``asyncio.Event`` so worker loops and agent tool-call loops
-        stop cooperatively.
-        """
-        event_store = self._get_event_store()
-        if not event_store:
+        """Propagate this run's durable cancellation signal to local workers."""
+        key = self._event_keys.get(team_run_id)
+        if key is None:
             return
         try:
-            status = await event_store.get_status(team_run_id)
-            if status == "cancelled":
-                cancel_evt = self._cancel_events.get(team_run_id)
-                if cancel_evt and not cancel_evt.is_set():
-                    cancel_evt.set()
+            event_store = self._get_event_store()
+            cancelled = bool(
+                (self._checkpoint_store and await self._checkpoint_store.is_cancelled(key))
+                or (event_store and await event_store.get_status(key) == "cancelled")
+            )
+            if cancelled:
+                event = self._cancel_events.get(team_run_id)
+                if event is not None and not event.is_set():
+                    event.set()
                     logger.info("Remote cancel detected for team run %s", team_run_id)
         except Exception:
-            pass  # best-effort
+            logger.debug("Failed to check remote cancellation for %s", team_run_id, exc_info=True)
 
     async def _task_cancelled(self, team_run_id: str, task_id: str) -> bool:
         """Honor run cancellation and never revive a failed task."""
@@ -260,7 +256,29 @@ class TeamRunner:
         except Exception:
             return None
 
-    async def _recover_partial_tokens(self, team_run_id: str, role_label: str) -> str:
+    @staticmethod
+    def _event_key(team_spec: TeamSpec, team_run_id: str) -> str | None:
+        from agentic_primitives_gateway.routes._background import run_event_key
+
+        principal = get_authenticated_principal()
+        if principal is None:
+            return None
+        return run_event_key("team", principal.id, team_spec.owner_id, team_spec.name, team_run_id)
+
+    def _cancel_key(self, team_spec: TeamSpec, team_run_id: str) -> str:
+        key = self._event_key(team_spec, team_run_id)
+        if key is None:
+            raise RuntimeError("Cannot cancel a team run without an authenticated principal")
+        return key
+
+    def _remember_event_key(self, team_spec: TeamSpec, team_run_id: str) -> None:
+        key = self._event_key(team_spec, team_run_id)
+        if key is not None:
+            self._event_keys[team_run_id] = key
+
+    async def _recover_partial_tokens(
+        self, team_run_id: str, role_label: str, *, team_spec: TeamSpec | None = None
+    ) -> str:
         """Recover partial tokens for a specific agent from the event store.
 
         Walks events in reverse to find the last ``invocation_start`` for the
@@ -272,7 +290,10 @@ class TeamRunner:
         if not event_store:
             return ""
         try:
-            events = await event_store.get_events(team_run_id)
+            event_key = self._event_key(team_spec, team_run_id) if team_spec is not None else None
+            if event_key is None:
+                return ""
+            events = await event_store.get_events(event_key)
             if not events:
                 return ""
 
@@ -337,13 +358,14 @@ class TeamRunner:
         }
         data.update(serialize_auth_context())
         try:
-            key = f"{principal.id}:{team_run_id}"
-            await self._checkpoint_store.save(key, data, ttl=86400)
+            key = self._event_key(team_spec, team_run_id)
+            if key is not None:
+                await self._checkpoint_store.save_if_active(key, data, ttl=86400)
         except Exception:
             logger.debug("Failed to save team checkpoint for %s", team_run_id, exc_info=True)
 
-    async def _delete_team_checkpoint(self, team_run_id: str, team_spec: TeamSpec | None = None) -> None:
-        if team_spec is not None and not team_spec.checkpointing_enabled:
+    async def _delete_team_checkpoint(self, team_run_id: str, team_spec: TeamSpec) -> None:
+        if not team_spec.checkpointing_enabled:
             return
         if not self._checkpoint_store:
             return
@@ -351,7 +373,9 @@ class TeamRunner:
         if principal is None:
             return
         try:
-            await self._checkpoint_store.delete(f"{principal.id}:{team_run_id}")
+            key = self._event_key(team_spec, team_run_id)
+            if key is not None:
+                await self._checkpoint_store.delete_if_owned(key)
         except Exception:
             logger.debug("Failed to delete team checkpoint for %s", team_run_id, exc_info=True)
 
@@ -365,27 +389,41 @@ class TeamRunner:
         if not self._checkpoint_store or not self._team_store:
             return
 
-        data = await self._checkpoint_store.load(checkpoint_key)
-        if data is None:
+        # Old owner:run checkpoints are ambiguous after scoped-key cutover.
+        if not checkpoint_key.startswith("event:"):
+            await self._checkpoint_store.delete(checkpoint_key)
             return
-        if data.get("type") != "team":
-            return  # Not a team checkpoint — skip
+
+        from agentic_primitives_gateway.agents.checkpoint import recovery_lock
 
         replica_id = self._replica_id or uuid.uuid4().hex[:12]
-        if not await self._checkpoint_store.acquire_lock(checkpoint_key, replica_id):
-            logger.info("Team checkpoint %s is being recovered by another replica", checkpoint_key)
-            return
+        async with recovery_lock(self._checkpoint_store, checkpoint_key, replica_id) as owner:
+            if owner is None:
+                return
+            data = await self._checkpoint_store.load(checkpoint_key)
+            if data is None or data.get("type") != "team" or await self._checkpoint_store.is_cancelled(checkpoint_key):
+                return
+            from agentic_primitives_gateway.routes._background import run_event_key
 
-        # Update the checkpoint's replica_id so the orphan scanner skips it
-        data["replica_id"] = replica_id
-        await self._checkpoint_store.save(checkpoint_key, data, ttl=86400)
-
-        try:
-            await self._resume_team_from_data(data)
-        except Exception:
-            logger.exception("Failed to resume team run from checkpoint %s", checkpoint_key)
-        finally:
-            await self._checkpoint_store.release_lock(checkpoint_key)
+            principal_id = (data.get("principal") or {}).get("id")
+            if not isinstance(principal_id, str):
+                return
+            if checkpoint_key != run_event_key(
+                "team",
+                principal_id,
+                data.get("spec_owner", "system"),
+                data.get("spec_name", ""),
+                data.get("team_run_id", ""),
+            ):
+                logger.warning("Ignoring checkpoint with mismatched team identity %s", checkpoint_key)
+                return
+            data["replica_id"] = replica_id
+            if not await self._checkpoint_store.save_recovery(checkpoint_key, owner, data):
+                return
+            try:
+                await self._resume_team_from_data(data)
+            except Exception:
+                logger.exception("Failed to resume team run from checkpoint %s", checkpoint_key)
 
     async def _resume_team_from_data(self, data: dict[str, Any]) -> None:
         # Reconstruct principal and credentials from checkpoint
@@ -421,6 +459,12 @@ class TeamRunner:
         # Register cancel event so cancel_run() works for recovered runs
         cancel_event = asyncio.Event()
         self._cancel_events[team_run_id] = cancel_event
+        self._remember_event_key(team_spec, team_run_id)
+        await self._sync_remote_cancel(team_run_id)
+        if cancel_event.is_set():
+            self._cancel_events.pop(team_run_id, None)
+            self._event_keys.pop(team_run_id, None)
+            return
 
         assert self._agent_store is not None
         assert self._agent_runner is not None
@@ -435,10 +479,16 @@ class TeamRunner:
 
         # Notify event store so the UI can see the resumed run
         event_store = self._get_event_store()
-        if event_store:
-            await event_store.set_status(team_run_id, "running")
+        event_key = self._event_key(team_spec, team_run_id)
+        await self._sync_remote_cancel(team_run_id)
+        if cancel_event.is_set():
+            self._cancel_events.pop(team_run_id, None)
+            self._event_keys.pop(team_run_id, None)
+            return
+        if event_store and event_key is not None:
+            await event_store.set_status(event_key, "running")
             await event_store.append_event(
-                team_run_id,
+                event_key,
                 {
                     "type": "run_resumed",
                     "team_run_id": team_run_id,
@@ -450,12 +500,16 @@ class TeamRunner:
         # Resume using streaming variants so events (tokens, task_claimed,
         # worker activity) are emitted to the event store for the UI to replay.
         async def _emit(event: dict[str, Any]) -> None:
-            if event_store:
-                await event_store.append_event(team_run_id, event)
+            await self._sync_remote_cancel(team_run_id)
+            if event_store and event_key is not None and not cancel_event.is_set():
+                await event_store.append_event(event_key, event)
 
         # Reset in-progress tasks to pending so workers can re-claim them.
         # After a crash, tasks may be stuck in "in_progress" from dead workers.
         try:
+            await self._sync_remote_cancel(team_run_id)
+            if cancel_event.is_set():
+                return
             all_tasks = await registry.tasks.list_tasks(team_run_id)
             for t in all_tasks:
                 if t.status == "in_progress":
@@ -470,9 +524,12 @@ class TeamRunner:
         phase_role = phase_role_map.get(phase)
         phase_hint: str | None = None
         if phase_role:
-            phase_hint = await self._recover_partial_tokens(team_run_id, phase_role) or None
+            phase_hint = await self._recover_partial_tokens(team_run_id, phase_role, team_spec=team_spec) or None
 
         try:
+            await self._sync_remote_cancel(team_run_id)
+            if cancel_event.is_set():
+                return
             if phase == "planning":
                 await _emit({"type": "phase_change", "phase": "planning"})
                 seen_task_ids: set[str] = set()
@@ -513,6 +570,9 @@ class TeamRunner:
                 )
                 phase = "execution"
 
+            await self._sync_remote_cancel(team_run_id)
+            if cancel_event.is_set():
+                return
             if phase == "execution":
                 await self._team_checkpoint(team_spec, team_run_id, message, "execution")
                 await _emit({"type": "phase_change", "phase": "execution"})
@@ -523,11 +583,14 @@ class TeamRunner:
                         await _emit(event)
                 phase = "synthesis"
 
+            await self._sync_remote_cancel(team_run_id)
+            if cancel_event.is_set():
+                return
             if phase == "synthesis":
                 await self._team_checkpoint(team_spec, team_run_id, message, "synthesis")
                 await _emit({"type": "phase_change", "phase": "synthesis"})
                 # Re-recover hint for synthesis (may be a direct resume into this phase)
-                synth_hint = await self._recover_partial_tokens(team_run_id, "synthesizer") or None
+                synth_hint = await self._recover_partial_tokens(team_run_id, "synthesizer", team_spec=team_spec) or None
                 response = ""
                 async for event in self._run_synthesizer_stream(
                     team_spec, team_run_id, message, resume_hint=synth_hint
@@ -554,11 +617,12 @@ class TeamRunner:
             await _emit({"type": "error", "detail": f"Resume failed for team run {team_run_id}"})
 
         await self._sync_remote_cancel(team_run_id)
-        if event_store and not cancel_event.is_set():
-            await event_store.set_status(team_run_id, "idle")
+        if event_store and event_key is not None and not cancel_event.is_set():
+            await event_store.set_status(event_key, "idle")
 
         await self._delete_team_checkpoint(team_run_id, team_spec=team_spec)
         self._cancel_events.pop(team_run_id, None)
+        self._event_keys.pop(team_run_id, None)
         logger.info("Team[%s] run=%s resumed and completed", spec_name, team_run_id)
 
     # ── Public entry points ──────────────────────────────────────────
@@ -620,9 +684,12 @@ class TeamRunner:
         team_run_id = uuid.uuid4().hex[:16]
         assert self._agent_store is not None
         assert self._agent_runner is not None
+        if team_run_id in self._cancel_events:
+            raise ValueError(f"Team run ID already active: {team_run_id}")
 
         cancel_event = asyncio.Event()
         self._cancel_events[team_run_id] = cancel_event
+        self._remember_event_key(team_spec, team_run_id)
 
         _emit_team_event(AuditAction.TEAM_RUN_START, AuditOutcome.SUCCESS, team_spec.name, team_run_id)
         metrics.TEAM_RUNS.labels(team_name=team_spec.name, status="start").inc()
@@ -652,6 +719,14 @@ class TeamRunner:
                             },
                         }
 
+            await self._sync_remote_cancel(team_run_id)
+            if cancel_event.is_set():
+                run_status = "cancelled"
+                run_action = AuditAction.TEAM_RUN_CANCELLED
+                run_outcome = AuditOutcome.DENY
+                yield {"type": "cancelled", "team_run_id": team_run_id}
+                return
+
             all_tasks = await registry.tasks.list_tasks(team_run_id)
             yield {
                 "type": "tasks_created",
@@ -661,6 +736,14 @@ class TeamRunner:
                     for t in all_tasks
                 ],
             }
+
+            await self._sync_remote_cancel(team_run_id)
+            if cancel_event.is_set():
+                run_status = "cancelled"
+                run_action = AuditAction.TEAM_RUN_CANCELLED
+                run_outcome = AuditOutcome.DENY
+                yield {"type": "cancelled", "team_run_id": team_run_id}
+                return
 
             # Phase 2: Execution with continuous re-planning
             await self._team_checkpoint(team_spec, team_run_id, message, "execution")
@@ -672,6 +755,14 @@ class TeamRunner:
                         workers_used.append(event["agent"])
                     yield event
 
+            await self._sync_remote_cancel(team_run_id)
+            if cancel_event.is_set():
+                run_status = "cancelled"
+                run_action = AuditAction.TEAM_RUN_CANCELLED
+                run_outcome = AuditOutcome.DENY
+                yield {"type": "cancelled", "team_run_id": team_run_id}
+                return
+
             # Phase 3: Synthesis
             await self._team_checkpoint(team_spec, team_run_id, message, "synthesis")
             yield {"type": "phase_change", "phase": "synthesis"}
@@ -681,10 +772,21 @@ class TeamRunner:
                     response += event.get("content", "")
                 yield event
 
+            await self._sync_remote_cancel(team_run_id)
+            if cancel_event.is_set():
+                run_status = "cancelled"
+                run_action = AuditAction.TEAM_RUN_CANCELLED
+                run_outcome = AuditOutcome.DENY
+                yield {"type": "cancelled", "team_run_id": team_run_id}
+                return
+
             await self._delete_team_checkpoint(team_run_id, team_spec=team_spec)
             all_tasks = await registry.tasks.list_tasks(team_run_id)
             done_count = sum(1 for t in all_tasks if t.status == TaskStatus.DONE)
 
+            run_status = "complete"
+            run_action = AuditAction.TEAM_RUN_COMPLETE
+            run_outcome = AuditOutcome.SUCCESS
             yield {
                 "type": "done",
                 "response": response,
@@ -695,11 +797,9 @@ class TeamRunner:
                 "tasks_completed": done_count,
                 "workers_used": workers_used,
             }
-            run_status = "cancelled" if cancel_event.is_set() else "complete"
-            run_action = AuditAction.TEAM_RUN_CANCELLED if cancel_event.is_set() else AuditAction.TEAM_RUN_COMPLETE
-            run_outcome = AuditOutcome.DENY if cancel_event.is_set() else AuditOutcome.SUCCESS
         finally:
             self._cancel_events.pop(team_run_id, None)
+            self._event_keys.pop(team_run_id, None)
             _emit_team_event(run_action, run_outcome, team_spec.name, team_run_id)
             metrics.TEAM_RUNS.labels(team_name=team_spec.name, status=run_status).inc()
 
@@ -733,7 +833,7 @@ class TeamRunner:
                 max_turns=planner_spec.max_turns,
                 cancel_event=cancel_evt,
                 checkpoint_store=self._checkpoint_store,
-                run_id=team_run_id,
+                run_id=self._cancel_key(team_spec, team_run_id),
             )
 
     async def _run_planner_stream(
@@ -758,7 +858,7 @@ class TeamRunner:
                 resume_hint=resume_hint,
                 cancel_event=cancel_evt,
                 checkpoint_store=self._checkpoint_store,
-                run_id=team_run_id,
+                run_id=self._cancel_key(team_spec, team_run_id),
             ):
                 yield event
 
@@ -798,8 +898,11 @@ class TeamRunner:
                 max_turns=planner_spec.max_turns,
                 cancel_event=cancel_evt,
                 checkpoint_store=self._checkpoint_store,
-                run_id=team_run_id,
+                run_id=self._cancel_key(team_spec, team_run_id),
             )
+        await self._sync_remote_cancel(team_run_id)
+        if cancel_evt and cancel_evt.is_set():
+            return 0
         count_after = len(await registry.tasks.list_tasks(team_run_id))
 
         new_count = count_after - count_before
@@ -842,8 +945,11 @@ class TeamRunner:
                 max_turns=planner_spec.max_turns,
                 cancel_event=cancel_evt,
                 checkpoint_store=self._checkpoint_store,
-                run_id=team_run_id,
+                run_id=self._cancel_key(team_spec, team_run_id),
             ):
+                await self._sync_remote_cancel(team_run_id)
+                if cancel_evt and cancel_evt.is_set():
+                    break
                 await event_queue.put(event)
                 # Poll for newly created tasks during re-planning
                 current_tasks = await registry.tasks.list_tasks(team_run_id)
@@ -862,6 +968,9 @@ class TeamRunner:
                             }
                         )
 
+        await self._sync_remote_cancel(team_run_id)
+        if cancel_evt and cancel_evt.is_set():
+            return 0
         tasks_after = await registry.tasks.list_tasks(team_run_id)
         new_tasks = tasks_after[count_before:]
         new_count = len(new_tasks)
@@ -1249,7 +1358,7 @@ class TeamRunner:
                     max_turns=worker_spec.max_turns,
                     cancel_event=cancel_evt,
                     checkpoint_store=self._checkpoint_store,
-                    run_id=team_run_id,
+                    run_id=self._cancel_key(team_spec, team_run_id),
                 ):
                     evt_type = event.get("type")
                     if evt_type == "agent_token":
@@ -1303,7 +1412,7 @@ class TeamRunner:
                     max_turns=worker_spec.max_turns,
                     cancel_event=cancel_evt,
                     checkpoint_store=self._checkpoint_store,
-                    run_id=team_run_id,
+                    run_id=self._cancel_key(team_spec, team_run_id),
                 )
         finally:
             await self._stop_sessions(session_ids, cv_tokens)
@@ -1327,7 +1436,7 @@ class TeamRunner:
                 max_turns=synth_spec.max_turns,
                 cancel_event=cancel_evt,
                 checkpoint_store=self._checkpoint_store,
-                run_id=team_run_id,
+                run_id=self._cancel_key(team_spec, team_run_id),
             )
 
     async def _run_synthesizer_stream(
@@ -1351,7 +1460,7 @@ class TeamRunner:
                 resume_hint=resume_hint,
                 cancel_event=cancel_evt,
                 checkpoint_store=self._checkpoint_store,
-                run_id=team_run_id,
+                run_id=self._cancel_key(team_spec, team_run_id),
             ):
                 yield event
 
@@ -1416,16 +1525,14 @@ class TeamRunner:
         yield {"type": "task_retry", "agent": worker_name, "task_id": task_id, "title": task.title}
 
         # Recover partial tokens from the previous failed attempt
-        resume_hint = await self._recover_task_tokens(team_run_id, task_id)
+        resume_hint = await self._recover_task_tokens(team_run_id, task_id, team_spec=team_spec)
 
         # Execute the task with resume context
         prev_overrides = self._apply_overrides(worker_spec)
+        session_ids: dict[str, str] = {}
+        cv_tokens: dict[str, Any] = {}
         try:
             session_ids, cv_tokens = await self._start_sessions(worker_spec)
-        except BaseException:
-            self._restore_overrides(prev_overrides)
-            raise
-        try:
             tools = self._build_worker_tools(worker_spec, team_spec)
             upstream = await self._gather_upstream_context(team_run_id, task_id)
             message = build_task_message(task.title, task.description, upstream)
@@ -1448,7 +1555,7 @@ class TeamRunner:
                     resume_hint=resume_hint or None,
                     cancel_event=cancel_evt,
                     checkpoint_store=self._checkpoint_store,
-                    run_id=team_run_id,
+                    run_id=self._cancel_key(team_spec, team_run_id),
                 ):
                     evt_type = event.get("type")
                     if evt_type == "agent_token":
@@ -1487,7 +1594,7 @@ class TeamRunner:
 
         yield {"type": "retry_done", "task_id": task_id}
 
-    async def _recover_task_tokens(self, team_run_id: str, task_id: str) -> str:
+    async def _recover_task_tokens(self, team_run_id: str, task_id: str, *, team_spec: TeamSpec | None = None) -> str:
         """Recover partial tokens for a specific task from the event store.
 
         Walks events to find agent_token events tagged with this task_id,
@@ -1497,7 +1604,10 @@ class TeamRunner:
         if not event_store:
             return ""
         try:
-            events = await event_store.get_events(team_run_id)
+            event_key = self._event_key(team_spec, team_run_id) if team_spec is not None else None
+            if event_key is None:
+                return ""
+            events = await event_store.get_events(event_key)
             if not events:
                 return ""
 
@@ -1614,24 +1724,28 @@ class TeamRunner:
                     if sid != requested_id:
                         await owner_store.release_owner(requested_id, principal.id)
                 except BaseException:
-                    if started_id is not None and claimed_id == started_id:
+                    stopped = False
+                    if started_id is None or claimed_id == started_id:
+                        # The provider may have started the requested session
+                        # before raising. Never stop a returned ID we failed to
+                        # claim (it could belong to another user).
                         try:
                             if prim_name == "browser":
-                                await registry.browser.stop_session(session_id=started_id)
+                                await registry.browser.stop_session(session_id=started_id or requested_id)
                             else:
-                                await registry.code_interpreter.stop_session(session_id=started_id)
+                                await registry.code_interpreter.stop_session(session_id=started_id or requested_id)
+                            stopped = True
                         except BaseException:
                             logger.debug("Failed to stop partially started %s session", prim_name, exc_info=True)
+                    if stopped:
                         if registered and self._session_registry:
                             with contextlib.suppress(BaseException):
                                 await self._session_registry.unregister(prim_name, started_id)
-                    for owner_id in {claimed_id, requested_id}:
-                        try:
-                            await owner_store.release_owner(owner_id, principal.id)
-                        except BaseException:
-                            logger.debug(
-                                "Failed to release partial %s session claim %s", prim_name, owner_id, exc_info=True
-                            )
+                        with contextlib.suppress(BaseException):
+                            await owner_store.release_owner(claimed_id, principal.id)
+                    if started_id is not None and requested_id != claimed_id:
+                        with contextlib.suppress(BaseException):
+                            await owner_store.release_owner(requested_id, principal.id)
                     raise
                 logger.info("Started %s session: %s", prim_name, sid)
                 session_ids[prim_name] = sid
@@ -1655,8 +1769,11 @@ class TeamRunner:
                         await registry.browser.stop_session(session_id=sid)
                     elif prim_name == "code_interpreter":
                         await registry.code_interpreter.stop_session(session_id=sid)
-                except Exception:
+                except BaseException:
+                    # A failed stop may leave a live remote session. Its owner and
+                    # registry entry must remain until the stop is confirmed.
                     logger.debug("Failed to stop %s team session %s", prim_name, sid, exc_info=True)
+                    continue
                 owner_store = _session_ownership_store(prim_name)
                 principal = get_authenticated_principal()
                 if owner_store is not None and principal is not None:

@@ -340,6 +340,28 @@ class TestSessionManagement:
                 await runner._ensure_session("code_execute", [tool_def], ctx)
         assert "code_interpreter" not in ctx.session_ids
 
+    async def test_failed_partial_start_keeps_owner_until_stop_succeeds(self) -> None:
+        from agentic_primitives_gateway.routes._helpers import code_interpreter_session_owners
+
+        runner = AgentRunner()
+        tool_def = MagicMock()
+        tool_def.name = "code_execute"
+        tool_def.primitive = "code_interpreter"
+        ctx = _minimal_ctx()
+        sid = "partially-started-ci"
+        with (
+            patch(f"{_RUNNER_MOD}.uuid.uuid4") as generated,
+            patch(f"{_RUNNER_MOD}.registry") as mock_reg,
+        ):
+            generated.return_value.hex = sid
+            mock_reg.code_interpreter.start_session = AsyncMock(side_effect=RuntimeError("start failed"))
+            mock_reg.code_interpreter.stop_session = AsyncMock(side_effect=RuntimeError("stop failed"))
+            with pytest.raises(RuntimeError, match="start failed"):
+                await runner._ensure_session("code_execute", [tool_def], ctx)
+            assert await code_interpreter_session_owners.get_owner(sid) == _TEST_PRINCIPAL.id
+            mock_reg.code_interpreter.stop_session.assert_awaited_once_with(session_id=sid)
+        await code_interpreter_session_owners.release_owner(sid, _TEST_PRINCIPAL.id)
+
     async def test_ensure_session_collision_never_stops_existing_owner(self) -> None:
         from agentic_primitives_gateway.routes._helpers import code_interpreter_session_owners
 

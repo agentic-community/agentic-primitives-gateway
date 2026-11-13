@@ -272,6 +272,23 @@ class TestTeamRunStreaming:
         done_event = next(e for e in events if e["type"] == "done")
         assert done_event["tasks_created"] == 1
 
+    async def test_cancel_during_planning_does_not_start_workers_or_synthesis(self, runner: TeamRunner) -> None:
+        team = _make_team()
+
+        async def planner(*args: Any, **kwargs: Any):
+            yield {"type": "agent_token", "content": "planning"}
+
+        with patch.object(runner, "_run_planner_stream", side_effect=planner):
+            events = []
+            async for event in runner.run_stream(team, "request"):
+                events.append(event)
+                if event["type"] == "agent_token":
+                    run_id = events[0]["team_run_id"]
+                    runner.cancel_run(run_id, event_key=runner._event_keys[run_id])
+
+        assert events[-1] == {"type": "cancelled", "team_run_id": events[0]["team_run_id"]}
+        assert not any(event["type"] == "done" or event.get("phase") == "execution" for event in events)
+
 
 class TestGatherUpstreamContext:
     """Tests for _gather_upstream_context which reads dependent task results."""
@@ -394,7 +411,7 @@ class TestStartStopSessions:
         assert stopped == started
         assert await code_interpreter_session_owners.get_owner(started[0]) is None
 
-    async def test_stop_failure_still_releases_owner_and_resets_context(self, runner: TeamRunner) -> None:
+    async def test_stop_failure_retains_owner_and_resets_context(self, runner: TeamRunner) -> None:
         from agentic_primitives_gateway.primitives.code_interpreter.context import get_code_interpreter_session_id
         from agentic_primitives_gateway.routes._helpers import code_interpreter_session_owners
 
@@ -404,8 +421,10 @@ class TestStartStopSessions:
         sid = session_ids["code_interpreter"]
         with patch.object(registry.code_interpreter, "stop_session", side_effect=RuntimeError("stop unavailable")):
             await runner._stop_sessions(session_ids, cv_tokens)
-        assert await code_interpreter_session_owners.get_owner(sid) is None
+        assert await code_interpreter_session_owners.get_owner(sid) == _TEST_PRINCIPAL.id
         assert get_code_interpreter_session_id() == before
+        await runner._stop_sessions(session_ids, {})
+        assert await code_interpreter_session_owners.get_owner(sid) is None
 
 
 class TestApplyRestoreOverrides:
@@ -465,9 +484,12 @@ class TestCancelRun:
         tr = TeamRunner()
         event = asyncio.Event()
         tr._cancel_events["run-1"] = event
+        tr._event_keys["run-1"] = "team:alice:one:run-1"
         assert not event.is_set()
 
-        tr.cancel_run("run-1")
+        tr.cancel_run("run-1", event_key="team:bob:two:run-1")
+        assert not event.is_set()
+        tr.cancel_run("run-1", event_key="team:alice:one:run-1")
         assert event.is_set()
 
     def test_cancel_run_no_event(self) -> None:
@@ -479,10 +501,24 @@ class TestCancelRun:
         tr = TeamRunner()
         event = asyncio.Event()
         tr._cancel_events["run-1"] = event
+        tr._event_keys["run-1"] = "team:alice:one:run-1"
 
-        tr.cancel_run("run-1")
-        tr.cancel_run("run-1")  # Second call is fine
+        tr.cancel_run("run-1", event_key="team:alice:one:run-1")
+        tr.cancel_run("run-1", event_key="team:alice:one:run-1")  # Second call is fine
         assert event.is_set()
+
+    async def test_stream_collision_preserves_existing_cancel_event(self, runner: TeamRunner) -> None:
+        existing = asyncio.Event()
+        runner._cancel_events["forced-id"] = existing
+        with patch("agentic_primitives_gateway.agents.team_runner.uuid.uuid4") as generated:
+            generated.return_value.hex = "forced-id"
+            stream = runner.run_stream(_make_team(), "hi")
+            try:
+                with pytest.raises(ValueError, match="already active"):
+                    await anext(stream)
+            finally:
+                await stream.aclose()
+        assert runner._cancel_events["forced-id"] is existing
 
     async def test_stream_close_joins_in_flight_worker(self, runner: TeamRunner, agent_store: FileAgentStore) -> None:
         """Closing the event stream must wait for a cancelled tool before the board settles."""
@@ -495,6 +531,7 @@ class TestCancelRun:
         release = asyncio.Event()
         tool_finished = asyncio.Event()
         runner._cancel_events[run_id] = asyncio.Event()
+        runner._remember_event_key(team, run_id)
 
         async def slow_tool(*args: Any, **kwargs: Any) -> str:
             started.set()
@@ -514,7 +551,7 @@ class TestCancelRun:
                     if event["type"] == "task_claimed":
                         break
                 await asyncio.wait_for(started.wait(), timeout=2)
-                runner.cancel_run(run_id)
+                runner.cancel_run(run_id, event_key=runner._event_keys[run_id])
                 closing = asyncio.create_task(stream.aclose())
                 await asyncio.wait_for(interrupted.wait(), timeout=2)
                 assert not closing.done()
@@ -787,6 +824,21 @@ class TestRetryTask:
             events = [event async for event in runner.retry_task_stream(team, run_id, failed.id)]
         assert [event["type"] for event in events] == ["error"]
 
+    async def test_retry_start_failure_restores_failed_state(
+        self, runner: TeamRunner, agent_store: FileAgentStore
+    ) -> None:
+        await agent_store.create(_make_worker("worker1", with_code_interpreter=True))
+        team = _make_team()
+        run_id = uuid.uuid4().hex[:16]
+        task = await registry.tasks.create_task(run_id, title="Retry after failure", suggested_worker="worker1")
+        await registry.tasks.update_task(run_id, task.id, status=TaskStatus.FAILED, result="Transient")
+        with patch.object(runner, "_start_sessions", side_effect=RuntimeError("backend unavailable")):
+            events = [event async for event in runner.retry_task_stream(team, run_id, task.id)]
+        assert [event["type"] for event in events] == ["task_retry", "task_failed", "retry_done"]
+        updated = await registry.tasks.get_task(run_id, task.id)
+        assert updated is not None and updated.status == TaskStatus.FAILED
+        assert updated.result == "backend unavailable"
+
 
 # ── Recover partial tokens tests ─────────────────────────────────────
 
@@ -794,9 +846,18 @@ class TestRetryTask:
 class TestRecoverPartialTokens:
     """Tests for _recover_partial_tokens with and without event store."""
 
+    @pytest.fixture(autouse=True)
+    def scoped_event_key(self):
+        from agentic_primitives_gateway.routes._background import run_event_key
+
+        self.team_spec = _make_team()
+        self.expected_key = run_event_key(
+            "team", _TEST_PRINCIPAL.id, self.team_spec.owner_id, self.team_spec.name, "run-1"
+        )
+
     async def test_no_event_store(self) -> None:
         tr = TeamRunner()
-        result = await tr._recover_partial_tokens("run-1", "planner")
+        result = await tr._recover_partial_tokens("run-1", "planner", team_spec=self.team_spec)
         assert result == ""
 
     async def test_empty_events(self) -> None:
@@ -805,8 +866,9 @@ class TestRecoverPartialTokens:
         mock_event_store.get_events = AsyncMock(return_value=[])
 
         with patch.object(tr, "_get_event_store", return_value=mock_event_store):
-            result = await tr._recover_partial_tokens("run-1", "planner")
+            result = await tr._recover_partial_tokens("run-1", "planner", team_spec=self.team_spec)
         assert result == ""
+        mock_event_store.get_events.assert_awaited_once_with(self.expected_key)
 
     async def test_no_matching_invocation(self) -> None:
         tr = TeamRunner()
@@ -819,7 +881,7 @@ class TestRecoverPartialTokens:
         )
 
         with patch.object(tr, "_get_event_store", return_value=mock_event_store):
-            result = await tr._recover_partial_tokens("run-1", "planner")
+            result = await tr._recover_partial_tokens("run-1", "planner", team_spec=self.team_spec)
         assert result == ""
 
     async def test_recovers_tokens_for_matching_role(self) -> None:
@@ -834,7 +896,7 @@ class TestRecoverPartialTokens:
         )
 
         with patch.object(tr, "_get_event_store", return_value=mock_event_store):
-            result = await tr._recover_partial_tokens("run-1", "planner")
+            result = await tr._recover_partial_tokens("run-1", "planner", team_spec=self.team_spec)
         assert result == "Hello world"
 
     async def test_only_recovers_last_invocation(self) -> None:
@@ -851,7 +913,7 @@ class TestRecoverPartialTokens:
         )
 
         with patch.object(tr, "_get_event_store", return_value=mock_event_store):
-            result = await tr._recover_partial_tokens("run-1", "planner")
+            result = await tr._recover_partial_tokens("run-1", "planner", team_spec=self.team_spec)
         assert result == "new tokens"
 
     async def test_exception_returns_empty(self) -> None:
@@ -860,7 +922,7 @@ class TestRecoverPartialTokens:
         mock_event_store.get_events = AsyncMock(side_effect=RuntimeError("Redis down"))
 
         with patch.object(tr, "_get_event_store", return_value=mock_event_store):
-            result = await tr._recover_partial_tokens("run-1", "planner")
+            result = await tr._recover_partial_tokens("run-1", "planner", team_spec=self.team_spec)
         assert result == ""
 
     async def test_non_dict_events_skipped(self) -> None:
@@ -876,7 +938,7 @@ class TestRecoverPartialTokens:
         )
 
         with patch.object(tr, "_get_event_store", return_value=mock_event_store):
-            result = await tr._recover_partial_tokens("run-1", "planner")
+            result = await tr._recover_partial_tokens("run-1", "planner", team_spec=self.team_spec)
         assert result == "token"
 
 
@@ -927,8 +989,9 @@ class TestTeamCheckpoint:
         team_spec.checkpointing_enabled = True
         await tr._team_checkpoint(team_spec, "run-1", "do something", "planning")
 
-        mock_store.save.assert_called_once()
-        call_args = mock_store.save.call_args
+        mock_store.save_if_active.assert_awaited_once()
+        call_args = mock_store.save_if_active.call_args
+        assert call_args[0][0] == tr._event_key(team_spec, "run-1")
         data = call_args[0][1]
         assert data["type"] == "team"
         assert data["spec_name"] == "test-team"
@@ -960,8 +1023,10 @@ class TestTeamCheckpoint:
         principal = AuthenticatedPrincipal(id="alice", type="user", groups=frozenset(), scopes=frozenset())
         set_authenticated_principal(principal)
 
-        await tr._delete_team_checkpoint("run-1")
-        mock_store.delete.assert_called_once_with("alice:run-1")
+        team_spec = _make_team()
+        team_spec.checkpointing_enabled = True
+        await tr._delete_team_checkpoint("run-1", team_spec)
+        mock_store.delete_if_owned.assert_awaited_once_with(tr._event_key(team_spec, "run-1"))
 
 
 # ── Set stores / set methods tests ───────────────────────────────────

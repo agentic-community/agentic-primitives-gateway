@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import time
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -9,6 +11,7 @@ import pytest
 from starlette.testclient import TestClient
 
 from agentic_primitives_gateway.agents.file_store import FileAgentStore
+from agentic_primitives_gateway.auth.models import AuthenticatedPrincipal
 from agentic_primitives_gateway.main import app
 from agentic_primitives_gateway.routes import agents as agents_module
 from agentic_primitives_gateway.routes._background import BackgroundRunManager
@@ -146,6 +149,69 @@ class TestStreamingEndpoint:
             json={"message": "hello"},
         )
         assert resp.status_code == 404
+
+    def test_shared_agent_run_id_cannot_be_stolen_or_replayed(self) -> None:
+        client = TestClient(app)
+        assert client.post("/api/v1/agents", json={**SAMPLE_AGENT, "shared_with": ["*"]}).status_code == 201
+
+        async def stream(spec, message, session_id):
+            yield {"type": "stream_start", "session_id": session_id}
+            yield {"type": "token", "content": message}
+            yield {"type": "done", "response": message}
+
+        alice = AuthenticatedPrincipal(id="alice", type="user", scopes=frozenset())
+        bob = AuthenticatedPrincipal(id="bob", type="user", scopes=frozenset())
+        url = "/api/v1/agents/noop:test-agent"
+        with patch.object(agents_module._runner, "run_stream", side_effect=stream):
+            with patch.object(agents_module, "require_principal", return_value=alice):
+                first = client.post(f"{url}/chat/stream", json={"message": "private", "session_id": "shared-id"})
+                assert first.status_code == 200
+                assert "private" in first.text
+                replay = client.get(f"{url}/sessions/shared-id/stream")
+                assert "private" in replay.text
+
+            with patch.object(agents_module, "require_principal", return_value=bob):
+                attempted = client.post(f"{url}/chat/stream", json={"message": "bob's turn", "session_id": "shared-id"})
+                assert attempted.status_code == 200
+                assert "bob's turn" in attempted.text
+                bob_replay = client.get(f"{url}/sessions/shared-id/stream")
+                assert "bob's turn" in bob_replay.text
+                assert "private" not in bob_replay.text
+
+            with patch.object(agents_module, "require_principal", return_value=alice):
+                second = client.post(f"{url}/chat/stream", json={"message": "new turn", "session_id": "shared-id"})
+                assert second.status_code == 200
+                replay = client.get(f"{url}/sessions/shared-id/stream")
+                assert "new turn" in replay.text
+                assert "private" not in replay.text
+
+    def test_active_local_run_cannot_be_overwritten_by_second_user(self) -> None:
+        client = TestClient(app)
+        assert client.post("/api/v1/agents", json={**SAMPLE_AGENT, "shared_with": ["*"]}).status_code == 201
+        alice = AuthenticatedPrincipal(id="alice", type="user", scopes=frozenset())
+        bob = AuthenticatedPrincipal(id="bob", type="user", scopes=frozenset())
+        url = "/api/v1/agents/noop:test-agent"
+        key = agents_module.run_event_key("agent", "alice", "noop", "test-agent", "active-id")
+        asyncio.run(
+            agents_module._bg.claim(key, "alice", claim_key="agent-id:alice:active-id", claim_identity=key, reuse=True)
+        )
+        active = MagicMock()
+        active.done.return_value = False
+        agents_module._bg.runs[key] = (
+            active,
+            asyncio.Queue(),
+            [{"type": "token", "content": "secret"}],
+            time.monotonic(),
+        )
+
+        with patch.object(agents_module, "require_principal", return_value=bob):
+            response = client.post(f"{url}/chat/stream", json={"message": "bob independent", "session_id": "active-id"})
+            assert response.status_code == 200
+            assert client.get(f"{url}/sessions/active-id/status").json()["status"] == "idle"
+            assert not active.cancel.called
+
+        with patch.object(agents_module, "require_principal", return_value=alice):
+            assert client.get(f"{url}/sessions/active-id/status").json()["status"] == "running"
 
 
 class TestSetAgentBg:
@@ -403,8 +469,8 @@ class TestSessionStreamEndpoint:
     def test_stream_session_events(self) -> None:
         client = TestClient(app)
         client.post("/api/v1/agents", json=SAMPLE_AGENT)
-        # Mock bg manager to return a done event so the generator exits immediately
         with (
+            patch.object(agents_module._bg, "get_owner_async", new=AsyncMock(return_value="noop")),
             patch.object(
                 agents_module._bg, "get_events_async", new=AsyncMock(return_value=[{"type": "done", "response": "ok"}])
             ),
@@ -430,12 +496,11 @@ class TestSessionStatusEndpoint:
 
 
 class TestCancelSessionRunEndpoint:
-    def test_cancel_no_active_run(self) -> None:
+    def test_cancel_unknown_run_is_denied(self) -> None:
         client = TestClient(app)
         client.post("/api/v1/agents", json=SAMPLE_AGENT)
         resp = client.delete("/api/v1/agents/test-agent/sessions/sid1/run")
-        assert resp.status_code == 200
-        assert resp.json()["status"] == "cancelled"
+        assert resp.status_code == 403
 
     def test_cancel_404(self) -> None:
         client = TestClient(app)
@@ -449,7 +514,7 @@ class TestCancelSessionRunEndpoint:
 
         mock_event_store = AsyncMock()
         agents_module._bg._event_store = mock_event_store
-        mock_event_store.get_owner = AsyncMock(return_value=None)
+        mock_event_store.get_owner = AsyncMock(return_value="noop")
 
         resp = client.delete("/api/v1/agents/test-agent/sessions/sid1/run")
         assert resp.status_code == 200

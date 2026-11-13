@@ -17,6 +17,10 @@ class TestSyncRemoteCancel:
     def runner(self) -> TeamRunner:
         return TeamRunner()
 
+    @pytest.fixture(autouse=True)
+    def scoped_event_key(self, runner: TeamRunner):
+        runner._event_keys["run-1"] = "event:scoped-team-run-1"
+
     @pytest.mark.asyncio
     async def test_no_event_store_noop(self, runner: TeamRunner):
         """Without an event store, _sync_remote_cancel is a no-op."""

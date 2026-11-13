@@ -296,6 +296,7 @@ class TestRedisEventStoreIntegration:
         # Cleanup
         for key in keys:
             await s.delete(key)
+            await s._redis.delete(s._owner_key(key))
 
     @pytest.mark.asyncio
     async def test_set_and_get_status(self, event_store):
@@ -327,52 +328,41 @@ class TestRedisEventStoreIntegration:
         assert events[2]["type"] == "done"
 
     @pytest.mark.asyncio
-    async def test_set_and_get_owner(self, event_store):
+    async def test_claim_and_get_owner(self, event_store):
         s, keys = event_store
         key = f"integ-owner-{_uid()}"
         keys.append(key)
 
         assert await s.get_owner(key) is None
-        await s.set_owner(key, "alice", ttl=60)
+        assert await s.claim_owner(key, "alice") is True
+        assert await s.claim_owner(key, "bob") is False
         assert await s.get_owner(key) == "alice"
 
     @pytest.mark.asyncio
-    async def test_delete_cleans_all_keys(self, event_store):
-        s, _keys = event_store
+    async def test_delete_cleans_events_but_keeps_claim(self, event_store):
+        s, keys = event_store
         key = f"integ-del-{_uid()}"
-        # No need to add to keys — we delete in the test
+        keys.append(key)
 
         await s.set_status(key, "running", ttl=60)
         await s.append_event(key, {"type": "token"}, ttl=60)
-        await s.set_owner(key, "alice", ttl=60)
+        assert await s.claim_owner(key, "alice") is True
 
         await s.delete(key)
 
         assert await s.get_status(key) is None
         assert await s.get_events(key) == []
-        assert await s.get_owner(key) is None
+        assert await s.get_owner(key) == "alice"  # owner claim is retained after deletion
 
     @pytest.mark.asyncio
-    async def test_rename_key(self, event_store):
+    async def test_clear_events_preserves_owner(self, event_store):
         s, keys = event_store
-        old_key = f"integ-old-{_uid()}"
-        new_key = f"integ-new-{_uid()}"
-        keys.append(new_key)  # cleanup the renamed key
-
-        await s.set_status(old_key, "running", ttl=60)
-        await s.append_event(old_key, {"type": "token", "text": "hi"}, ttl=60)
-        await s.set_owner(old_key, "alice", ttl=60)
-
-        await s.rename_key(old_key, new_key)
-
-        # Old keys should be gone
-        assert await s.get_status(old_key) is None
-        assert await s.get_events(old_key) == []
-        assert await s.get_owner(old_key) is None
-
-        # New keys should have the data
-        assert await s.get_status(new_key) == "running"
-        events = await s.get_events(new_key)
-        assert len(events) == 1
-        assert events[0]["text"] == "hi"
-        assert await s.get_owner(new_key) == "alice"
+        key = f"integ-turn-{_uid()}"
+        keys.append(key)
+        assert await s.claim_owner(key, "alice") is True
+        await s.set_status(key, "running", ttl=60)
+        await s.append_event(key, {"type": "token", "text": "old"}, ttl=60)
+        await s.clear_events(key)
+        assert await s.get_events(key) == []
+        assert await s.get_status(key) is None
+        assert await s.get_owner(key) == "alice"

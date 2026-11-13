@@ -142,9 +142,10 @@ class TestTwoReplicasDisjointClaims:
             recover_orphaned_runs(s, runner_b, "replica-b"),
         )
 
-        # Release locks so the fixture cleanup can delete.
-        for key in keys:
-            await s.release_lock(key)
+        for key in claimed_by_a:
+            await s.release_lock(key, "replica-a")
+        for key in claimed_by_b:
+            await s.release_lock(key, "replica-b")
 
         # Every orphan was claimed exactly once — no double-claims,
         # no skips.
@@ -222,8 +223,9 @@ class TestTwoReplicasDisjointClaims:
 
         await asyncio.gather(*[recover_orphaned_runs(s, runners[i], f"replica-{i}") for i in range(n_replicas)])
 
-        for key in keys:
-            await s.release_lock(key)
+        for idx, claimed in enumerate(claim_lists):
+            for key in claimed:
+                await s.release_lock(key, f"replica-{idx}")
 
         # Union of all claim lists is exactly the seeded set.
         all_claimed: set[str] = set()

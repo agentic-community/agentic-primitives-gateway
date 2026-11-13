@@ -17,6 +17,7 @@ from starlette.testclient import TestClient
 
 from agentic_primitives_gateway.agents.file_store import FileAgentStore, FileTeamStore
 from agentic_primitives_gateway.main import app
+from agentic_primitives_gateway.routes._background import run_event_key
 from agentic_primitives_gateway.routes.agents import _active_runs, set_agent_store
 from agentic_primitives_gateway.routes.agents import _bg as agent_bg
 from agentic_primitives_gateway.routes.teams import _active_team_runs, set_team_store
@@ -81,7 +82,9 @@ class TestAgentSessionStatus:
         # Inject a fake active run
         task = MagicMock(spec=asyncio.Task)
         task.done.return_value = False
-        _active_runs["fake-session"] = (task, asyncio.Queue(), [], time.monotonic())
+        key = run_event_key("agent", "noop", "noop", "bg-agent", "fake-session")
+        agent_bg._owners[key] = "noop"
+        _active_runs[key] = (task, asyncio.Queue(), [], time.monotonic())
 
         resp = client.get("/api/v1/agents/bg-agent/sessions/fake-session/status")
         assert resp.json()["status"] == "running"
@@ -91,7 +94,9 @@ class TestAgentSessionStatus:
 
         task = MagicMock(spec=asyncio.Task)
         task.done.return_value = True
-        _active_runs["done-session"] = (task, asyncio.Queue(), [], time.monotonic())
+        key = run_event_key("agent", "noop", "noop", "bg-agent", "done-session")
+        agent_bg._owners[key] = "noop"
+        _active_runs[key] = (task, asyncio.Queue(), [], time.monotonic())
 
         resp = client.get("/api/v1/agents/bg-agent/sessions/done-session/status")
         assert resp.json()["status"] == "idle"
@@ -136,13 +141,13 @@ class TestAgentCleanupStaleRuns:
         agent_bg.cleanup()
         assert "old-session" not in _active_runs
 
-    def test_removes_stale_tasks(self) -> None:
+    def test_keeps_stale_but_active_tasks(self) -> None:
         task = MagicMock(spec=asyncio.Task)
         task.done.return_value = False
         _active_runs["stale-session"] = (task, asyncio.Queue(), [], time.monotonic() - agent_bg._stale_seconds - 1)
 
         agent_bg.cleanup()
-        assert "stale-session" not in _active_runs
+        assert "stale-session" in _active_runs
 
     def test_keeps_active_tasks(self) -> None:
         task = MagicMock(spec=asyncio.Task)
@@ -160,16 +165,16 @@ class TestTeamRunStatus:
     def test_idle_when_no_run(self, client: TestClient) -> None:
         client.post("/api/v1/teams", json=SAMPLE_TEAM)
         resp = client.get("/api/v1/teams/bg-team/runs/no-such-run/status")
-        assert resp.status_code == 200
-        assert resp.json()["status"] == "idle"
+        assert resp.status_code == 403
 
     def test_running_when_task_active(self, client: TestClient) -> None:
         client.post("/api/v1/teams", json=SAMPLE_TEAM)
 
         task = MagicMock(spec=asyncio.Task)
         task.done.return_value = False
-        _active_team_runs["fake-run"] = (task, asyncio.Queue(), [], time.monotonic())
-
+        key = run_event_key("team", "noop", "noop", "bg-team", "fake-run")
+        team_bg._owners[key] = "noop"
+        _active_team_runs[key] = (task, asyncio.Queue(), [], time.monotonic())
         resp = client.get("/api/v1/teams/bg-team/runs/fake-run/status")
         assert resp.json()["status"] == "running"
 
@@ -178,8 +183,10 @@ class TestTeamRunStatus:
 
         task = MagicMock(spec=asyncio.Task)
         task.done.return_value = True
-        _active_team_runs["done-run"] = (task, asyncio.Queue(), [], time.monotonic())
 
+        key = run_event_key("team", "noop", "noop", "bg-team", "done-run")
+        team_bg._owners[key] = "noop"
+        _active_team_runs[key] = (task, asyncio.Queue(), [], time.monotonic())
         resp = client.get("/api/v1/teams/bg-team/runs/done-run/status")
         assert resp.json()["status"] == "idle"
 
@@ -191,10 +198,7 @@ class TestTeamRunEvents:
     def test_unknown_run_returns_empty(self, client: TestClient) -> None:
         client.post("/api/v1/teams", json=SAMPLE_TEAM)
         resp = client.get("/api/v1/teams/bg-team/runs/no-such-run/events")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["status"] == "unknown"
-        assert data["events"] == []
+        assert resp.status_code == 403
 
     def test_returns_recorded_events(self, client: TestClient) -> None:
         client.post("/api/v1/teams", json=SAMPLE_TEAM)
@@ -207,7 +211,9 @@ class TestTeamRunEvents:
         ]
         task = MagicMock(spec=asyncio.Task)
         task.done.return_value = False
-        _active_team_runs["run-1"] = (task, asyncio.Queue(), events, time.monotonic())
+        key = run_event_key("team", "noop", "noop", "bg-team", "run-1")
+        team_bg._owners[key] = "noop"
+        _active_team_runs[key] = (task, asyncio.Queue(), events, time.monotonic())
 
         resp = client.get("/api/v1/teams/bg-team/runs/run-1/events")
         data = resp.json()
@@ -221,7 +227,9 @@ class TestTeamRunEvents:
 
         task = MagicMock(spec=asyncio.Task)
         task.done.return_value = True
-        _active_team_runs["done-run"] = (task, asyncio.Queue(), [{"type": "done"}], time.monotonic())
+        key = run_event_key("team", "noop", "noop", "bg-team", "done-run")
+        team_bg._owners[key] = "noop"
+        _active_team_runs[key] = (task, asyncio.Queue(), [{"type": "done"}], time.monotonic())
 
         resp = client.get("/api/v1/teams/bg-team/runs/done-run/events")
         assert resp.json()["status"] == "idle"
@@ -234,11 +242,7 @@ class TestTeamRunRetrieval:
     def test_empty_run(self, client: TestClient) -> None:
         client.post("/api/v1/teams", json=SAMPLE_TEAM)
         resp = client.get("/api/v1/teams/bg-team/runs/empty-run")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["tasks"] == []
-        assert data["tasks_created"] == 0
-        assert data["status"] == "idle"
+        assert resp.status_code == 403
 
 
 # ── Team streaming uses background task ──────────────────────────────
@@ -263,29 +267,25 @@ class TestTeamStreamingBackgroundTask:
         assert "done" in resp.text
 
     def test_stream_records_events(self, client: TestClient) -> None:
-        """Events emitted during streaming should be recorded for replay."""
         client.post("/api/v1/teams", json=SAMPLE_TEAM)
 
-        recorded_run_id = None
-
         async def mock_stream(team_spec, message):
-            nonlocal recorded_run_id
-            recorded_run_id = "run-rec"
             yield {"type": "team_start", "team_run_id": "run-rec", "team_name": "bg-team"}
             yield {"type": "phase_change", "phase": "planning"}
             yield {"type": "done", "response": "result", "tasks_created": 0, "tasks_completed": 0, "workers_used": []}
 
         with patch("agentic_primitives_gateway.routes.teams._runner") as mock_runner:
             mock_runner.run_stream = mock_stream
-            client.post("/api/v1/teams/bg-team/run/stream", json={"message": "go"})
+            response = client.post("/api/v1/teams/bg-team/run/stream", json={"message": "go"})
+        assert response.status_code == 200
 
-        # After stream completes, events should be in _active_team_runs
-        # (they stay for 60s after completion)
-        if "run-rec" in _active_team_runs:
-            _, _, event_log, _ = _active_team_runs["run-rec"]
-            assert len(event_log) == 3
-            assert event_log[0]["type"] == "team_start"
-            assert event_log[-1]["type"] == "done"
+        replay = client.get("/api/v1/teams/bg-team/runs/run-rec/events")
+        assert replay.status_code == 200
+        assert replay.json()["events"] == [
+            {"type": "team_start", "team_run_id": "run-rec", "team_name": "bg-team"},
+            {"type": "phase_change", "phase": "planning"},
+            {"type": "done", "response": "result", "tasks_created": 0, "tasks_completed": 0, "workers_used": []},
+        ]
 
 
 # ── Team stale run cleanup ───────────────────────────────────────────
@@ -309,13 +309,13 @@ class TestTeamCleanupStaleRuns:
         team_bg.cleanup()
         assert "old" not in _active_team_runs
 
-    def test_removes_stale_running(self) -> None:
+    def test_keeps_stale_running(self) -> None:
         task = MagicMock(spec=asyncio.Task)
         task.done.return_value = False
         _active_team_runs["stale"] = (task, asyncio.Queue(), [], time.monotonic() - 700)
 
         team_bg.cleanup()
-        assert "stale" not in _active_team_runs
+        assert "stale" in _active_team_runs
 
     def test_keeps_active_running(self) -> None:
         task = MagicMock(spec=asyncio.Task)
