@@ -313,6 +313,16 @@ class TestStartStopSessions:
         # Reset contextvars so we don't leak into other tests
         await runner._stop_sessions(session_ids, cv_tokens)
 
+    async def test_team_session_claims_and_releases_owner(self, runner: TeamRunner) -> None:
+        from agentic_primitives_gateway.routes._helpers import code_interpreter_session_owners
+
+        worker = _make_worker("ci-owned", with_code_interpreter=True)
+        session_ids, cv_tokens = await runner._start_sessions(worker)
+        sid = session_ids["code_interpreter"]
+        assert await code_interpreter_session_owners.get_owner(sid) == _TEST_PRINCIPAL.id
+        await runner._stop_sessions(session_ids, cv_tokens)
+        assert await code_interpreter_session_owners.get_owner(sid) is None
+
     async def test_start_sessions_no_primitives(self, runner: TeamRunner) -> None:
         worker = _make_worker("plain-worker")
         session_ids, cv_tokens = await runner._start_sessions(worker)
@@ -326,6 +336,76 @@ class TestStartStopSessions:
     async def test_stop_sessions_code_interpreter(self, runner: TeamRunner) -> None:
         """Stop sessions calls the provider."""
         await runner._stop_sessions({"code_interpreter": "fake-sid"}, {})
+
+    async def test_partial_start_failure_releases_prior_session_and_context(self, runner: TeamRunner) -> None:
+        from agentic_primitives_gateway.primitives.code_interpreter.context import get_code_interpreter_session_id
+        from agentic_primitives_gateway.routes._helpers import code_interpreter_session_owners
+
+        worker = _make_worker("both", with_code_interpreter=True)
+        worker.primitives["browser"] = PrimitiveConfig(enabled=True)
+        started: list[str] = []
+        stopped: list[str] = []
+
+        async def start_code(session_id: str) -> dict[str, str]:
+            started.append(session_id)
+            return {"session_id": session_id}
+
+        async def stop_code(session_id: str) -> None:
+            stopped.append(session_id)
+
+        async def fail_browser(session_id: str) -> dict[str, str]:
+            raise RuntimeError("browser unavailable")
+
+        before = get_code_interpreter_session_id()
+        with (
+            patch.object(registry.code_interpreter, "start_session", side_effect=start_code),
+            patch.object(registry.code_interpreter, "stop_session", side_effect=stop_code),
+            patch.object(registry.browser, "start_session", side_effect=fail_browser),
+            pytest.raises(RuntimeError, match="browser unavailable"),
+        ):
+            await runner._start_sessions(worker)
+
+        assert stopped == started
+        assert await code_interpreter_session_owners.get_owner(started[0]) is None
+        assert get_code_interpreter_session_id() == before
+
+    async def test_registration_failure_stops_current_session_and_releases_claim(self, runner: TeamRunner) -> None:
+        from agentic_primitives_gateway.routes._helpers import code_interpreter_session_owners
+
+        worker = _make_worker("ci", with_code_interpreter=True)
+        runner.set_session_registry(AsyncMock())
+        runner._session_registry.register.side_effect = RuntimeError("registry unavailable")
+        started: list[str] = []
+        stopped: list[str] = []
+
+        async def start(session_id: str) -> dict[str, str]:
+            started.append(session_id)
+            return {"session_id": session_id}
+
+        async def stop(session_id: str) -> None:
+            stopped.append(session_id)
+
+        with (
+            patch.object(registry.code_interpreter, "start_session", side_effect=start),
+            patch.object(registry.code_interpreter, "stop_session", side_effect=stop),
+            pytest.raises(RuntimeError, match="registry unavailable"),
+        ):
+            await runner._start_sessions(worker)
+        assert stopped == started
+        assert await code_interpreter_session_owners.get_owner(started[0]) is None
+
+    async def test_stop_failure_still_releases_owner_and_resets_context(self, runner: TeamRunner) -> None:
+        from agentic_primitives_gateway.primitives.code_interpreter.context import get_code_interpreter_session_id
+        from agentic_primitives_gateway.routes._helpers import code_interpreter_session_owners
+
+        worker = _make_worker("ci-stop", with_code_interpreter=True)
+        before = get_code_interpreter_session_id()
+        session_ids, cv_tokens = await runner._start_sessions(worker)
+        sid = session_ids["code_interpreter"]
+        with patch.object(registry.code_interpreter, "stop_session", side_effect=RuntimeError("stop unavailable")):
+            await runner._stop_sessions(session_ids, cv_tokens)
+        assert await code_interpreter_session_owners.get_owner(sid) is None
+        assert get_code_interpreter_session_id() == before
 
 
 class TestApplyRestoreOverrides:
@@ -403,6 +483,309 @@ class TestCancelRun:
         tr.cancel_run("run-1")
         tr.cancel_run("run-1")  # Second call is fine
         assert event.is_set()
+
+    async def test_stream_close_joins_in_flight_worker(self, runner: TeamRunner, agent_store: FileAgentStore) -> None:
+        """Closing the event stream must wait for a cancelled tool before the board settles."""
+        await agent_store.create(_make_worker("worker1"))
+        team = _make_team()
+        run_id = uuid.uuid4().hex[:16]
+        task = await registry.tasks.create_task(run_id, title="Slow tool")
+        started = asyncio.Event()
+        interrupted = asyncio.Event()
+        release = asyncio.Event()
+        tool_finished = asyncio.Event()
+        runner._cancel_events[run_id] = asyncio.Event()
+
+        async def slow_tool(*args: Any, **kwargs: Any) -> str:
+            started.set()
+            try:
+                await release.wait()
+            except asyncio.CancelledError:
+                interrupted.set()
+                await release.wait()
+            tool_finished.set()
+            return "tool result"
+
+        with patch.object(runner, "_execute_task_streaming", side_effect=slow_tool):
+            stream = runner._run_with_replanning_stream(team, run_id, "work")
+            try:
+                while True:
+                    event = await asyncio.wait_for(anext(stream), timeout=2)
+                    if event["type"] == "task_claimed":
+                        break
+                await asyncio.wait_for(started.wait(), timeout=2)
+                runner.cancel_run(run_id)
+                closing = asyncio.create_task(stream.aclose())
+                await asyncio.wait_for(interrupted.wait(), timeout=2)
+                assert not closing.done()
+                assert not tool_finished.is_set()
+                release.set()
+                await asyncio.wait_for(closing, timeout=2)
+            finally:
+                release.set()
+                await stream.aclose()
+
+        settled = await registry.tasks.get_task(run_id, task.id)
+        assert settled is not None
+        assert settled.status == TaskStatus.FAILED
+        assert settled.result == "Run cancelled"
+        assert tool_finished.is_set()
+
+    async def test_remote_cancel_during_tool_does_not_complete_task(self, runner: TeamRunner) -> None:
+        """A different replica can fail the task while this replica awaits its tool."""
+        team = _make_team()
+        run_id = uuid.uuid4().hex[:16]
+        task = await registry.tasks.create_task(run_id, title="Remote tool")
+        claimed = await registry.tasks.claim_task(run_id, task.id, "worker1")
+        assert claimed is not None
+        runner._cancel_events[run_id] = asyncio.Event()
+        entered = asyncio.Event()
+        release = asyncio.Event()
+        event_store = AsyncMock()
+        event_store.get_status = AsyncMock(return_value="running")
+
+        async def slow_tool(*args: Any, **kwargs: Any) -> str:
+            entered.set()
+            await release.wait()
+            return "late result"
+
+        events: list[dict[str, Any]] = []
+
+        async def consume() -> None:
+            async for event in runner._execute_tasks_parallel_stream(
+                [claimed], _make_worker("worker1"), team, run_id, "worker1"
+            ):
+                events.append(event)
+
+        with (
+            patch.object(runner, "_execute_task_streaming", side_effect=slow_tool),
+            patch.object(runner, "_get_event_store", return_value=event_store),
+        ):
+            consumer = asyncio.create_task(consume())
+            try:
+                await asyncio.wait_for(entered.wait(), timeout=2)
+                await registry.tasks.update_task(run_id, task.id, status=TaskStatus.FAILED, result="Run cancelled")
+                event_store.get_status.return_value = "cancelled"
+                release.set()
+                await asyncio.wait_for(consumer, timeout=2)
+            finally:
+                release.set()
+                if not consumer.done():
+                    consumer.cancel()
+                await asyncio.gather(consumer, return_exceptions=True)
+
+        settled = await registry.tasks.get_task(run_id, task.id)
+        assert settled is not None
+        assert settled.status == TaskStatus.FAILED
+        assert settled.result == "Run cancelled"
+        assert not any(event["type"] == "task_completed" for event in events)
+
+    async def test_remote_cancel_racing_done_update_keeps_failed(self, runner: TeamRunner) -> None:
+        """Cancellation between pre-write check and DONE must not resurrect FAILED."""
+        team = _make_team()
+        run_id = uuid.uuid4().hex[:16]
+        task = await registry.tasks.create_task(run_id, title="Racing update")
+        claimed = await registry.tasks.claim_task(run_id, task.id, "worker1")
+        assert claimed is not None
+        runner._cancel_events[run_id] = asyncio.Event()
+        task_board = registry.tasks
+        original_update = task_board.update_task
+        entered_done = asyncio.Event()
+        release_done = asyncio.Event()
+        event_store = AsyncMock()
+        event_store.get_status = AsyncMock(return_value="running")
+
+        async def racing_update(team_run_id: str, task_id: str, **kwargs: Any) -> Any:
+            if kwargs.get("status") == TaskStatus.DONE:
+                entered_done.set()
+                await release_done.wait()
+            return await original_update(team_run_id, task_id, **kwargs)
+
+        events: list[dict[str, Any]] = []
+
+        async def consume() -> None:
+            async for event in runner._execute_tasks_parallel_stream(
+                [claimed], _make_worker("worker1"), team, run_id, "worker1"
+            ):
+                events.append(event)
+
+        with (
+            patch.object(runner, "_execute_task_streaming", new_callable=AsyncMock, return_value="result"),
+            patch.object(runner, "_get_event_store", return_value=event_store),
+            patch.object(task_board, "update_task", side_effect=racing_update),
+        ):
+            consumer = asyncio.create_task(consume())
+            try:
+                await asyncio.wait_for(entered_done.wait(), timeout=2)
+                await original_update(run_id, task.id, status=TaskStatus.FAILED, result="Run cancelled")
+                event_store.get_status.return_value = "cancelled"
+                release_done.set()
+                await asyncio.wait_for(consumer, timeout=2)
+            finally:
+                release_done.set()
+                if not consumer.done():
+                    consumer.cancel()
+                await asyncio.gather(consumer, return_exceptions=True)
+
+        settled = await registry.tasks.get_task(run_id, task.id)
+        assert settled is not None
+        assert settled.status == TaskStatus.FAILED
+        assert settled.result == "Run cancelled"
+        assert not any(event["type"] == "task_completed" for event in events)
+
+    async def test_store_exception_does_not_cancel_other_workers(self, runner: TeamRunner) -> None:
+        team = _make_team(workers=["worker1", "worker2"])
+        run_id = uuid.uuid4().hex[:16]
+        bad = await registry.tasks.create_task(run_id, title="Bad batch", suggested_worker="worker1")
+        good = await registry.tasks.create_task(run_id, title="Other worker", suggested_worker="worker2")
+        bad_claim = await registry.tasks.claim_task(run_id, bad.id, "worker1")
+        good_claim = await registry.tasks.claim_task(run_id, good.id, "worker2")
+        assert bad_claim is not None and good_claim is not None
+        runner._cancel_events[run_id] = asyncio.Event()
+        started = asyncio.Event()
+        release = asyncio.Event()
+        original_update = registry.tasks.update_task
+
+        async def update(team_run_id: str, task_id: str, **kwargs: Any) -> Any:
+            if task_id == bad.id and kwargs.get("status") == TaskStatus.IN_PROGRESS:
+                await started.wait()
+                raise RuntimeError("task store unavailable")
+            return await original_update(team_run_id, task_id, **kwargs)
+
+        async def execute(*args: Any, **kwargs: Any) -> str:
+            started.set()
+            await release.wait()
+            return "other result"
+
+        async def consume(claim: Any, worker: str) -> list[dict[str, Any]]:
+            return [
+                event
+                async for event in runner._execute_tasks_parallel_stream(
+                    [claim], _make_worker(worker), team, run_id, worker
+                )
+            ]
+
+        with (
+            patch.object(registry.tasks, "update_task", side_effect=update),
+            patch.object(runner, "_execute_task_streaming", side_effect=execute),
+        ):
+            other = asyncio.create_task(consume(good_claim, "worker2"))
+            try:
+                await asyncio.wait_for(started.wait(), timeout=2)
+                failed = await asyncio.wait_for(consume(bad_claim, "worker1"), timeout=2)
+                assert any(event["type"] == "task_failed" for event in failed)
+                assert not runner._cancel_events[run_id].is_set()
+                release.set()
+                result = await asyncio.wait_for(other, timeout=2)
+            finally:
+                release.set()
+                if not other.done():
+                    other.cancel()
+                await asyncio.gather(other, return_exceptions=True)
+        assert any(event["type"] == "task_completed" and event["task_id"] == good.id for event in result)
+        assert (await registry.tasks.get_task(run_id, good.id)).status == TaskStatus.DONE  # type: ignore[union-attr]
+
+    async def test_store_error_while_draining_batch_does_not_cancel_run(self, runner: TeamRunner) -> None:
+        team = _make_team()
+        run_id = uuid.uuid4().hex[:16]
+        task = await registry.tasks.create_task(run_id, title="Worker in flight")
+        claimed = await registry.tasks.claim_task(run_id, task.id, "worker1")
+        assert claimed is not None
+        runner._cancel_events[run_id] = asyncio.Event()
+        entered = asyncio.Event()
+        interrupted = asyncio.Event()
+        other_started = asyncio.Event()
+        other_release = asyncio.Event()
+        other_finished = asyncio.Event()
+
+        async def unrelated_worker() -> None:
+            other_started.set()
+            await other_release.wait()
+            if not runner._cancel_events[run_id].is_set():
+                other_finished.set()
+
+        async def slow_worker(*args: Any, **kwargs: Any) -> str:
+            entered.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                interrupted.set()
+                raise
+
+        async def store_failure(team_run_id: str) -> None:
+            if entered.is_set():
+                raise RuntimeError("store unavailable")
+
+        async def consume() -> None:
+            async for _ in runner._execute_tasks_parallel_stream(
+                [claimed], _make_worker("worker1"), team, run_id, "worker1"
+            ):
+                pass
+
+        other = asyncio.create_task(unrelated_worker())
+        with (
+            patch.object(runner, "_execute_task_streaming", side_effect=slow_worker),
+            patch.object(runner, "_sync_remote_cancel", side_effect=store_failure),
+        ):
+            try:
+                await asyncio.wait_for(other_started.wait(), timeout=2)
+                with pytest.raises(RuntimeError, match="store unavailable"):
+                    await asyncio.wait_for(consume(), timeout=2)
+                other_release.set()
+                await asyncio.wait_for(other, timeout=2)
+            finally:
+                other_release.set()
+                if not other.done():
+                    other.cancel()
+                await asyncio.gather(other, return_exceptions=True)
+        assert interrupted.is_set()
+        assert not runner._cancel_events[run_id].is_set()
+        assert other_finished.is_set()
+        failed = await registry.tasks.get_task(run_id, task.id)
+        assert failed is not None and failed.status == TaskStatus.FAILED
+        assert failed.result == "Worker batch interrupted"
+
+
+class TestRetryTask:
+    async def test_retry_completes_and_unblocks_dependency(
+        self, runner: TeamRunner, agent_store: FileAgentStore
+    ) -> None:
+        await agent_store.create(_make_worker("worker1"))
+        team = _make_team()
+        run_id = uuid.uuid4().hex[:16]
+        failed = await registry.tasks.create_task(run_id, title="Retry me", suggested_worker="worker1")
+        dependent = await registry.tasks.create_task(run_id, title="Blocked", depends_on=[failed.id])
+        await registry.tasks.claim_task(run_id, failed.id, "worker1")
+        await registry.tasks.update_task(run_id, failed.id, status=TaskStatus.FAILED, result="Temporary error")
+
+        async def worker_stream(*args: Any, **kwargs: Any):
+            yield {"type": "agent_token", "content": "Recovered"}
+
+        with patch("agentic_primitives_gateway.agents.team_runner.run_agent_with_tools_stream", worker_stream):
+            events = [event async for event in runner.retry_task_stream(team, run_id, failed.id)]
+
+        assert [event["type"] for event in events] == ["task_retry", "agent_token", "task_completed", "retry_done"]
+        updated = await registry.tasks.get_task(run_id, failed.id)
+        assert updated is not None and updated.status == TaskStatus.DONE and updated.result == "Recovered"
+        assert await registry.tasks.claim_task(run_id, dependent.id, "worker1") is not None
+
+    async def test_retry_rejects_cancelled_and_competing_retries(
+        self, runner: TeamRunner, agent_store: FileAgentStore
+    ) -> None:
+        await agent_store.create(_make_worker("worker1"))
+        team = _make_team()
+        run_id = uuid.uuid4().hex[:16]
+        cancelled = await registry.tasks.create_task(run_id, title="Cancelled", suggested_worker="worker1")
+        await registry.tasks.update_task(run_id, cancelled.id, status=TaskStatus.FAILED, result="Run cancelled")
+        events = [event async for event in runner.retry_task_stream(team, run_id, cancelled.id)]
+        assert [event["type"] for event in events] == ["error"]
+        assert (await registry.tasks.get_task(run_id, cancelled.id)).status == TaskStatus.FAILED  # type: ignore[union-attr]
+
+        failed = await registry.tasks.create_task(run_id, title="Race", suggested_worker="worker1")
+        await registry.tasks.update_task(run_id, failed.id, status=TaskStatus.FAILED, result="Transient")
+        with patch.object(registry.tasks, "retry_task", new_callable=AsyncMock, return_value=None):
+            events = [event async for event in runner.retry_task_stream(team, run_id, failed.id)]
+        assert [event["type"] for event in events] == ["error"]
 
 
 # ── Recover partial tokens tests ─────────────────────────────────────

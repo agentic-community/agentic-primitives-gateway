@@ -1,4 +1,5 @@
 from typing import Any
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, UploadFile
 
@@ -37,19 +38,34 @@ async def start_session(request: StartSessionRequest) -> SessionInfo:
         resource_type=ResourceType.SESSION,
         metadata={"primitive": "code_interpreter", "language": request.language},
     ) as audit:
-        result = await registry.code_interpreter.start_session(
-            session_id=request.session_id,
-            config={"language": request.language, **request.config},
-        )
-        info = SessionInfo(**result)
-        await code_interpreter_session_owners.set_owner(info.session_id, principal.id)
+        requested_id = request.session_id or uuid4().hex
+        if not await code_interpreter_session_owners.set_owner(requested_id, principal.id):
+            raise HTTPException(status_code=409, detail="Session ID already in use")
+        try:
+            result = await registry.code_interpreter.start_session(
+                session_id=requested_id,
+                config={"language": request.language, **request.config},
+            )
+            info = SessionInfo(**result)
+            # Never stop a conflicting ID: it may already belong to another user.
+            if info.session_id != requested_id and not await code_interpreter_session_owners.set_owner(
+                info.session_id, principal.id
+            ):
+                raise HTTPException(status_code=409, detail="Session ID already in use")
+        except BaseException:
+            await code_interpreter_session_owners.release_owner(requested_id, principal.id)
+            raise
+        if info.session_id != requested_id:
+            await code_interpreter_session_owners.release_owner(requested_id, principal.id)
         audit.resource_id = info.session_id
     return info
 
 
 @router.delete("/sessions/{session_id}")
 async def stop_session(session_id: str) -> Response:
-    await code_interpreter_session_owners.require_owner(session_id, require_principal())
+    principal = require_principal()
+    await code_interpreter_session_owners.require_owner(session_id, principal)
+    owner = await code_interpreter_session_owners.get_owner(session_id)
     async with audit_mutation(
         AuditAction.SESSION_TERMINATE,
         resource_type=ResourceType.SESSION,
@@ -57,7 +73,8 @@ async def stop_session(session_id: str) -> Response:
         metadata={"primitive": "code_interpreter"},
     ):
         await registry.code_interpreter.stop_session(session_id)
-        await code_interpreter_session_owners.delete(session_id)
+        if owner is not None:
+            await code_interpreter_session_owners.release_owner(session_id, owner)
     return Response(status_code=204)
 
 

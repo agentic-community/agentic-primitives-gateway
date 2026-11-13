@@ -105,10 +105,13 @@ class TestSessionOwnershipStore:
         assert await store.get_owner("nonexistent") is None
 
     @pytest.mark.asyncio
-    async def test_delete(self, store: SessionOwnershipStore):
+    async def test_release_owner_is_conditional(self, store: SessionOwnershipStore):
         await store.set_owner("sess-1", "alice")
-        await store.delete("sess-1")
+        await store.release_owner("sess-1", "bob")
+        assert await store.get_owner("sess-1") == "alice"
+        await store.release_owner("sess-1", "alice")
         assert await store.get_owner("sess-1") is None
+        assert await store.set_owner("sess-1", "bob") is False
 
     @pytest.mark.asyncio
     async def test_require_owner_passes_for_owner(self, store: SessionOwnershipStore):
@@ -147,10 +150,10 @@ class TestSessionOwnershipStore:
         await store.require_owner("unknown-sess", _admin())  # must not raise
 
     @pytest.mark.asyncio
-    async def test_overwrite_owner(self, store: SessionOwnershipStore):
-        await store.set_owner("sess-1", "alice")
-        await store.set_owner("sess-1", "bob")
-        assert await store.get_owner("sess-1") == "bob"
+    async def test_existing_owner_cannot_be_overwritten(self, store: SessionOwnershipStore):
+        assert await store.set_owner("sess-1", "alice") is True
+        assert await store.set_owner("sess-1", "bob") is False
+        assert await store.get_owner("sess-1") == "alice"
 
     @pytest.mark.asyncio
     async def test_owned_session_ids(self, store: SessionOwnershipStore):
@@ -176,7 +179,7 @@ class TestSessionOwnershipStoreRedis:
     @pytest.mark.asyncio
     async def test_set_owner_writes_redis(self, store: SessionOwnershipStore):
         await store.set_owner("sess-1", "alice")
-        store._redis.set.assert_called_once_with("session_owner:sess-1", "alice", ex=86400)
+        store._redis.set.assert_called_once_with("session_owner:sess-1", "alice", nx=True)
 
     @pytest.mark.asyncio
     async def test_get_owner_from_redis(self, store: SessionOwnershipStore):
@@ -186,10 +189,11 @@ class TestSessionOwnershipStoreRedis:
         store._redis.get.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_delete_deletes_redis(self, store: SessionOwnershipStore):
+    async def test_release_owner_uses_atomic_redis_compare(self, store: SessionOwnershipStore):
         await store.set_owner("sess-1", "alice")
-        await store.delete("sess-1")
-        store._redis.delete.assert_called_once_with("session_owner:sess-1")
+        await store.release_owner("sess-1", "alice")
+        store._redis.eval.assert_awaited_once()
+        assert store._redis.eval.await_args.args[2:] == ("session_owner:sess-1", "alice", store._RELEASED)
 
     @pytest.mark.asyncio
     async def test_owned_session_ids_scans_redis(self, store: SessionOwnershipStore):

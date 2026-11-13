@@ -303,9 +303,10 @@ async def test_browser_mutations_emit():
     mock_registry.browser.evaluate = AsyncMock(return_value="ok")
 
     owners = MagicMock()
-    owners.set_owner = AsyncMock()
+    owners.set_owner = AsyncMock(return_value=True)
     owners.require_owner = AsyncMock()
-    owners.delete = AsyncMock()
+    owners.get_owner = AsyncMock(return_value="alice")
+    owners.release_owner = AsyncMock()
 
     principal = MagicMock(id="alice", is_admin=False)
 
@@ -351,9 +352,10 @@ async def test_code_interpreter_mutations_emit():
     mock_registry.code_interpreter.download_file = AsyncMock(return_value=b"abc")
 
     owners = MagicMock()
-    owners.set_owner = AsyncMock()
+    owners.set_owner = AsyncMock(return_value=True)
     owners.require_owner = AsyncMock()
-    owners.delete = AsyncMock()
+    owners.get_owner = AsyncMock(return_value="alice")
+    owners.release_owner = AsyncMock()
 
     principal = MagicMock(id="alice", is_admin=False)
 

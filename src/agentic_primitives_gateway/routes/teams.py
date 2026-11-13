@@ -389,7 +389,7 @@ async def cancel_team_run(name: str, team_run_id: str) -> dict:
     try:
         all_tasks = await registry.tasks.list_tasks(team_run_id)
         for t in all_tasks:
-            if t.status in ("pending", "in_progress"):
+            if t.status in ("pending", "claimed", "in_progress"):
                 await registry.tasks.update_task(team_run_id, t.id, status="failed", result="Run cancelled")
     except (NotImplementedError, Exception):
         pass

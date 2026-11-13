@@ -17,7 +17,7 @@ import asyncio
 import contextlib
 import logging
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator
 from typing import Any
 
 from agentic_primitives_gateway import metrics
@@ -27,7 +27,7 @@ from agentic_primitives_gateway.agents.checkpoint_utils import (
     restore_provider_overrides,
     serialize_auth_context,
 )
-from agentic_primitives_gateway.agents.runner import AgentRunner
+from agentic_primitives_gateway.agents.runner import AgentRunner, _session_ownership_store
 from agentic_primitives_gateway.agents.store import AgentStore
 from agentic_primitives_gateway.agents.team_agent_loop import run_agent_with_tools, run_agent_with_tools_stream
 from agentic_primitives_gateway.agents.team_prompts import (
@@ -178,6 +178,17 @@ class TeamRunner:
                     logger.info("Remote cancel detected for team run %s", team_run_id)
         except Exception:
             pass  # best-effort
+
+    async def _task_cancelled(self, team_run_id: str, task_id: str) -> bool:
+        """Honor run cancellation and never revive a failed task."""
+        await self._sync_remote_cancel(team_run_id)
+        cancel_evt = self._cancel_events.get(team_run_id)
+        task = await registry.tasks.get_task(team_run_id, task_id)
+        if cancel_evt and cancel_evt.is_set():
+            if task is not None and task.status in (TaskStatus.CLAIMED, TaskStatus.IN_PROGRESS):
+                await registry.tasks.update_task(team_run_id, task_id, status=TaskStatus.FAILED, result="Run cancelled")
+            return True
+        return task is not None and task.status == TaskStatus.FAILED
 
     def set_stores(
         self,
@@ -505,8 +516,11 @@ class TeamRunner:
             if phase == "execution":
                 await self._team_checkpoint(team_spec, team_run_id, message, "execution")
                 await _emit({"type": "phase_change", "phase": "execution"})
-                async for event in self._run_with_replanning_stream(team_spec, team_run_id, message):
-                    await _emit(event)
+                async with contextlib.aclosing(
+                    self._run_with_replanning_stream(team_spec, team_run_id, message)
+                ) as stream:
+                    async for event in stream:
+                        await _emit(event)
                 phase = "synthesis"
 
             if phase == "synthesis":
@@ -539,7 +553,8 @@ class TeamRunner:
             logger.exception("Error during team resume phases for run %s", team_run_id)
             await _emit({"type": "error", "detail": f"Resume failed for team run {team_run_id}"})
 
-        if event_store:
+        await self._sync_remote_cancel(team_run_id)
+        if event_store and not cancel_event.is_set():
             await event_store.set_status(team_run_id, "idle")
 
         await self._delete_team_checkpoint(team_run_id, team_spec=team_spec)
@@ -651,10 +666,11 @@ class TeamRunner:
             await self._team_checkpoint(team_spec, team_run_id, message, "execution")
             yield {"type": "phase_change", "phase": "execution"}
             workers_used: list[str] = []
-            async for event in self._run_with_replanning_stream(team_spec, team_run_id, message):
-                if event.get("type") == "worker_done" and event["agent"] not in workers_used:
-                    workers_used.append(event["agent"])
-                yield event
+            async with contextlib.aclosing(self._run_with_replanning_stream(team_spec, team_run_id, message)) as stream:
+                async for event in stream:
+                    if event.get("type") == "worker_done" and event["agent"] not in workers_used:
+                        workers_used.append(event["agent"])
+                    yield event
 
             # Phase 3: Synthesis
             await self._team_checkpoint(team_spec, team_run_id, message, "synthesis")
@@ -895,7 +911,7 @@ class TeamRunner:
 
     async def _run_with_replanning_stream(
         self, team_spec: TeamSpec, team_run_id: str, message: str
-    ) -> AsyncIterator[dict[str, Any]]:
+    ) -> AsyncGenerator[dict[str, Any]]:
         """Streaming execution with re-planning between worker waves."""
         workers = self._worker_names(team_spec)
         reviewed_tasks: set[str] = set()
@@ -909,12 +925,14 @@ class TeamRunner:
                 worker_name: str,
                 _q: asyncio.Queue[dict[str, Any] | None] = queue,
             ) -> None:
+                stream = self._worker_loop_stream(worker_name, team_spec, team_run_id)
                 try:
-                    async for event in self._worker_loop_stream(worker_name, team_spec, team_run_id):
+                    async for event in stream:
                         await _q.put(event)
                 except Exception as e:
                     await _q.put({"type": "worker_error", "agent": worker_name, "error": str(e)})
                 finally:
+                    await stream.aclose()
                     await _q.put(None)  # sentinel
 
             worker_tasks = [asyncio.create_task(_worker_wrapper(w)) for w in workers]
@@ -928,11 +946,15 @@ class TeamRunner:
                         continue
                     yield event
             finally:
-                # Cancel any lingering worker tasks (fire-and-forget —
-                # the cancel event handles cooperative stopping)
                 for wt in worker_tasks:
                     if not wt.done():
                         wt.cancel()
+                await asyncio.gather(*worker_tasks, return_exceptions=True)
+
+            await self._sync_remote_cancel(team_run_id)
+            cancel_evt = self._cancel_events.get(team_run_id)
+            if cancel_evt and cancel_evt.is_set():
+                break
 
             # Re-plan based on newly completed tasks
             logger.info("All workers finished, checking for re-planning...")
@@ -992,21 +1014,34 @@ class TeamRunner:
 
             async def _run_one(t: Any) -> None:
                 logger.info("Team worker '%s' claimed task '%s': %s", worker_name, t.id, t.title)
-                await registry.tasks.update_task(team_run_id, t.id, status=TaskStatus.IN_PROGRESS)
+                if await self._task_cancelled(team_run_id, t.id):
+                    return
+                updated = await registry.tasks.update_task(team_run_id, t.id, status=TaskStatus.IN_PROGRESS)
+                if updated is None or await self._task_cancelled(team_run_id, t.id):
+                    return
                 try:
                     result = await self._execute_task(worker_spec, team_spec, team_run_id, t.id, t.title, t.description)
-                    await registry.tasks.update_task(team_run_id, t.id, status=TaskStatus.DONE, result=result)
+                    if await self._task_cancelled(team_run_id, t.id):
+                        return
+                    updated = await registry.tasks.update_task(team_run_id, t.id, status=TaskStatus.DONE, result=result)
+                    if (
+                        await self._task_cancelled(team_run_id, t.id)
+                        or updated is None
+                        or updated.status != TaskStatus.DONE
+                    ):
+                        return
                     logger.info("Team worker '%s' completed task '%s'", worker_name, t.id)
                 except Exception as e:
                     logger.error("Team worker '%s' failed task '%s': %s: %s", worker_name, t.id, type(e).__name__, e)
                     with contextlib.suppress(Exception):
-                        await registry.tasks.update_task(team_run_id, t.id, status=TaskStatus.FAILED, result=str(e))
+                        if not await self._task_cancelled(team_run_id, t.id):
+                            await registry.tasks.update_task(team_run_id, t.id, status=TaskStatus.FAILED, result=str(e))
 
             await asyncio.gather(*[_run_one(t) for t in claimed], return_exceptions=True)
 
     async def _worker_loop_stream(
         self, worker_name: str, team_spec: TeamSpec, team_run_id: str
-    ) -> AsyncIterator[dict[str, Any]]:
+    ) -> AsyncGenerator[dict[str, Any]]:
         """Streaming worker: same as _worker_loop but yields events."""
         worker_spec = await _resolve_team_agent(self._agent_store, team_spec.owner_id, worker_name)
         if worker_spec is None:
@@ -1035,10 +1070,12 @@ class TeamRunner:
             if not claimed:
                 continue
 
-            async for event in self._execute_tasks_parallel_stream(
-                claimed, worker_spec, team_spec, team_run_id, worker_name
-            ):
-                yield event
+            stream = self._execute_tasks_parallel_stream(claimed, worker_spec, team_spec, team_run_id, worker_name)
+            try:
+                async for event in stream:
+                    yield event
+            finally:
+                await stream.aclose()
 
         yield {"type": "worker_done", "agent": worker_name}
 
@@ -1049,66 +1086,115 @@ class TeamRunner:
         team_spec: TeamSpec,
         team_run_id: str,
         worker_name: str,
-    ) -> AsyncIterator[dict[str, Any]]:
+    ) -> AsyncGenerator[dict[str, Any]]:
         """Execute claimed tasks in parallel, yielding events as they arrive."""
         event_queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
 
-        cancel_evt = self._cancel_events.get(team_run_id)
-
-        async def _run_one(t: Any, _q: asyncio.Queue[dict[str, Any] | None] = event_queue) -> None:
-            if cancel_evt and cancel_evt.is_set():
+        async def _run_one(t: Any) -> None:
+            if await self._task_cancelled(team_run_id, t.id):
                 return
-            await _q.put({"type": "task_claimed", "agent": worker_name, "task_id": t.id, "title": t.title})
-            await registry.tasks.update_task(team_run_id, t.id, status=TaskStatus.IN_PROGRESS)
+            await event_queue.put({"type": "task_claimed", "agent": worker_name, "task_id": t.id, "title": t.title})
+            try:
+                updated = await registry.tasks.update_task(team_run_id, t.id, status=TaskStatus.IN_PROGRESS)
+            except Exception as e:
+                logger.error("Parallel task '%s' failed to start: %s: %s", t.id, type(e).__name__, e)
+                with contextlib.suppress(Exception):
+                    if not await self._task_cancelled(team_run_id, t.id):
+                        await registry.tasks.update_task(team_run_id, t.id, status=TaskStatus.FAILED, result=str(e))
+                await event_queue.put({"type": "task_failed", "agent": worker_name, "task_id": t.id, "error": str(e)})
+                return
+            if updated is None or await self._task_cancelled(team_run_id, t.id):
+                return
             try:
                 result = await self._execute_task_streaming(
-                    worker_spec, team_spec, team_run_id, t.id, t.title, t.description, _q, worker_name
+                    worker_spec, team_spec, team_run_id, t.id, t.title, t.description, event_queue, worker_name
                 )
-                await registry.tasks.update_task(team_run_id, t.id, status=TaskStatus.DONE, result=result)
-                await _q.put({"type": "task_completed", "agent": worker_name, "task_id": t.id, "result": result})
+                if await self._task_cancelled(team_run_id, t.id):
+                    return
+                updated = await registry.tasks.update_task(team_run_id, t.id, status=TaskStatus.DONE, result=result)
+                if (
+                    await self._task_cancelled(team_run_id, t.id)
+                    or updated is None
+                    or updated.status != TaskStatus.DONE
+                ):
+                    return
+                await event_queue.put(
+                    {"type": "task_completed", "agent": worker_name, "task_id": t.id, "result": result}
+                )
             except Exception as e:
                 logger.error("Parallel task '%s' failed: %s: %s", t.id, type(e).__name__, e)
                 with contextlib.suppress(Exception):
-                    await registry.tasks.update_task(team_run_id, t.id, status=TaskStatus.FAILED, result=str(e))
-                await _q.put({"type": "task_failed", "agent": worker_name, "task_id": t.id, "error": str(e)})
+                    if not await self._task_cancelled(team_run_id, t.id):
+                        await registry.tasks.update_task(team_run_id, t.id, status=TaskStatus.FAILED, result=str(e))
+                await event_queue.put({"type": "task_failed", "agent": worker_name, "task_id": t.id, "error": str(e)})
 
         parallel_tasks = [asyncio.create_task(_run_one(t)) for t in claimed]
+        closing = False
+        batch_error = False
+        try:
+            finished_ids: set[int] = set()
+            while len(finished_ids) < len(parallel_tasks):
+                await self._sync_remote_cancel(team_run_id)
+                cancel_evt = self._cancel_events.get(team_run_id)
+                if cancel_evt and cancel_evt.is_set():
+                    break
+                try:
+                    event = await asyncio.wait_for(event_queue.get(), timeout=0.5)
+                    if event is not None:
+                        yield event
+                except TimeoutError:
+                    pass
+                for i, pt in enumerate(parallel_tasks):
+                    if i not in finished_ids and pt.done():
+                        finished_ids.add(i)
+                        exc = pt.exception() if not pt.cancelled() else None
+                        if exc is not None:
+                            task_obj = claimed[i]
+                            logger.error("Uncaught exception in task '%s': %s", task_obj.id, exc)
+                            if not await self._task_cancelled(team_run_id, task_obj.id):
+                                with contextlib.suppress(Exception):
+                                    await registry.tasks.update_task(
+                                        team_run_id, task_obj.id, status=TaskStatus.FAILED, result=str(exc)
+                                    )
+                            await event_queue.put(
+                                {"type": "task_failed", "agent": worker_name, "task_id": task_obj.id, "error": str(exc)}
+                            )
 
-        finished_ids: set[int] = set()
-        while len(finished_ids) < len(parallel_tasks):
-            # Check cancel event (local + remote) — cancel all sub-tasks and exit
-            await self._sync_remote_cancel(team_run_id)
-            if cancel_evt and cancel_evt.is_set():
+            if not (cancel_evt and cancel_evt.is_set()):
+                while not event_queue.empty():
+                    event = await event_queue.get()
+                    if event is not None:
+                        yield event
+        except Exception:
+            batch_error = True
+            raise
+        except (GeneratorExit, asyncio.CancelledError):
+            closing = True
+            raise
+        finally:
+            if any(not pt.done() for pt in parallel_tasks):
+                # Stream closure cancels the run; an ordinary store error only
+                # stops this batch, not other workers on the same run.
+                if closing:
+                    cancel_evt = self._cancel_events.get(team_run_id)
+                    if cancel_evt:
+                        cancel_evt.set()
                 for pt in parallel_tasks:
                     if not pt.done():
                         pt.cancel()
-                break
-            try:
-                event = await asyncio.wait_for(event_queue.get(), timeout=0.5)
-                if event is not None:
-                    yield event
-            except TimeoutError:
-                pass
-            for i, pt in enumerate(parallel_tasks):
-                if i not in finished_ids and pt.done():
-                    finished_ids.add(i)
-                    exc = pt.exception() if not pt.cancelled() else None
-                    if exc is not None:
-                        task_obj = claimed[i]
-                        logger.error("Uncaught exception in task '%s': %s", task_obj.id, exc)
-                        with contextlib.suppress(Exception):
+            await asyncio.gather(*parallel_tasks, return_exceptions=True)
+            if batch_error:
+                for task in claimed:
+                    with contextlib.suppress(Exception):
+                        current = await registry.tasks.get_task(team_run_id, task.id)
+                        if current is not None and current.status in (TaskStatus.CLAIMED, TaskStatus.IN_PROGRESS):
                             await registry.tasks.update_task(
-                                team_run_id, task_obj.id, status=TaskStatus.FAILED, result=str(exc)
+                                team_run_id, task.id, status=TaskStatus.FAILED, result="Worker batch interrupted"
                             )
-                        await event_queue.put(
-                            {"type": "task_failed", "agent": worker_name, "task_id": task_obj.id, "error": str(exc)}
-                        )
-
-        while not event_queue.empty():
-            event = await event_queue.get()
-            if event is not None:
-                yield event
-        await asyncio.gather(*parallel_tasks, return_exceptions=True)
+            cancel_evt = self._cancel_events.get(team_run_id)
+            if cancel_evt and cancel_evt.is_set():
+                for task in claimed:
+                    await self._task_cancelled(team_run_id, task.id)
 
     # ── Task execution ───────────────────────────────────────────────
 
@@ -1135,7 +1221,11 @@ class TeamRunner:
     ) -> str:
         """Like _execute_task but streams agent tokens/tools to event_queue."""
         prev_overrides = self._apply_overrides(worker_spec)
-        session_ids, cv_tokens = await self._start_sessions(worker_spec)
+        try:
+            session_ids, cv_tokens = await self._start_sessions(worker_spec)
+        except BaseException:
+            self._restore_overrides(prev_overrides)
+            raise
         try:
             tools = self._build_worker_tools(worker_spec, team_spec)
             upstream = await self._gather_upstream_context(team_run_id, task_id)
@@ -1184,8 +1274,10 @@ class TeamRunner:
             logger.info("Task '%s' streaming execution complete, content_len=%d", task_id, len(content))
             return content
         finally:
-            await self._stop_sessions(session_ids, cv_tokens)
-            self._restore_overrides(prev_overrides)
+            try:
+                await self._stop_sessions(session_ids, cv_tokens)
+            finally:
+                self._restore_overrides(prev_overrides)
 
     async def _execute_task_core(
         self, worker_spec: AgentSpec, team_spec: TeamSpec, team_run_id: str, task_id: str, title: str, description: str
@@ -1288,7 +1380,7 @@ class TeamRunner:
     ) -> AsyncIterator[dict[str, Any]]:
         """Retry a single failed task, streaming events.
 
-        Resets the task to in_progress, recovers partial tokens from the
+        Atomically rearms the failed task, recovers partial tokens from the
         event store, and re-runs the assigned worker agent with resume context.
         """
         # Validate task exists and is failed
@@ -1310,8 +1402,17 @@ class TeamRunner:
             yield {"type": "error", "detail": f"Worker agent '{worker_name}' not found"}
             return
 
-        # Reset task status
-        await registry.tasks.update_task(team_run_id, task_id, status=TaskStatus.IN_PROGRESS, result=None)
+        # The read above is for validation only. The provider compare-and-set
+        # rejects a concurrent retry or cancellation before any worker starts.
+        await self._sync_remote_cancel(team_run_id)
+        cancel_evt = self._cancel_events.get(team_run_id)
+        if cancel_evt and cancel_evt.is_set():
+            yield {"type": "error", "detail": f"Run '{team_run_id}' is cancelled"}
+            return
+        rearmed = await registry.tasks.retry_task(team_run_id, task_id)
+        if rearmed is None:
+            yield {"type": "error", "detail": f"Task '{task_id}' is no longer retryable"}
+            return
         yield {"type": "task_retry", "agent": worker_name, "task_id": task_id, "title": task.title}
 
         # Recover partial tokens from the previous failed attempt
@@ -1319,7 +1420,11 @@ class TeamRunner:
 
         # Execute the task with resume context
         prev_overrides = self._apply_overrides(worker_spec)
-        session_ids, cv_tokens = await self._start_sessions(worker_spec)
+        try:
+            session_ids, cv_tokens = await self._start_sessions(worker_spec)
+        except BaseException:
+            self._restore_overrides(prev_overrides)
+            raise
         try:
             tools = self._build_worker_tools(worker_spec, team_spec)
             upstream = await self._gather_upstream_context(team_run_id, task_id)
@@ -1362,7 +1467,11 @@ class TeamRunner:
                             "name": event.get("name", ""),
                         }
 
-            await registry.tasks.update_task(team_run_id, task_id, status=TaskStatus.DONE, result=content)
+            if await self._task_cancelled(team_run_id, task_id):
+                return
+            updated = await registry.tasks.update_task(team_run_id, task_id, status=TaskStatus.DONE, result=content)
+            if await self._task_cancelled(team_run_id, task_id) or updated is None or updated.status != TaskStatus.DONE:
+                return
             yield {"type": "task_completed", "agent": worker_name, "task_id": task_id, "result": content}
             logger.info("Task '%s' retry completed, content_len=%d", task_id, len(content))
         except Exception as e:
@@ -1371,8 +1480,10 @@ class TeamRunner:
                 await registry.tasks.update_task(team_run_id, task_id, status=TaskStatus.FAILED, result=str(e))
             yield {"type": "task_failed", "agent": worker_name, "task_id": task_id, "error": str(e)}
         finally:
-            await self._stop_sessions(session_ids, cv_tokens)
-            self._restore_overrides(prev_overrides)
+            try:
+                await self._stop_sessions(session_ids, cv_tokens)
+            finally:
+                self._restore_overrides(prev_overrides)
 
         yield {"type": "retry_done", "task_id": task_id}
 
@@ -1468,53 +1579,100 @@ class TeamRunner:
         """
         session_ids: dict[str, str] = {}
         cv_tokens: dict[str, Any] = {}
-        for prim_name, config in worker_spec.primitives.items():
-            if not config.enabled:
-                continue
-            sid: str | None = None
-            try:
-                if prim_name == "code_interpreter":
-                    result = await registry.code_interpreter.start_session()
-                    sid = result.get("session_id", uuid.uuid4().hex[:16])
-                elif prim_name == "browser":
-                    result = await registry.browser.start_session()
-                    sid = result.get("session_id", uuid.uuid4().hex[:16])
-                else:
+        try:
+            for prim_name, config in worker_spec.primitives.items():
+                if not config.enabled or prim_name not in ("browser", "code_interpreter"):
                     continue
+                principal = get_authenticated_principal()
+                if principal is None:
+                    raise RuntimeError("Cannot claim a team session without an authenticated principal")
+                owner_store = _session_ownership_store(prim_name)
+                if owner_store is None:
+                    raise RuntimeError(f"No ownership store for {prim_name}")
+                requested_id = uuid.uuid4().hex
+                if not await owner_store.set_owner(requested_id, principal.id):
+                    raise RuntimeError(f"{prim_name} session ID already in use: {requested_id}")
+                claimed_id = requested_id
+                started_id: str | None = None
+                registered = False
+                try:
+                    if prim_name == "code_interpreter":
+                        result = await registry.code_interpreter.start_session(session_id=requested_id)
+                    else:
+                        result = await registry.browser.start_session(session_id=requested_id)
+                    sid = result.get("session_id")
+                    if not sid:
+                        raise RuntimeError(f"{prim_name} provider returned no session ID")
+                    started_id = sid
+                    if sid != requested_id:
+                        if not await owner_store.set_owner(sid, principal.id):
+                            raise RuntimeError(f"{prim_name} session ID already in use: {sid}")
+                        claimed_id = sid
+                    if self._session_registry:
+                        await self._session_registry.register(prim_name, sid, metadata={"user_id": principal.id})
+                        registered = True
+                    if sid != requested_id:
+                        await owner_store.release_owner(requested_id, principal.id)
+                except BaseException:
+                    if started_id is not None and claimed_id == started_id:
+                        try:
+                            if prim_name == "browser":
+                                await registry.browser.stop_session(session_id=started_id)
+                            else:
+                                await registry.code_interpreter.stop_session(session_id=started_id)
+                        except BaseException:
+                            logger.debug("Failed to stop partially started %s session", prim_name, exc_info=True)
+                        if registered and self._session_registry:
+                            with contextlib.suppress(BaseException):
+                                await self._session_registry.unregister(prim_name, started_id)
+                    for owner_id in {claimed_id, requested_id}:
+                        try:
+                            await owner_store.release_owner(owner_id, principal.id)
+                        except BaseException:
+                            logger.debug(
+                                "Failed to release partial %s session claim %s", prim_name, owner_id, exc_info=True
+                            )
+                    raise
                 logger.info("Started %s session: %s", prim_name, sid)
-                if self._session_registry:
-                    principal = get_authenticated_principal()
-                    if principal is None:
-                        raise RuntimeError("Cannot register session without an authenticated principal")
-                    await self._session_registry.register(prim_name, sid, metadata={"user_id": principal.id})
-            except Exception:
-                logger.warning("Failed to start %s session", prim_name, exc_info=True)
-                sid = uuid.uuid4().hex[:16]
-
-            if sid is None:
-                continue
-            session_ids[prim_name] = sid
-            if prim_name == "browser":
-                cv_tokens["browser_session"] = set_browser_session_id(sid)
-            elif prim_name == "code_interpreter":
-                cv_tokens["code_interpreter_session"] = set_code_interpreter_session_id(sid)
+                session_ids[prim_name] = sid
+                if prim_name == "browser":
+                    cv_tokens["browser_session"] = set_browser_session_id(sid)
+                else:
+                    cv_tokens["code_interpreter_session"] = set_code_interpreter_session_id(sid)
+        except BaseException:
+            try:
+                await self._stop_sessions(session_ids, cv_tokens)
+            except BaseException:
+                logger.debug("Failed to clean up earlier team sessions", exc_info=True)
+            raise
         return session_ids, cv_tokens
 
     async def _stop_sessions(self, session_ids: dict[str, str], cv_tokens: dict[str, Any]) -> None:
-        for prim_name, sid in session_ids.items():
-            with contextlib.suppress(Exception):
-                if prim_name == "browser":
-                    await registry.browser.stop_session(session_id=sid)
-                elif prim_name == "code_interpreter":
-                    await registry.code_interpreter.stop_session(session_id=sid)
-            if self._session_registry:
-                with contextlib.suppress(Exception):
-                    await self._session_registry.unregister(prim_name, sid)
-        if "browser_session" in cv_tokens:
-            with contextlib.suppress(Exception):
+        try:
+            for prim_name, sid in session_ids.items():
+                try:
+                    if prim_name == "browser":
+                        await registry.browser.stop_session(session_id=sid)
+                    elif prim_name == "code_interpreter":
+                        await registry.code_interpreter.stop_session(session_id=sid)
+                except Exception:
+                    logger.debug("Failed to stop %s team session %s", prim_name, sid, exc_info=True)
+                owner_store = _session_ownership_store(prim_name)
+                principal = get_authenticated_principal()
+                if owner_store is not None and principal is not None:
+                    try:
+                        await owner_store.release_owner(sid, principal.id)
+                    except Exception:
+                        logger.debug("Failed to release %s team session %s", prim_name, sid, exc_info=True)
+                if self._session_registry:
+                    try:
+                        await self._session_registry.unregister(prim_name, sid)
+                    except Exception:
+                        logger.debug("Failed to unregister %s team session %s", prim_name, sid, exc_info=True)
+        finally:
+            if "browser_session" in cv_tokens:
                 reset_browser_session_id(cv_tokens["browser_session"])
-        if "code_interpreter_session" in cv_tokens:
-            with contextlib.suppress(Exception):
+            if "code_interpreter_session" in cv_tokens:
                 reset_code_interpreter_session_id(cv_tokens["code_interpreter_session"])
 
     def _build_worker_tools(self, worker_spec: AgentSpec, team_spec: TeamSpec) -> list[ToolDefinition]:

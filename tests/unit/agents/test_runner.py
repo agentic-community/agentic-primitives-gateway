@@ -334,14 +334,31 @@ class TestSessionManagement:
         tool_def.name = "code_execute"
         tool_def.primitive = "code_interpreter"
         ctx = _minimal_ctx()
-
         with patch(f"{_RUNNER_MOD}.registry") as mock_reg:
-            mock_reg.code_interpreter = AsyncMock()
-            mock_reg.code_interpreter.start_session.side_effect = RuntimeError("fail")
-            await runner._ensure_session("code_execute", [tool_def], ctx)
+            mock_reg.code_interpreter.start_session = AsyncMock(side_effect=RuntimeError("fail"))
+            with pytest.raises(RuntimeError, match="fail"):
+                await runner._ensure_session("code_execute", [tool_def], ctx)
+        assert "code_interpreter" not in ctx.session_ids
 
-        # Should still set a fallback session ID
-        assert "code_interpreter" in ctx.session_ids
+    async def test_ensure_session_collision_never_stops_existing_owner(self) -> None:
+        from agentic_primitives_gateway.routes._helpers import code_interpreter_session_owners
+
+        runner = AgentRunner()
+        tool_def = MagicMock()
+        tool_def.name = "code_execute"
+        tool_def.primitive = "code_interpreter"
+        ctx = _minimal_ctx()
+        assert await code_interpreter_session_owners.set_owner("occupied-ci", "other-user")
+        try:
+            with patch(f"{_RUNNER_MOD}.registry") as mock_reg:
+                mock_reg.code_interpreter.start_session = AsyncMock(return_value={"session_id": "occupied-ci"})
+                with pytest.raises(RuntimeError, match="already in use"):
+                    await runner._ensure_session("code_execute", [tool_def], ctx)
+                await runner._cleanup_sessions(ctx)
+                mock_reg.code_interpreter.stop_session.assert_not_called()
+            assert await code_interpreter_session_owners.get_owner("occupied-ci") == "other-user"
+        finally:
+            await code_interpreter_session_owners.release_owner("occupied-ci", "other-user")
 
     async def test_cleanup_sessions(self) -> None:
         runner = AgentRunner()

@@ -64,11 +64,13 @@ def require_user_scoped(value: str, principal: AuthenticatedPrincipal) -> None:
 
 
 class SessionOwnershipStore:
-    """Tracks which principal created each browser/code-interpreter session.
+    """Tracks each browser/code-interpreter session's authenticated owner.
 
-    In-memory by default.  Call ``set_redis`` to enable cross-replica
-    visibility via a shared Redis instance.
+    Redis is authoritative when configured. Released IDs are tombstoned so an
+    in-flight authorized operation cannot resolve a replacement session.
     """
+
+    _RELEASED = "\x00"
 
     def __init__(self) -> None:
         self._local: dict[str, str] = {}
@@ -76,56 +78,64 @@ class SessionOwnershipStore:
 
     def set_redis(self, redis_client: Any) -> None:
         self._redis = redis_client
+        self._local.clear()  # Redis, not a stale local record, is authoritative.
 
     @staticmethod
     def _key(session_id: str) -> str:
         return f"session_owner:{session_id}"
 
-    async def set_owner(self, session_id: str, owner_id: str) -> None:
+    async def set_owner(self, session_id: str, owner_id: str) -> bool:
+        """Claim an unowned ID; never replace an existing owner's session."""
+        if self._redis is not None:
+            return bool(await self._redis.set(self._key(session_id), owner_id, nx=True))
+        if session_id in self._local:
+            return False
         self._local[session_id] = owner_id
-        if self._redis:
-            await self._redis.set(self._key(session_id), owner_id, ex=86400)
+        return True
 
     async def get_owner(self, session_id: str) -> str | None:
-        owner = self._local.get(session_id)
-        if owner is None and self._redis:
+        if self._redis is not None:
             owner = await self._redis.get(self._key(session_id))
-            if owner:
-                self._local[session_id] = owner
-        return owner
+            owner = owner.decode() if isinstance(owner, bytes) else owner
+        else:
+            owner = self._local.get(session_id)
+        return None if owner == self._RELEASED else owner
 
-    async def delete(self, session_id: str) -> None:
-        self._local.pop(session_id, None)
-        if self._redis:
-            await self._redis.delete(self._key(session_id))
+    async def release_owner(self, session_id: str, owner_id: str) -> None:
+        """Retire this claim without making its ID reusable by another user."""
+        if self._redis is not None:
+            await self._redis.eval(
+                "if redis.call('GET', KEYS[1]) == ARGV[1] then "
+                "return redis.call('SET', KEYS[1], ARGV[2]) else return 0 end",
+                1,
+                self._key(session_id),
+                owner_id,
+                self._RELEASED,
+            )
+        elif self._local.get(session_id) == owner_id:
+            self._local[session_id] = self._RELEASED
 
     async def owned_session_ids(self, owner_id: str) -> set[str]:
-        """Return the set of session IDs owned by *owner_id*.
-
-        Checks the local cache first.  When Redis is configured, also
-        scans ``session_owner:*`` keys to find sessions created on other
-        replicas (cross-replica visibility).
-        """
-        result = {sid for sid, oid in self._local.items() if oid == owner_id}
-        if self._redis:
-            async for key in self._redis.scan_iter(match="session_owner:*"):
-                k = str(key)
-                sid = k.removeprefix("session_owner:")
-                if sid not in result:
-                    oid = await self._redis.get(k)
-                    if oid == owner_id:
-                        result.add(sid)
-                        self._local[sid] = owner_id  # warm local cache
+        """Return only IDs currently owned by *owner_id* in the active store."""
+        if self._redis is None:
+            return {sid for sid, oid in self._local.items() if oid == owner_id}
+        result: set[str] = set()
+        async for key in self._redis.scan_iter(match="session_owner:*"):
+            raw_key = key.decode() if isinstance(key, bytes) else str(key)
+            oid = await self._redis.get(key)
+            if isinstance(oid, bytes):
+                oid = oid.decode()
+            if oid == owner_id:
+                result.add(raw_key.removeprefix("session_owner:"))
         return result
 
     async def require_owner(self, session_id: str, principal: AuthenticatedPrincipal) -> None:
         """Raise 403 unless the principal owns the session.
 
         Default-deny: if no owner is recorded (session created by a
-        code path that forgot ``set_owner``, TTL expired, replica
-        crashed before writing the owner record), a non-admin principal
-        is denied.  The previous default-allow behavior was a
-        cross-tenant hazard — a session ID leak (screenshot URL,
+        code path that forgot to claim it, or its ownership was revoked),
+        a non-admin principal is denied. The previous default-allow behavior
+        was a cross-tenant hazard: a session ID leak (screenshot URL,
         observability trace, log) let any authenticated user drive
         another user's live browser / kernel session.
         """

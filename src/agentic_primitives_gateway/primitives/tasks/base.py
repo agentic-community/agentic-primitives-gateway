@@ -84,6 +84,14 @@ class TasksProvider(ABC):
         result: str | None = None,
     ) -> Task | None: ...
 
+    async def retry_task(self, team_run_id: str, task_id: str) -> Task | None:
+        """Atomically restart a failed task, clearing its previous result.
+
+        Return None if missing, not failed, or failed due to run cancellation.
+        Normal updates must never revive a failed task.
+        """
+        raise NotImplementedError("Task retries not supported by this provider")
+
     @abstractmethod
     async def add_note(
         self,
