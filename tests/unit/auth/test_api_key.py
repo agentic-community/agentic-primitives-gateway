@@ -118,3 +118,18 @@ class TestApiKeyAuthBackend:
         principal = await backend.authenticate(request)
         assert principal is not None
         assert principal.id == "alice"
+
+    @pytest.mark.parametrize("key", ["", " ", "\t\n", None, 0])
+    def test_blank_or_non_string_configured_key_fails_initialization(self, key):
+        with pytest.raises(ValueError, match=r"auth\.api_keys"):
+            ApiKeyAuthBackend(api_keys=[{"key": "valid", "principal_id": "alice"}, {"key": key, "scopes": ["admin"]}])
+
+    def test_missing_configured_key_fails_initialization(self):
+        with pytest.raises(ValueError, match=r"auth\.api_keys"):
+            ApiKeyAuthBackend(api_keys=[{"principal_id": "admin", "scopes": ["admin"]}])
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("headers", [{"authorization": "Bearer "}, {"x-api-key": ""}, {"x-api-key": "   "}])
+    async def test_blank_presented_key_does_not_authenticate(self, headers):
+        backend = self._make_backend()
+        assert await backend.authenticate(_make_request(headers)) is None

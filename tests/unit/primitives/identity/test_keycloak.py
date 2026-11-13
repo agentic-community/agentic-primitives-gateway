@@ -92,13 +92,23 @@ class TestKeycloakIdentityProvider:
         mock_admin_cls.return_value = mock_admin
 
         provider = KeycloakIdentityProvider()
-        result = await provider.get_api_key(
-            credential_provider="openai",
-            workload_token="wt",
-        )
-
+        with patch(f"{_PATCH_PREFIX}.get_authenticated_principal") as principal:
+            principal.return_value.is_admin = True
+            result = await provider.get_api_key(
+                credential_provider="openai",
+                workload_token="wt",
+            )
         assert result == {"api_key": "sk-secret", "credential_provider": "openai"}
         mock_admin.get_client_id.assert_called_once_with("openai")
+
+    @pytest.mark.asyncio
+    async def test_non_admin_cannot_read_client_secret(self, mock_openid_cls, mock_admin_cls, mock_creds):
+        provider = KeycloakIdentityProvider()
+        with patch(f"{_PATCH_PREFIX}.get_authenticated_principal") as principal:
+            principal.return_value.is_admin = False
+            with pytest.raises(PermissionError, match="admin access"):
+                await provider.get_api_key(credential_provider="target", workload_token="arbitrary")
+        mock_admin_cls.assert_not_called()
 
     # ── get_workload_token ────────────────────────────────────
 
@@ -110,7 +120,9 @@ class TestKeycloakIdentityProvider:
         mock_openid_cls.return_value = mock_openid
 
         provider = KeycloakIdentityProvider()
-        result = await provider.get_workload_token(workload_name="my-agent")
+        with patch(f"{_PATCH_PREFIX}.get_authenticated_principal") as principal:
+            principal.return_value.is_admin = True
+            result = await provider.get_workload_token(workload_name="my-agent")
 
         assert result == {"workload_token": "cc-token", "workload_name": "my-agent"}
         mock_openid.token.assert_called_once_with(
@@ -126,16 +138,41 @@ class TestKeycloakIdentityProvider:
         mock_openid_cls.return_value = mock_openid
 
         provider = KeycloakIdentityProvider()
-        result = await provider.get_workload_token(
-            workload_name="my-agent",
-            user_token="user-jwt",
-        )
+        with patch(f"{_PATCH_PREFIX}.get_authenticated_principal") as principal:
+            principal.return_value.is_admin = False
+            result = await provider.get_workload_token(
+                workload_name="my-agent",
+                user_token="user-jwt",
+            )
 
         assert result["workload_token"] == "user-scoped"
         mock_openid.exchange_token.assert_called_once_with(
             token="user-jwt",
             audience="my-agent",
         )
+        mock_openid.token.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("user_token", [None, ""])
+    async def test_non_admin_cannot_mint_client_credentials(
+        self, mock_openid_cls, mock_admin_cls, mock_creds, user_token
+    ):
+        provider = KeycloakIdentityProvider()
+        with patch(f"{_PATCH_PREFIX}.get_authenticated_principal") as principal:
+            principal.return_value.is_admin = False
+            with pytest.raises(PermissionError, match="admin access"):
+                await provider.get_workload_token("my-agent", user_token=user_token, user_id="other-user")
+        mock_openid_cls.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_missing_principal_cannot_mint_client_credentials(self, mock_openid_cls, mock_admin_cls, mock_creds):
+        provider = KeycloakIdentityProvider()
+        with (
+            patch(f"{_PATCH_PREFIX}.get_authenticated_principal", return_value=None),
+            pytest.raises(PermissionError, match="admin access"),
+        ):
+            await provider.get_workload_token("my-agent")
+        mock_openid_cls.assert_not_called()
 
     # ── list_credential_providers ─────────────────────────────
 
@@ -311,7 +348,9 @@ class TestKeycloakIdentityProvider:
             server_url="http://default.kc",
             realm="default-realm",
         )
-        await provider.get_workload_token(workload_name="test")
+        with patch(f"{_PATCH_PREFIX}.get_authenticated_principal") as principal:
+            principal.return_value.is_admin = True
+            await provider.get_workload_token(workload_name="test")
 
         mock_openid_cls.assert_called_with(
             server_url="https://override.kc",

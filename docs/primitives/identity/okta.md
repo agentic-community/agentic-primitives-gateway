@@ -26,6 +26,10 @@ providers:
 | `api_token` | (none) | Okta API token (SSWS) for admin operations |
 | `auth_server` | `default` | Authorization server ID |
 
+Reading application client secrets through `get_api_key` requires a gateway admin principal; `workload_token` does not authorize an Okta admin lookup.
+
+`get_workload_token` always mints the configured client's token with a client-credentials grant; it does not exchange `user_token` or scope by `user_id`, so it requires admin even when `user_token` is supplied. Likewise, `get_token` with `auth_flow=M2M` ignores `workload_token` and mints the configured client's token, so it requires admin. Authorization-code and user-federation flows remain available to authenticated non-admins.
+
 ### Per-Request Credentials
 
 The Okta domain is operator configuration only — caller-supplied `domain` values are ignored. A caller-supplied set is used whole; the operator's `client_secret` / `api_token` never fill gaps.

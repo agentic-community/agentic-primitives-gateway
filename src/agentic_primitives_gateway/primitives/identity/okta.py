@@ -7,7 +7,7 @@ from urllib.parse import urlencode
 
 import requests
 
-from agentic_primitives_gateway.context import get_service_credentials_or_defaults
+from agentic_primitives_gateway.context import get_authenticated_principal, get_service_credentials_or_defaults
 from agentic_primitives_gateway.models.enums import (
     AuthFlow,
     CredentialProviderType,
@@ -160,6 +160,11 @@ class OktaIdentityProvider(SyncRunnerMixin, IdentityProvider):
             auth_url = f"{self._authorize_url()}?{urlencode(params)}"
             return {"authorization_url": auth_url, "session_uri": state}
 
+        # workload_token does not authorize this client_credentials grant.
+        principal = get_authenticated_principal()
+        if principal is None or not principal.is_admin:
+            raise PermissionError("Okta client credentials grant requires admin access")
+
         # M2M: client_credentials with target scope
         def _client_credentials() -> dict[str, Any]:
             resp = requests.post(
@@ -183,6 +188,10 @@ class OktaIdentityProvider(SyncRunnerMixin, IdentityProvider):
         credential_provider: str,
         workload_token: str,
     ) -> dict[str, Any]:
+        principal = get_authenticated_principal()
+        if principal is None or not principal.is_admin:
+            raise PermissionError("Okta application secret lookup requires admin access")
+
         def _fetch() -> dict[str, Any]:
             headers = self._admin_headers()
             # Find the app by label
@@ -214,6 +223,11 @@ class OktaIdentityProvider(SyncRunnerMixin, IdentityProvider):
         user_token: str | None = None,
         user_id: str | None = None,
     ) -> dict[str, Any]:
+        # This operation ignores user_token and always mints a service token.
+        principal = get_authenticated_principal()
+        if principal is None or not principal.is_admin:
+            raise PermissionError("Okta client credentials grant requires admin access")
+
         def _get_token() -> dict[str, Any]:
             resp = requests.post(
                 self._token_url(),

@@ -6,7 +6,7 @@ from typing import Any
 
 from keycloak import KeycloakAdmin, KeycloakOpenID
 
-from agentic_primitives_gateway.context import get_service_credentials_or_defaults
+from agentic_primitives_gateway.context import get_authenticated_principal, get_service_credentials_or_defaults
 from agentic_primitives_gateway.models.enums import (
     AuthFlow,
     CredentialProviderType,
@@ -171,6 +171,13 @@ class KeycloakIdentityProvider(SyncRunnerMixin, IdentityProvider):
         credential_provider: str,
         workload_token: str,
     ) -> dict[str, Any]:
+        # Unlike AgentCore's workload-token exchange, this Admin API lookup
+        # ignores workload_token and returns an arbitrary client's secret.
+        # Enforce at the provider boundary so agent tools cannot bypass REST.
+        principal = get_authenticated_principal()
+        if principal is None or not principal.is_admin:
+            raise PermissionError("Keycloak client secret lookup requires admin access")
+
         admin = self._get_admin()
 
         # Look up the Keycloak client by clientId, then fetch its secret
@@ -188,6 +195,13 @@ class KeycloakIdentityProvider(SyncRunnerMixin, IdentityProvider):
         user_token: str | None = None,
         user_id: str | None = None,
     ) -> dict[str, Any]:
+        # Exchanging a caller token remains a data-plane operation. Without one,
+        # client_credentials mints the gateway client's own service-account token.
+        if not user_token:
+            principal = get_authenticated_principal()
+            if principal is None or not principal.is_admin:
+                raise PermissionError("Keycloak client credentials grant requires admin access")
+
         openid = self._get_openid()
 
         if user_token:

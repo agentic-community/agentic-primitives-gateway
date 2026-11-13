@@ -245,14 +245,26 @@ Or build your own:
 docker build -t agentic-primitives-gateway:latest .
 ```
 
-Deploy with Helm:
+Deploy with Helm after configuring authentication (the chart rejects its defaults rather than exposing noop admin access):
 
-```bash
-cd deploy/helm
-helm install apg ./agentic-primitives-gateway -f my-values.yaml
+```yaml
+# my-values.yaml
+auth:
+  backend: jwt
+  jwt:
+    issuer: https://idp.example.com/realms/agents
+    audience: gateway-client
 ```
 
-The Helm chart renders provider config as a ConfigMap, sets up health probes, and triggers rolling restarts on config changes. See `deploy/helm/` for the full chart.
+```bash
+helm install apg ./deploy/helm/agentic-primitives-gateway -f my-values.yaml
+```
+
+Alternatively set `auth.backend: api_key` and `auth.apiKey.existingSecret.name` to an
+operator-created Kubernetes Secret whose `api-keys.json` key contains a JSON array of
+`{"key":"...","principal_id":"..."}` entries. API keys are read from the Secret at
+runtime, not stored in Helm values or the generated ConfigMap. The chart forbids
+`auth.backend: noop`; use the local quickstart for unauthenticated development.
 
 ## Extending
 

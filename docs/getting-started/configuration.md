@@ -188,6 +188,8 @@ auth:
       scopes: "scope"
 ```
 
+API key entries must contain non-empty, non-whitespace string keys. A missing or blank key (for example, an unset Kubernetes Secret interpolated as an empty value) fails backend initialization rather than accepting a blank `X-Api-Key` header. An empty `api_keys` list still rejects all callers.
+
 ### Resource Ownership
 
 All agents, teams, and related resources track ownership for access control:
